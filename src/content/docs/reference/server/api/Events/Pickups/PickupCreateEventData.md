@@ -14,6 +14,8 @@ Defined in: events.ts:252
 | Name | Type | Defined in |
 | ------ | ------ | ------ |
 | `isBag` | `boolean` | events.ts:256 |
-| `pickupHash` | [`GameHash`](/reference/server/api/hashes/gamehash/) | events.ts:254 |
-| `pickupHashes` | [`GameHash`](/reference/server/api/hashes/gamehash/)[] | events.ts:255 |
 | `pickupNetId` | `number` | events.ts:253 |
+| `type` | `number` | — |
+| `types` | `number`[] | — |
+
+The server does not send `pickupHash` / `pickupHashes` in this payload (payload keys: `pickupNetId`, `type`, `posX`, `posY`, `posZ`, `isBag`, `types`).

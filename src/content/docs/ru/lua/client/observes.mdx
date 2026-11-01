@@ -1,0 +1,76 @@
+---
+title: Observe (Lua)
+description: Наблюдение за игровыми методами, порядок вызовов и Raw-варианты.
+---
+
+`mp.observe(className, methodName, callback)` подписывает клиентский скрипт на вызовы игрового метода. Наблюдатель не заменяет метод и не отменяет его возвращаемым значением.
+
+## Подготовка
+
+Только клиент. Укажите `use_game_natives = true` в `resource.toml`. Зарегистрируйте хуки один раз после инициализации игровых классов; [стадии инициализации](/ru/lua/client/game-natives).
+
+```toml title="resource.toml"
+client_script = 'client.lua'
+use_game_natives = true
+```
+
+## Регистрация
+
+```lua title="client.lua"
+local settingsMenu = nil
+
+mp.registerGameState('onInit', function()
+  mp.observe('SettingsMainGameController', 'OnMenuChanged', function(self)
+    settingsMenu = self
+  end)
+
+  mp.observe('SettingsMainGameController', 'RequestClose', function()
+    settingsMenu = nil
+  end)
+end)
+```
+
+## Аргументы
+
+Передайте точное имя класса и REDscript-имя метода из [NativeDB](https://nativedb.red4ext.com/). Для перегруженного метода используйте полную сигнатуру с суффиксом после `;`. Имя переменной `self` произвольное.
+
+- Метод экземпляра: `callback(self, arg1, ...)`.
+- Статический метод: `callback(arg1, ...)` — без `self`.
+- Наблюдатель получает аргументы метода; функция продолжения и результат метода ему не передаются.
+- `self` — слабая ссылка на игровой объект. Не считайте сохранённый контроллер действительным после его закрытия или выгрузки.
+
+## Порядок выполнения
+
+| Вызов | Момент перехвата | Пользовательский обработчик |
+| --- | --- | --- |
+| `mp.observe` | До метода | В очереди `mp.setImmediate`, на последующем тике |
+| `mp.observeBefore` | До метода | В очереди `mp.setImmediate`, на последующем тике |
+| `mp.observeAfter` | После метода | В очереди `mp.setImmediate`, на последующем тике |
+| `mp.observeRaw` | До метода | Без очереди `mp.setImmediate` |
+| `mp.observeBeforeRaw` | До метода | Без очереди `mp.setImmediate` |
+| `mp.observeAfterRaw` | После метода | Без очереди `mp.setImmediate` |
+
+`observe` — вариант `observeBefore`; `observeRaw` — вариант `observeBeforeRaw`. У обычного `observeBefore` обработчик может выполниться уже после завершения игрового метода: «до» описывает момент перехвата, а не выполнение отложенного кода. Возвращаемое значение любого наблюдателя игнорируется. Для замены результата используйте [Override](/ru/lua/client/overrides).
+
+## Примеры
+
+Лёгкий синхронный счётчик: не выполняйте сеть, ожидание или тяжёлую работу внутри Raw-обработчика.
+
+```lua title="client.lua"
+local actionCount = 0
+mp.registerGameState('onInit', function()
+  mp.observeBeforeRaw('PlayerPuppet', 'OnAction', function(self, action)
+    actionCount = actionCount + 1
+  end)
+end)
+```
+
+В `cybermp_core/client/lua/main.lua` наблюдатель `VehicleObject.OnVehicleFinishedMounting` получает `(self, evt)` и управляет транспортом после посадки. Не добавляйте ему `wrappedMethod`: этот аргумент есть только у override.
+
+## Очистка
+
+Регистрация не возвращает публичный id для снятия хука. При остановке или перезапуске ресурса его хуки снимаются автоматически. Для временного отключения проверяйте флаг внутри обработчика; в отключённом override вызывайте продолжение. Регистрируйте хуки один раз на экземпляр ресурса, а не на каждом вызове команды или повторной загрузке мира.
+
+## Проверка проблем
+
+Проверьте `use_game_natives`, стадию регистрации, имя класса, полную сигнатуру и факт вызова метода игрой. Начните с наблюдателя и короткого сообщения в журнале. Если замена не сохраняет поведение, проверьте аргументы `wrappedMethod`, отсутствие `self` в вызове продолжения и возвращаемый тип.

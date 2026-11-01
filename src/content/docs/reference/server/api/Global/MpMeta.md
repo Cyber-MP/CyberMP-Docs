@@ -123,6 +123,8 @@ Defined in: meta.ts:19
 
 `boolean`
 
+Defaults to `true` when omitted: the value is replicated to clients. Pass `false` for server-only data.
+
 #### Returns
 
 `void`
@@ -150,6 +152,8 @@ Defined in: meta.ts:8
 ##### sync?
 
 `boolean`
+
+Defaults to `true` when omitted: the value is replicated to clients. Pass `false` for server-only data.
 
 #### Returns
 
@@ -182,6 +186,8 @@ Defined in: meta.ts:11
 ##### sync?
 
 `boolean`
+
+Defaults to `true` when omitted: the value is replicated to clients. Pass `false` for server-only data.
 
 #### Returns
 

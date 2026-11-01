@@ -35,11 +35,11 @@ Defined in: mp.ts:59
 
 ***
 
-<a id="disable_voip_server"></a>
+<a id="disable_voice"></a>
 
-### disable\_VoIP\_server
+### disable\_voice
 
-> **disable\_VoIP\_server**: `boolean`
+> **disable\_voice**: `boolean`
 
 Defined in: mp.ts:58
 
@@ -55,6 +55,16 @@ Defined in: mp.ts:55
 
 ***
 
+<a id="private_token"></a>
+
+### private\_token
+
+> **private\_token**: `string`
+
+Defined in: mp.ts:56
+
+***
+
 <a id="resources"></a>
 
 ### resources
@@ -62,16 +72,6 @@ Defined in: mp.ts:55
 > **resources**: `string`[]
 
 Defined in: mp.ts:57
-
-***
-
-<a id="secret_token"></a>
-
-### secret\_token
-
-> **secret\_token**: `string`
-
-Defined in: mp.ts:56
 
 ***
 

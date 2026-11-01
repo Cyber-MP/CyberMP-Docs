@@ -1,0 +1,62 @@
+---
+title: Мета (Lua)
+description: Глобальная мета, мета игроков и сущностей в Lua на сервере и клиенте.
+---
+
+Мета — хранилище ключ-значение на игроках, сущностях и сервере. Модель, области и ограничения: [синхронизация и мета](/ru/lua/shared/meta#streaming).
+
+## Сервер
+
+| Вызов | Область |
+| --- | --- |
+| `mp.meta.setGlobal(key, value, sync)` / `mp.meta.getGlobal(key)` | Глобальная |
+| `mp.meta.setPlayer(playerOrId, key, value, sync)` / `mp.meta.getPlayer(playerOrId, key)` | Игрок |
+| `mp.meta.setEntity(entityOrId, key, value, sync)` / `mp.meta.getEntity(entityOrId, key)` | Транспорт, пед, объект, пикап |
+| `entity:getMeta(key)` / `entity:setMeta(key, value)` | То же на объекте сущности. `setMeta` **никогда** не синхронизирует. |
+
+`sync = true` передаёт значение клиентам. Пропущенный `sync` означает **без** синхронизации.
+
+```lua title="server.lua"
+mp.meta.setPlayer(player, 'characterName', 'V', true)
+mp.meta.setEntity(vehicle, 'locked', true, true)
+mp.meta.setGlobal('round', 3, true)
+```
+
+## Клиент
+
+| Вызов | Область |
+| --- | --- |
+| `mp.meta.setGlobal(key, value, sync)` / `mp.meta.getGlobal(key)` | Глобальная |
+| `mp.meta.setPlayer(netId, key, value, sync)` / `mp.meta.getPlayer(netId, key)` | Игрок |
+| `mp.meta.setLocalPlayer(key, value, sync)` / `mp.meta.getLocalPlayer(key)` | Локальный игрок |
+| `mp.meta.setEntity(netId, key, value, sync)` / `mp.meta.getEntity(netId, key)` | Транспорт, пед, объект, пикап |
+
+Клиентские вызовы принимают сетевые id числом (или числовой строкой); любое другое значение игнорируется, и `get` возвращает `nil`. Пропущенный `sync` — только локально. С `sync = true` значение уходит на сервер, а сервер отбрасывает его, если ключ принадлежит другому (глобальная мета, другой игрок, сущность другого клиента).
+
+```lua title="client.lua"
+mp.events.add('vehicleStreamIn', function(netID, gameID)
+  local locked = mp.meta.getEntity(netID, 'locked')
+  print('vehicle', netID, 'locked', locked)
+end)
+```
+
+## События изменения
+
+Обработчики получают следующие аргументы:
+
+- `playerMetaChange(id, key, newValue, oldValue)`
+- `entityMetaChange(id, key, newValue, oldValue)`
+- `globalMetaChange(key, newValue, oldValue)`
+
+```lua
+mp.events.add('entityMetaChange', function(id, key, newValue, oldValue)
+  print('meta', id, key, oldValue, '->', newValue)
+end)
+```
+
+Мета — реплицируемое хранилище ключ-значение, а не канал сообщений. Большие или частые данные отправляйте адресными [событиями](/ru/lua/shared/events).
+
+<a id="streaming"></a>
+## Синхронизация и стриминг
+
+Сервер управляет синхронизируемыми сущностями. Клиенты получают сущности в том же измерении и в пределах радиуса стриминга. Обработчики стрима получают `(netID, gameID)`; используйте `netID` для меты и переводите id через `mp.network` перед игровыми вызовами. Очищайте клиентский кэш на `*StreamOut` и `resourceStop`. Мета хранит дополнительные значения — имена, замки, уровни розыска — и не заменяет координаты сущности.

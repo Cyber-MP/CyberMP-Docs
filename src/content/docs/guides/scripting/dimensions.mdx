@@ -1,0 +1,52 @@
+---
+title: Dimensions
+description: entity.dimension on CyberMP Server.
+---
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+Every synced entity has `dimension` (default `0`). Clients stream only entities in the same dimension.
+
+<Tabs syncKey="lang">
+<TabItem label="JavaScript">
+
+```js title="server.js"
+player.dimension = houseId + 1_000_000;
+vehicle.dimension = player.dimension;
+```
+
+</TabItem>
+<TabItem label="Lua">
+
+```lua title="server.lua"
+player.dimension = houseId + 1000000
+vehicle.dimension = player.dimension
+```
+
+</TabItem>
+</Tabs>
+
+- Client-only entities (`mp.local.spawn*` in JavaScript, `mp.client.spawn*` in Lua: props, decorations) have no dimension. The server does not filter them, so despawn them yourself when the player changes dimension.
+- Teleport within one dimension may reuse streamed interiors. Changing dimension typically requires a loading overlay.
+- Use `0` for the shared world. Assign high offsets to instances. Negative values are ignored.
+- `at` / `exists` use network ids. Changing dimension does not allocate a new id.
+
+The client has no `mp.players.local.dimension`. When client scripts need the value, replicate it with synced [player meta](/guides/general/sync-and-meta):
+
+<Tabs syncKey="lang">
+<TabItem label="JavaScript">
+
+```js title="server.js"
+mp.meta.setPlayerMeta(player, 'dimension', player.dimension, true);
+```
+
+</TabItem>
+<TabItem label="Lua">
+
+```lua title="server.lua"
+mp.meta.setPlayer(player, 'dimension', player.dimension, true)
+```
+
+</TabItem>
+</Tabs>
+
+Streaming radius applies inside a dimension.

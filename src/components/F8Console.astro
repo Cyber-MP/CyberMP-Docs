@@ -1,0 +1,20 @@
+---
+interface Props {
+  lang?: 'en' | 'ru';
+}
+
+const lang = Astro.props.lang === 'ru' ? 'ru' : 'en';
+const ru = lang === 'ru';
+---
+
+<div class="cmp-f8" data-f8 aria-label="F8">
+  <header>
+    <span>F8</span>
+    <span>{ru ? 'консоль клиента' : 'client console'}</span>
+  </header>
+  <pre>
+<span class="cmp-f8__muted">&gt; car</span>
+<span class="cmp-f8__ok">spawn-car</span> vehicle in range 14 882341 1
+  </pre>
+  <p>{ru ? 'Откройте консоль, введите имя команды без слэша.' : 'Open the console, type the command name with no slash.'}</p>
+</div>

@@ -1,0 +1,57 @@
+---
+title: NPC
+description: Complete resource demonstrating a ped with default appearance and synced meta.
+slug: guides/recipes/npc
+---
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import ExampleDownload from '../../../../components/ExampleDownload.astro';
+
+Complete resource demonstrating a TweakDB character plus `cname('default')` so every client sees the same look. Destroy tagged peds on `resourceStop`.
+
+<ExampleDownload href="/examples/npc.zip" />
+
+<Tabs syncKey="recipe-npc">
+<TabItem label="resource.toml">
+
+```toml title="resource.toml"
+client_script = './client.js'
+server_script = './server.js'
+```
+
+</TabItem>
+<TabItem label="server.js">
+
+```js title="server.js"
+mp.events.on('resourceStart', () => {
+  const ped = mp.peds.create({
+    model: mp.hashes.tweakdbid('Character.CivilianFemaleAverage'),
+    appearance: mp.hashes.cname('default'),
+    position: [-1392.6, 1271.5, 123.1],
+    yaw: 1,
+    health: 5000,
+    dimension: 0,
+  });
+
+  ped.setMeta('npcId', 1, true);
+  ped.setMeta('npcName', 'Demo', true);
+});
+
+mp.events.on('resourceStop', () => {
+  for (const ped of mp.peds.toArray()) {
+    if (ped.getMeta('npcId') != null) ped.destroy(); // missing meta is null
+  }
+});
+```
+
+</TabItem>
+<TabItem label="client.js">
+
+```js title="client.js"
+mp.events.on('pedStreamIn', (netID, gameID) => {
+  const name = mp.meta.getEntityMeta(netID, 'npcName');
+  console.log('npc in range', netID, gameID, name);
+});
+```
+
+</TabItem>
+</Tabs>

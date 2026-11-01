@@ -1,0 +1,22 @@
+---
+title: Client scripting (Lua)
+description: Lua scripts in the CyberMP game client.
+---
+
+import { LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+A `.lua` file in `client_script` (or `shared_script`) runs in the game process after join, in the Lua runtime. The global `mp` table provides the client API.
+
+- The client Lua API has no entity objects: everything takes numeric ids. Stream events pass `(netID, gameID)`; natives need game ids ([network ids](/lua/client/network-and-local)).
+- Game classes and hooks (`Game`, `mp.observe`, `mp.registerGameState`) need `use_game_natives = true` in `resource.toml` ([game natives](/lua/client/game-natives)).
+- Call game natives and spawn only after the `onGameLoaded` stage.
+
+<CardGrid>
+  <LinkCard title="Events" href="/lua/client/events" description="Stream-in, triggerServer, addCef" />
+  <LinkCard title="Game natives" href="/lua/client/game-natives" description="Game, registerGameState, observe, override" />
+  <LinkCard title="Spawn the player" href="/lua/client/spawning-player" description="mp.client.spawnPlayer" />
+  <LinkCard title="Teleport" href="/lua/client/teleporting-player" description="TeleportationFacility, menus" />
+  <LinkCard title="Local storage" href="/lua/client/local-storage" description="mp.localStorage" />
+  <LinkCard title="CEF" href="/lua/client/cef" description="HTML UI" />
+  <LinkCard title="Discord" href="/lua/client/discord" description="Rich presence, OAuth" />
+</CardGrid>

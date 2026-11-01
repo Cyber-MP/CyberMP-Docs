@@ -1,36 +1,40 @@
 ---
-title: Adding resource files
-description: Learn how to include external assets, game mods, and UI files using the file property.
+title: Custom assets
+description: Vehicles, weapons, clothing, UI, and archives in a resource.
 ---
-The `file` property in your `resource.toml` manifest is used to specify which additional assets and client-side files need to be recognized, loaded, and streamed by the CyberMP server runtime.
 
-In this guide, we will focus entirely on how to configure the `file` property to manage your resource assets.
+The client receives only paths listed in `file` inside `resource.toml`. Custom vehicles, weapons, and clothing use the same mechanism: archives in `file`, then spawn or equip with the matching [hash](/guides/general/hashes).
 
-## Understanding the `file` Property
+```toml title="resource.toml"
+file = [
+  "./assets/in_world_navigation.archive",
+  "./assets/de_dust2/*",
+  "./ui/*",
+  "./ui/assets/*"
+]
+```
 
-   Any asset that your client script or UI page needs to access must be explicitly defined here. This includes custom game mods, map assets, 3D models, textures, and user interface files (HTML, CSS, JS for CEF).
+## Wildcard `*`
 
-   Here is an example configuration utilizing the `file` array:
+`./ui/*` includes every file in that directory. Nested directories are excluded; add `./ui/assets/*` separately, or use `**` (`./ui/**`) to include all nested directories.
 
-   ```toml title="resource.toml"
-   file = [
-     "./assets/in_world_navigation.archive",
-     "./assets/de_dust2/*",
-     "./ui/*",
-     "./ui/assets/*"
-   ]
-   ```
+## Allowed in `file`
 
-## Using Wildcard Patterns (`*`)
+Loaded at client start:
 
-   Manually listing dozens of UI icons or map assets can quickly clutter your configuration file. To solve this, the `file` array supports wildcard matching using the `*` symbol.
+- game files: `.archive`, `.xl`, `.tweak`, `.yaml`, `.yml`, `.redscripts`
+- CEF: HTML, CSS, JS
 
-   * `./ui/*` — Directs CyberMP to include every file sitting inside the root of the `browser` folder.
-   > **Note:** Wildcard tracking is directory-specific. If you have subfolders inside a path (like a dedicated assets folder inside your browser UI), make sure to add a separate pattern for it, such as `./ui/assets/*`.
+Gameplay scripts belong in `client_script` / `server_script` (JavaScript or Lua). The game loads one compiled redscript bundle, `final.redscripts`. To ship your own, remove `"final.redscript"` from `core.files` and list your `final.redscripts` here, see [redscript](/reference/server/configuration#redscript).
 
-## Supported Asset Types vs. Scripting Files
+## Packs
 
-   When you declare assets in the `file` array, CyberMP automatically loads them directly into the game at startup.
+| Asset | Files | Script |
+| --- | --- | --- |
+| Vehicle | `.archive`, ArchiveXL / TweakXL if required | `mp.vehicles.create`: model `tweakdbid` of `Vehicle.…`, appearance `cname` of `default` — [hashes](/guides/general/hashes) |
+| Weapon | `.archive`, tweak records (`Items.Preset_…`) | `tweakdbid` in inventory logic |
+| Clothing / appearance | `.archive`, appearance names | `cname` of the appearance name — [appearances](/guides/general/appearances) |
+| Prop | `.ent` in the game or in an archive | `mp.objects.create`: model `resref` of the `.ent` path — [resource types](/guides/general/resource-types) |
+| Pickup | TweakDB item record (`Items.…`) | `mp.pickups.create`: model `tweakdbid` of the record — [resource types](/guides/general/resource-types) |
+| CEF UI | HTML, CSS, JS, images | `cef_url` and `file` — [CEF](/guides/client/first-cef-ui) |
 
-   * **Supported Game Assets & Mods:** Custom archives, placement data, and engine tweaks such as `.archive`, `.xl`, `.tweak`, `.redscripts`, `.yaml` and `.yml` files are fully supported and injected directly into the game.
-   * **Scripting Restrictions:** This automatic injection **does not apply** to standalone scripting files like `.js` (aside from frontend CEF scripts), `.lua`, or `.redscript`. Game-level scripts must be handled through `client_script` property of resource rather than the raw asset pipeline. (except for redscript files, these should be compiled and included into file property)

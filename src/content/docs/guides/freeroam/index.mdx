@@ -1,0 +1,89 @@
+---
+title: Freeroam overview
+description: Official CyberMP sandbox resources.
+---
+
+import { FileTree, Steps } from '@astrojs/starlight/components';
+
+**Freeroam** is the official sandbox gamemode: [CyberMP-Freeroam](https://github.com/Cyber-MP/CyberMP-Freeroam).
+
+- Validate [client](/guides/getting-started/install-client) and [server](/guides/getting-started/run-server) installation.
+- Reference spawn, vehicle, and UI patterns.
+- Operate a public session while a custom gamemode is in development.
+
+## Structure
+
+The repository is a TypeScript pnpm monorepo. The server and client code use InversifyJS, the browser UI uses React and TanStack Router. Browser, client and server talk through [RPC](/guides/general/rpc).
+
+<FileTree>
+- libs
+  - inversify/ DI helpers
+  - shared/ code shared by client and server
+- mp
+  - linux/ server release for Linux
+  - win/ server release for Windows
+- resources
+  - freeroam/ the gamemode
+    - assets/ archives
+    - browser/ React UI
+    - client/
+    - server/
+  - hotreload/ restarts resources when their scripts change
+- server.toml
+- .env.example
+</FileTree>
+
+## Run
+
+Requires Node.js (22+ recommended) and pnpm 11.
+
+<Steps>
+
+1. ## Install
+
+   ```shell
+   pnpm install
+   ```
+
+2. ## `.env`
+
+   Copy `.env.example` to `.env` and set `ADMIN_PASSWORD`. The `admin` chat command with this password gives a player admin rights (`kick`, `ban`).
+
+3. ## Build and start
+
+   Extract the [server release](/guides/getting-started/install-server) into `mp/win` or `mp/linux`. Then run in two terminals:
+
+   ```shell
+   pnpm run dev:build
+   ```
+
+   ```shell
+   pnpm run dev:win    # or: pnpm run dev:linux
+   ```
+
+   `dev:build` watches and rebuilds the `@freeroam/*` packages. `dev:win` / `dev:linux` start the server with `-run -rdir=./resources` and `NODE_ENV=development`. For production, `pnpm run build` builds once, and `pnpm run win` / `pnpm run linux` start with `NODE_ENV=production`.
+
+</Steps>
+
+### Docker
+
+| Command | What it does |
+| --- | --- |
+| `pnpm run dev:docker` | `docker-compose.dev.yml`: the `ghcr.io/cyber-mp/server:latest` image with `server.toml` and `resources` mounted from the repository. |
+| `pnpm run docker` | `docker-compose.yml`: builds an image from the `Dockerfile` (resources and `server.toml` inside) and starts it in the background. |
+
+`docker-compose.prod.yml` runs the prebuilt `ghcr.io/cyber-mp/freeroam:latest` image. All three publish port 2077 over TCP and UDP and mount `logs` and `crashdumps`. `docker-compose.yml` and `docker-compose.prod.yml` also mount `cache` and pass `.env` to the container. `docker-compose.dev.yml` does not pass `.env`, so `ADMIN_PASSWORD` is not set there.
+
+## `server.toml`
+
+Freeroam's `server.toml` starts `hotreload` before `freeroam`, sets `max_players = 2500` and fills [`[core]`](/guides/scripting/core): nametags, gameplay restrictions, disabled garage and drop points, its archive `files` and the `[core.overrides]` for death, vehicles and the world. The `#:schema https://schemas.cyber.mp/server/schema.json` line on top enables autocomplete in editors that support TOML schemas.
+
+## Hotreload
+
+`resources/hotreload` is a ready [hotreload](/guides/general/hotreload) resource. It works only with `NODE_ENV=development` and restarts a resource whose `resource.toml` has `hotreload = true` when its `client_script` or `server_script` files change. Freeroam has this key set.
+
+## Replace Freeroam
+
+To replace Freeroam, remove its name from `resources` in [`server.toml`](/reference/server/configuration) and add the custom resource. Load order: [exports](/guides/general/exports), [cybermp_core](/guides/scripting/core).
+
+Death and vehicle rules: `[core.overrides]` and gamemode scripts.

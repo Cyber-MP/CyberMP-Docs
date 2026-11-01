@@ -1,0 +1,42 @@
+---
+title: Настройка окружения
+description: Раскладка каталогов и пакеты TypeScript для ресурсов CyberMP.
+---
+
+import { FileTree } from '@astrojs/starlight/components';
+
+Справка API собирается из официальных пакетов типов. Имена в гайдах (`mp.local`, `mp.network`, `mp.hashes`) совпадают с этими пакетами.
+
+## Раскладка
+
+<FileTree>
+  - server.toml
+  - resources
+    - hello_world
+      - resource.toml
+      - server.js
+      - client.js
+    - my_ui
+      - resource.toml
+      - client.js
+      - ui
+        - index.html
+  - src # TypeScript, компилируемый в resources/
+</FileTree>
+
+Серверные скрипты работают в Node: `require` резолвит `node_modules` из папки ресурса. Серверный `.js` выполняется как обычный скрипт, поэтому `import` в нём не работает; файл `.mjs` грузится как ES-модуль через Node и может импортировать пакеты из `node_modules`. Клиентские и CEF-скрипты `node_modules` не резолвят: npm-импорты бандлятся в файл, указанный в `resource.toml`.
+
+## Типы
+
+Одно семейство пакетов на `tsconfig`:
+
+```shell
+npm install -D @cybermp/server-types @cybermp/client-types @cybermp/browser-types
+```
+
+Три рантайма — три глобальных `mp`. Пакеты в одном файле не смешиваются.
+## Инструменты
+
+- [Hot reload](/ru/guides/general/hotreload)
+- [Консоль клиента](/ru/reference/client/console) (F8), [консоль сервера](/ru/reference/server/console)
+- [`cef_debug`](/ru/reference/server/configuration) для CEF

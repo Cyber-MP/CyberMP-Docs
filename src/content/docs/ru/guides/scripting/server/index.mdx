@@ -1,0 +1,18 @@
+---
+title: Обзор скриптов сервера
+description: JavaScript на CyberMP Server.
+---
+
+import { LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+Серверные скрипты выполняются на event loop Node.js в CyberMP Server. Глобальный `mp` — `MpServer` ([`@cybermp/server-types`](/ru/guides/general/type-safety)). `mp.game` отсутствует.
+
+Раскладка ресурса: [создание ресурса](/ru/guides/resources/creating-resource). Этот раздел описывает `server_script` на JavaScript. Серверный скрипт `.lua` выполняется в отдельной среде Lua со своим `mp`: [скрипты сервера на Lua](/ru/lua/server).
+
+<CardGrid>
+  <LinkCard title="События" href="/ru/guides/server/events" description="playerConnected, emit, onClient" />
+  <LinkCard title="Транспорт" href="/ru/guides/server/vehicles" description="create(), tweakdbid, cname" />
+  <LinkCard title="Объекты, педы, пикапы" href="/ru/guides/server/world-entities" description="resref, Character.*" />
+  <LinkCard title="Измерения" href="/ru/guides/scripting/dimensions" description="entity.dimension" />
+  <LinkCard title="cybermp_core" href="/ru/guides/scripting/core" description="[core] и [core.overrides]" />
+</CardGrid>

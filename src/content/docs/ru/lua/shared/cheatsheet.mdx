@@ -1,0 +1,83 @@
+---
+title: Шпаргалка (Lua)
+description: Обязательные правила спавна, клиента, событий и конфигурации для скриптов Lua.
+---
+
+Сводка страниц Lua. Сбои спавна и стрима: [решение проблем](/ru/lua/shared/cheatsheet#troubleshooting).
+
+## Спавн
+
+```lua
+local function hash(str) return tonumber(str, 10) end
+
+mp.vehicles.create({
+  model = hash(mp.hashes.toTweakdbid('Vehicle.v_standard2_archer_hella')),
+  appearance = hash(mp.hashes.toCname('default')),
+  position = player.position, -- vector3
+  yaw = player.yaw,
+  dimension = player.dimension,
+})
+```
+
+| Поле | Функция |
+| --- | --- |
+| `model` педа / транспорта | `toTweakdbid` (`Character.*`, `Vehicle.*`) |
+| `model` объекта | `toResref` (`…\\.ent`) |
+| `model` пикапа | `toTweakdbid` (`Items.*`) |
+| `appearance` | `toCname('default')`, если не известно конкретное имя `.app` |
+
+- Каждый хэш переводите через `tonumber(str, 10)`. Не передавайте строку и не используйте `tonumber(str)`.
+- `position` сущности в Lua не присваивается.
+- `pool.at(id)` падает для отсутствующей сущности: сначала проверяйте `pool.exists(id)`.
+
+## Клиент
+
+```lua
+mp.registerGameState('onGameLoaded', function() -- needs use_game_natives = true
+  mp.client.spawnPlayer(x, y, z, yaw)
+end)
+
+mp.events.add('vehicleStreamIn', function(netID, gameID)
+  mp.network.getVehicleGameId(netID) -- natives want gameID
+end)
+```
+
+- `use_game_natives = true` — булево значение TOML.
+- Клиентский `require` не загружает файлы: перечислите их в `client_script`.
+- Методы игровых объектов вызываются через `:`.
+
+## События
+
+- Первый аргумент `addClient` на сервере — объект игрока-отправителя.
+- Нужен ответ → [ответное событие](/ru/lua/shared/events#запрос-и-ответ).
+- Стандартное действие отменяется через `return false` (только сервер) до любого `mp.wait`.
+- `mp.events.remove` принимает id из `add`, а не функцию.
+- Экспорты вызываются через `:`: `mp.exports.notify:show('hi')`.
+
+## Мета
+
+- `sync` в Lua по умолчанию `false`. `entity:setMeta` никогда не синхронизирует: используйте `mp.meta.setEntity(entity, key, value, true)`.
+
+## Жизненный цикл
+
+- При `restart` состояние Lua создаётся заново; в `resourceStop` освобождайте только то, что вне него (например, созданные сущности), без `mp.wait`.
+- `mp.onUpdateLoop` и `mp.setTimeout` не отменяются: защищайте их флагом.
+
+## Имена в конфиге
+
+`server.toml`: `private_token` (Master List), `disable_voice`. `resource.toml`: `use_game_natives`, `export`, `hot_reload` (читает только наблюдатель).
+
+<a id="troubleshooting"></a>
+## Решение проблем
+
+| Симптом | Что проверить |
+| --- | --- |
+| Транспорт или пед невидим | Запись модели TweakDB, перевод хэша в целое, ненулевой appearance, измерение, радиус стриминга. |
+| Объект не появляется | Путь `.ent`, `toResref` и `tonumber(hash, 10)`. |
+| Игровой вызов отсутствует | `use_game_natives = true` и стадию инициализации. |
+| После спавна нет игрока | `spawnPlayer` запускает последовательность; дождитесь `Game.GetPlayer()` в задаче с таймаутом. |
+| После телепорта завис ввод | Закройте меню паузы и настроек перед перемещением игрока. |
+| Мета не приходит | `sync = true`, сетевой id сущности и владельца данных. |
+| Хук не вызывается | Точное имя класса и сигнатуру метода, стадию регистрации и факт вызова метода игрой. |
+| Хуки дублируются после загрузки | Регистрируйте один раз на экземпляр ресурса; защищайте повторные обработчики загрузки мира. |
+| Файл интерфейса отсутствует | Укажите HTML и все локальные файлы страницы в поле `file` манифеста. |

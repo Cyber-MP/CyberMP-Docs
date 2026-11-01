@@ -1,0 +1,26 @@
+---
+title: Local storage
+description: mp.localStorage on the game client.
+---
+
+`mp.localStorage` is a string map on the local machine. It persists across reconnects and resource restarts. It is not replicated to the server. There is one store per server address, shared by all resources of that server: prefix your keys, and remember that `deleteAll()` clears it for every resource.
+
+```js title="client.js"
+mp.localStorage.set('keybinds', JSON.stringify(bindings));
+mp.localStorage.save();
+
+const stored = JSON.parse(mp.localStorage.get('keybinds')); // the string you set, or null if missing
+const loaded = stored ? JSON.parse(stored) : {};
+mp.localStorage.delete('keybinds');
+mp.localStorage.deleteAll();
+mp.localStorage.save();
+```
+
+| API | Notes |
+| --- | --- |
+| Values | Non-empty strings only. Serialize with `JSON.stringify` / `JSON.parse`. |
+| `get()` | Returns the stored value JSON-encoded (`'"abc"'` for `'abc'`, `'null'` for a missing key). Unwrap it with `JSON.parse`. |
+| `save()` | Writes to disk. Changes stay in memory until `save()`; nothing saves them automatically. |
+| Scope | Client-only (keybinds, UI). Session state: [meta](/guides/general/sync-and-meta), [RPC](/guides/general/rpc). |
+
+Launcher options: [`mp.getLauncherSettings`](/guides/game-client/launcher). TypeDoc: [`MpLocalStorage`](/reference/client/api/global/mplocalstorage/).

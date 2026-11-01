@@ -1,0 +1,20 @@
+---
+title: Карта API
+description: Объект mp на сервере, клиенте и в CEF и соответствующий гайд.
+---
+import ApiMap from '../../../../../components/ApiMap.astro';
+
+`mp` в каждом рантайме — отдельный объект. Импорт `@cybermp/server-types` в клиентский файл даёт автодополнение методов, которые в рантайме клиента выбрасывают исключение.
+
+<ApiMap lang="ru" />
+
+## Правила
+
+1. **`mp.*.create` на сервере** — синхронно, в текущем ходе event loop. После `await` вы уже в другом ходе. [Транспорт](/ru/guides/server/vehicles).
+2. **`appearance`** — `mp.hashes.cname('default')`, не `0`. [Внешность](/ru/guides/general/appearances).
+3. **Хеши** — `tweakdbid` (CRC32 + длина) отличается от `cname` / `resref` (FNV-1a 64). Берите хешер под поле. [Хеши](/ru/guides/general/hashes).
+4. **Векторы** — на сервере `[x, y, z]`; многие нативы `{ x, y, z }`. [JS-мост](/ru/guides/general/js-bridge).
+5. **Id на клиенте** — стрим даёт `netID`, нативы требуют `gameID`. [Сеть](/ru/guides/client/network-and-local).
+6. **Нативы** — не до `onGameLoaded`; TweakDB после `onTweak`. [Жизненный цикл](/ru/guides/client/lifecycle).
+
+TypeDoc: [сервер](/ru/reference/server/api/readme/), [клиент](/ru/reference/client/api/readme/), [браузер](/ru/reference/browser/api/readme/). Краткая сводка: [шпаргалка](/ru/guides/general/cheatsheet).

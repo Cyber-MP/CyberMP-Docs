@@ -1,0 +1,71 @@
+---
+interface Props {
+  lang?: 'en' | 'ru';
+}
+
+const lang = Astro.props.lang === 'ru' ? 'ru' : 'en';
+const ru = lang === 'ru';
+---
+
+<div class="cmp-widget cmp-rpc-flow" data-rpc-flow data-lang={lang}>
+  <p class="cmp-widget__chips-label">{ru ? 'Кто с кем говорит' : 'Who talks to whom'}</p>
+  <div class="cmp-chips">
+    <button type="button" class="cmp-chip" data-flow="cs" data-active>
+      {ru ? 'Клиент ↔ сервер' : 'Client ↔ server'}
+    </button>
+    <button type="button" class="cmp-chip" data-flow="bc">
+      {ru ? 'CEF → клиент' : 'CEF → client'}
+    </button>
+    <button type="button" class="cmp-chip" data-flow="bs">
+      {ru ? 'CEF → сервер' : 'CEF → server'}
+    </button>
+  </div>
+  <div class="cmp-rpc-cols">
+    <article data-node="browser"><h3>CEF</h3><code>RpcBrowser</code></article>
+    <article data-node="client"><h3>{ru ? 'Клиент' : 'Client'}</h3><code>RpcClient</code></article>
+    <article data-node="server"><h3>{ru ? 'Сервер' : 'Server'}</h3><code>RpcServer</code></article>
+  </div>
+  <p class="cmp-widget__guess" data-rpc-caption></p>
+</div>
+
+<script>
+  const CAPTION = {
+    en: {
+      cs: 'Same name on both sides. No CEF involved.',
+      bc: 'Browser talks to the game client. RpcClient must be running.',
+      bs: 'Browser → server is forwarded by RpcClient on the client. Without it the call never arrives.',
+    },
+    ru: {
+      cs: 'Одно и то же name с обеих сторон. CEF не участвует.',
+      bc: 'Страница говорит с игровым клиентом. RpcClient должен быть запущен.',
+      bs: 'CEF → сервер форвардит RpcClient на клиенте. Без него вызов никуда не уйдёт.',
+    },
+  } as const;
+
+  const ACTIVE: Record<string, string[]> = {
+    cs: ['client', 'server'],
+    bc: ['browser', 'client'],
+    bs: ['browser', 'client', 'server'],
+  };
+
+  function bind(root: HTMLElement) {
+    const lang = root.getAttribute('data-lang') === 'ru' ? 'ru' : 'en';
+    const caption = root.querySelector<HTMLElement>('[data-rpc-caption]');
+    const nodes = [...root.querySelectorAll<HTMLElement>('[data-node]')];
+    const setFlow = (flow: string) => {
+      const on = ACTIVE[flow] ?? [];
+      nodes.forEach((n) => n.toggleAttribute('data-on', on.includes(n.dataset.node ?? '')));
+      if (caption) caption.textContent = CAPTION[lang][flow as keyof typeof CAPTION.en] ?? '';
+    };
+    root.querySelectorAll<HTMLButtonElement>('[data-flow]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        root.querySelectorAll('[data-flow]').forEach((b) => b.removeAttribute('data-active'));
+        btn.setAttribute('data-active', '');
+        setFlow(btn.dataset.flow ?? 'cs');
+      });
+    });
+    setFlow('cs');
+  }
+
+  document.querySelectorAll<HTMLElement>('[data-rpc-flow]').forEach(bind);
+</script>

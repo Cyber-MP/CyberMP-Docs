@@ -1,0 +1,156 @@
+---
+title: Транспорт
+description: mp.vehicles.create, ходы event loop, appearance и meta.
+---
+import { Steps } from '@astrojs/starlight/components';
+import ExampleDownload from '../../../../../components/ExampleDownload.astro';
+
+Транспорт, видимый всем игрокам, создаётся на сервере через `mp.vehicles.create`. Его получают ближайшие клиенты в том же `dimension`.
+
+## Параметры create
+
+```ts
+type CreateVehicleOptions = {
+  model: GameHash;       // tweakdbid от Vehicle.*
+  appearance: CName;     // обязательно — cname('default'), пока нет конкретного вида
+  position: Vector3;     // [x, y, z]
+  yaw?: number;          // default 0
+  health?: number;       // default 300
+  dimension?: number;    // если не указать — 0
+};
+```
+
+`model` — запись TweakDB (`Vehicle.*`) через `tweakdbid`. `appearance` — CName. Не хешируйте запись транспорта через `cname` и не передавайте `appearance: 0` — клиенты не сойдутся во внешности. Подробнее: [хеши](/ru/guides/general/hashes), [внешность](/ru/guides/general/appearances), [типы ресурсов](/ru/guides/general/resource-types).
+
+```js
+mp.hashes.tweakdbid('Vehicle.v_standard2_archer_hella');
+mp.hashes.cname('default');
+```
+
+`position` на сервере — **кортеж** `[x, y, z]`, не объект `{ x, y, z }`.
+
+:::caution[Синхронный create]
+Создание выполняется в **текущем** ходе event loop. После `await` исходное событие уже завершено — `create` по-прежнему синхронный, но это уже другой ход.
+:::
+
+:::caution[appearance]
+`appearance: 0` — не значение по умолчанию. Используйте `mp.hashes.cname('default')`, иначе клиенты не сойдутся во внешности.
+:::
+
+## Создание и event loop
+
+`mp.vehicles.create` — **синхронный** вызов натива. После возврата транспорт уже существует на сервере: возвращается `MpVehicle` с назначенным `id`. Вызов не возвращает Promise. Платформа не откладывает создание сущности.
+
+Серверные скрипты выполняются на **event loop** Node.js. Платформа управляет циклом и вызывает обработчики (`mp.events.on`, `onClient`, `resourceStart`) как колбэки. Пока обработчик не вернул управление, выполняется тот же ход цикла — то же взаимодействие с платформой, которое доставило событие.
+
+`await` завершает этот ход. Код после `await` выполняется позже: в микрозадаче или в следующей фазе цикла (таймеры, poll после I/O, `setImmediate` в фазе check). `create` остаётся синхронным, но это уже **новый** вход в платформу, а не продолжение исходного события.
+
+Если созданию предшествует асинхронная работа (БД, Redis, `fetch`), учитывать нужно именно этот последующий ход. Исходное событие к этому моменту уже обработано. `create` не ожидает Promise и не связан с ним. Платформа не приостанавливает свою работу на время Promise: когда продолжение выполняется, для натива это очередной колбэк JS.
+
+`setImmediate` — колбэк фазы check в Node.js. Это не API CyberMP и не отдельный режим создания. Для платформы это другой ход цикла, как `setTimeout` или разрешение Promise.
+
+```js
+mp.events.onClient('requestVehicleSpawn', (player) => {
+  // этот стек — ход, в котором платформа доставила пакет
+  const vehicle = mp.vehicles.create({
+    model: mp.hashes.tweakdbid('Vehicle.v_standard2_archer_hella'),
+    appearance: mp.hashes.cname('default'),
+    position: player.position,
+  });
+});
+```
+
+```js
+mp.events.onClient('requestVehicleSpawn', async (player, id) => {
+  const row = await db.findVehicle(id);
+  // await уже отдал ход; create ниже — другой ход цикла
+  const vehicle = mp.vehicles.create({
+    model: mp.hashes.tweakdbid(row.model),
+    appearance: mp.hashes.cname('default'),
+    position: player.position,
+  });
+});
+```
+
+Тот же вызов у объектов, педов и пикапов: [сущности мира](/ru/guides/server/world-entities).
+
+## Синхронизированная meta
+
+После создания запишите игровые ключи через [`setMeta`](/ru/reference/server/api/entities/mpentity/#setmeta). Третий аргумент `true` — клиенты читают те же ключи через `mp.meta.getEntityMeta`.
+
+```js
+vehicle.setMeta('locked', true, true);
+vehicle.setMeta('engine', false, true);
+vehicle.setMeta('ownerId', String(player.id), true);
+```
+
+Клиенты получают ключи, когда транспорт входит в зону стрима (`vehicleStreamIn`). См. [синхронизация и meta](/ru/guides/general/sync-and-meta).
+
+## Сиденья и время жизни
+
+```js
+mp.events.on('enterVehicle', (playerId, data) => {
+  const [vehicleId, seat] = data; // payload — массив
+  const vehicle = mp.vehicles.at(vehicleId);
+  const driver = vehicle?.seats.driver;
+  console.log('seat', seat, 'driver', driver?.id);
+});
+
+mp.events.on('vehicleDespawn', (id) => {
+  console.log('gone', id);
+});
+
+// later
+if (mp.vehicles.exists(vehicle.id)) {
+  vehicle.destroy();
+}
+```
+
+`VehicleSeat`: `Driver = 0`, `Passenger = 1`, `RearLeft = 2`, `RearRight = 3`.
+
+Перед `at` проверяйте `exists` — для удалённого id `at` вернёт `undefined`.
+
+Событие посадки сервер шлёт как `enterVehicle` с `(playerId, [vehicleId, seat])`, выход — `exitVehicle` с `(playerId, [vehicleId])`; события `playerEnterVehicle` в коде сервера нет.
+
+## Пример ресурса
+
+Полный ресурс, демонстрирующий команду F8 `car`: [рецепт](/ru/guides/recipes/spawn-vehicle).
+
+<ExampleDownload href="/examples/spawn-car.zip" lang="ru" />
+
+<Steps>
+
+1. ## Сервер: создание транспорта
+
+   ```js title="server.js"
+   mp.events.onClient('requestVehicleSpawn', (player, modelName) => {
+     const vehicle = mp.vehicles.create({
+       model: mp.hashes.tweakdbid(modelName),
+       appearance: mp.hashes.cname('default'),
+       position: player.position,
+       yaw: player.yaw,
+       health: 5000,
+       dimension: player.dimension,
+     });
+
+     vehicle.setMeta('ownerId', String(player.id), true);
+     mp.events.emitClient(player, 'vehicleSpawned', vehicle.id);
+   });
+   ```
+
+2. ## Клиент: запрос и стрим
+
+   ```js title="client.js"
+   mp.commands.add('car', () => {
+     mp.events.emitServer('requestVehicleSpawn', 'Vehicle.v_standard2_archer_hella');
+   });
+
+   mp.events.on('vehicleStreamIn', (netID, gameID) => {
+     const ownerId = mp.meta.getEntityMeta(netID, 'ownerId');
+     console.log('vehicle in range', netID, gameID, ownerId);
+   });
+   ```
+
+</Steps>
+
+Если транспорт не появляется, см. [диагностику](/ru/guides/general/troubleshooting).

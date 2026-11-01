@@ -1,0 +1,65 @@
+---
+title: Spawn the player (Lua)
+description: Spawn the local player from a Lua client script.
+---
+import { Steps } from '@astrojs/starlight/components';
+
+After the world loads, the local player is not in the scene. Spawn sets coordinates, and a console command allows recovery.
+
+<Steps>
+1. ## Enable the game layer
+
+   Game stages and `Game.*` calls need it:
+
+   ```toml title="resource.toml"
+   client_script = 'client.lua'
+   use_game_natives = true
+   ```
+
+2. ## Spawn
+
+   `mp.client.spawnPlayer(x, y, z, yaw)` sets coordinates and starts spawn. It returns `true` if the sequence started. The character may still be absent from the world.
+
+   ```lua title="client.lua"
+   -- V's apartment
+   local DEFAULT_SPAWN = { -1392.637329, 1271.536865, 123.082397, 1 }
+
+   local function spawnPlayer(x, y, z, yaw)
+     mp.client.spawnPlayer(x, y, z, yaw or 1)
+   end
+   ```
+
+3. ## Game load and commands
+
+   Spawn only in the `onGameLoaded` stage. Register the console command immediately. It runs when the player types it.
+
+   ```lua title="client.lua"
+   -- Automatically spawn when the world loads
+   mp.registerGameState('onGameLoaded', function()
+     spawnPlayer(table.unpack(DEFAULT_SPAWN))
+   end)
+
+   -- Register console command
+   mp.commands.add('spawn', function()
+     spawnPlayer(table.unpack(DEFAULT_SPAWN))
+   end)
+   ```
+
+   On connect the local player appears near V's apartment. Reset: client console (`F8`), then:
+
+   ```text
+   spawn
+   ```
+</Steps>
+
+
+## Production notes
+
+Stages and their order: [game natives](/lua/client/game-natives#stages).
+
+- **`onGameLoaded`, not `resourceStart`.** Do not call `Game.GetPlayer()` or spawn until the stage fires.
+- **Close menus first.** A leftover pause or settings controller freezes input after spawn. Reuse the observers from [teleporting the player](/lua/client/teleporting-player).
+- **Wait for the puppet.** `true` from `spawnPlayer` only means the sequence **started**. Poll `Game.GetPlayer()` in a task with `mp.wait` (with a timeout) before health, appearance, or a second teleport.
+- **Incomplete gender / `None`.** Right after init the puppet can report no gender. Character-specific meshes and some REDscript calls do nothing in that state. Spawn the local player, wait until the puppet exists, then apply appearance.
+- **Re-anchor after customization.** Opening the character customization mirror can leave the puppet off the spawn point. Teleport once more after appearance is applied.
+- **Natives after load.** Register events and commands immediately. Keep every `Game.*` call behind `onGameLoaded`.

@@ -1,0 +1,80 @@
+---
+title: Run the server
+description: Start CyberMP Server and verify that it is listening.
+---
+
+import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
+
+Prerequisites: [install](/guides/getting-started/install-server) (`server.toml`, `resources`). Linux libraries: [hardware and OS](/guides/dedicated-server/hardware).
+
+<Steps>
+
+1. ## Start
+
+   <Tabs syncKey="execute-method">
+     <TabItem label="Docker">
+       <Tabs>
+         <TabItem label="Docker run">
+           ```shell
+           docker run -it \
+           --mount type=bind,source="$(pwd)"/server.toml,target=/cybermp/server.toml \
+           --mount type=bind,source="$(pwd)"/resources,target=/cybermp/resources \
+           -p 2077:2077/tcp \
+           -p 2077:2077/udp \
+           ghcr.io/cyber-mp/server:latest
+           ```
+         </TabItem>
+         <TabItem label="Docker Compose">
+           ```yaml title="docker-compose.yml"
+           services:
+             server:
+               image: ghcr.io/cyber-mp/server:latest
+               stdin_open: true
+               tty: true
+               volumes:
+                 - ./server.toml:/cybermp/server.toml
+                 - ./resources:/cybermp/resources
+                 - ./crashdumps:/cybermp/crashdumps
+                 - ./logs:/cybermp/logs
+               ports:
+                 - 2077:2077/tcp
+                 - 2077:2077/udp
+           ```
+
+           ```shell
+           docker compose up
+           ```
+         </TabItem>
+       </Tabs>
+     </TabItem>
+     <TabItem label="Binary">
+       From the server root:
+
+       <Tabs>
+         <TabItem label="Windows">
+           ```shell
+           .\cybermp-server.exe -run
+           ```
+         </TabItem>
+         <TabItem label="Linux">
+           ```shell
+           ./cybermp-server -run
+           ```
+         </TabItem>
+       </Tabs>
+     </TabItem>
+   </Tabs>
+
+2. ## Verify
+
+   ```ansi
+   [38;2;179;133;0m[00:00:00] [Server][0m CyberMP server starting...
+   [38;2;179;133;0m[00:00:00] [Server][0m Resources initializing...
+   >
+   ```
+
+   `http://127.0.0.1:2077/` (the `tcp_host` port) returns JSON with the server version: `{"version":"server …"}`.
+
+</Steps>
+
+`>` is the [server console](/reference/server/console) (`start`, `stop`, `restart`, `refresh`).

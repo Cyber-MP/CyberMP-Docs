@@ -1,0 +1,65 @@
+---
+title: Client console
+description: The F8 console, the developer console, and console commands.
+slug: reference/client/console
+---
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+The client has two consoles:
+
+- the **F8 console** inside the game, for commands and script logs;
+- the **developer console**, a separate window with the client log.
+
+## F8 console
+
+**F8** opens and closes it. It runs commands registered with `mp.commands.add` and shows the logs of client scripts.
+
+### Register a command
+
+<Tabs syncKey="lang">
+<TabItem label="JavaScript">
+
+```js title="client.js"
+mp.commands.add('spawn', (id, args) => {
+  mp.local.spawnPlayer(-1392.637329, 1271.536865, 123.082397, 1);
+});
+```
+
+</TabItem>
+<TabItem label="Lua">
+
+```lua title="client.lua"
+mp.commands.add('spawn', function(playerId, args)
+  mp.client.spawnPlayer(-1392.637329, 1271.536865, 123.082397, 1)
+end)
+```
+
+</TabItem>
+</Tabs>
+
+Type the command name (no `/`) and press Enter:
+
+```text
+spawn
+```
+
+Client commands run only for the local player. The handler receives the local player's network id and the arguments as strings. Server commands receive the player instead: [server console](/reference/server/console#custom-command).
+
+### Logs
+
+- JavaScript: `console.log`, `console.warn`, and `console.error` appear here. Each line is tagged with the name of the resource that printed it.
+- Lua: `print(...)` appears here with the resource name. With `use_game_natives = true` it goes through the game layer's logger without the resource name ([game natives](/lua/client/game-natives)).
+
+CEF pages log to the Chromium console. Enable [`cef_debug`](/reference/server/configuration) in `server.toml` and attach a remote debugger (port `9222`) for DOM and network traces.
+
+### Workflow
+
+1. Press F8.
+2. Run the command (`ui`, `spawn`, `close-menu`).
+3. Read script logs.
+4. Edit the file and restart the resource ([live updates](/guides/resources/live-updates), or [hotreload](/guides/general/hotreload)).
+5. Run the command again. A restart destroys the resource's script runtime, so its old hooks, ticks and listeners are removed automatically.
+
+## Developer console
+
+A separate Windows console window (cmd) with the client log. It opens with the game when **Enable console** is on in the [launcher settings](/guides/game-client/launcher#dev). It is meant for developers.

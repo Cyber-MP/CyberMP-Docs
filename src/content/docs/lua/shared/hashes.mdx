@@ -1,0 +1,44 @@
+---
+title: Numbers and hashes (Lua)
+description: Why Lua hash helpers return decimal strings and how to pass hashes to natives.
+---
+
+Lua integers are signed 64-bit. The hash helpers return the hash as a **decimal string**. Calls that take a model or appearance read a raw 64-bit integer, so convert the string first:
+
+```lua
+local function hash(str)
+  return tonumber(str, 10)
+end
+
+local model = hash(mp.hashes.toTweakdbid('Vehicle.v_standard2_archer_hella'))
+```
+
+- `tonumber(str, 10)` keeps all 64 bits. Hashes above 2^63 become negative integers with the same bits, which is what the native expects.
+- `tonumber(str)` without a base turns hashes above 2^63 into a float, and a float reaches the native as a 32-bit float. The hash is lost.
+- Never pass the string itself: the native receives a pointer instead of the hash.
+
+## Helpers
+
+| Call | Server | Client |
+| --- | --- | --- |
+| `mp.hashes.toCname(name)` / `toTweakdbid(name)` / `toResref(name)` | Yes | With `use_game_natives = true` |
+| `mp.hashes.fromCname(hash)` / `fromTweakdbid(hash)` / `fromResref(hash)` | No | With `use_game_natives = true` |
+| `mp.getHashFromName(name, type)` with `'cname'`, `'tweakdbid'` or `'resref'` | Yes | No |
+
+Without `use_game_natives = true` the client helpers raise an error.
+
+| Field | Helper |
+| --- | --- |
+| Ped / vehicle `model` | `toTweakdbid` (`Character.*`, `Vehicle.*`) |
+| Object `model` | `toResref` (`…\\.ent`) |
+| Pickup `model` | `toTweakdbid` (`Items.*`) |
+| `appearance` | `toCname('default')` unless a specific `.app` name is known |
+
+The three hashers are not interchangeable: each expects its own kind of string. Algorithms and naming: [hashes](/lua/shared/hashes#models-and-appearances).
+
+<a id="models-and-appearances"></a>
+## Models and appearances
+
+A vehicle or ped model is a TweakDB record (`Vehicle.*` or `Character.*`). A pickup uses an item record (`Items.*`). An object model is an `.ent` resource path. The appearance is a separate named look; use `tonumber(mp.hashes.toCname('default'), 10)` unless a specific look is required. A zero or omitted appearance can produce different looks on different clients.
+
+The `tweakdbid` algorithm combines CRC32 with the string length. `cname` and `resref` use FNV-1a 64; they hash the raw string, so keep spelling and resource-path backslashes exact. Match the helper to the model or appearance field rather than interchanging algorithms.

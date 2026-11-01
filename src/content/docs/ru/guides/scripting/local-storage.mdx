@@ -1,0 +1,26 @@
+---
+title: Локальное хранилище
+description: mp.localStorage на игровом клиенте.
+---
+
+`mp.localStorage` — карта строк на локальной машине. Сохраняется при реконнекте и перезапуске ресурса. На сервер не реплицируется. Хранилище одно на адрес сервера и общее для всех его ресурсов: добавляйте к ключам префикс и помните, что `deleteAll()` очищает его для всех ресурсов.
+
+```js title="client.js"
+mp.localStorage.set('keybinds', JSON.stringify(bindings));
+mp.localStorage.save();
+
+const stored = JSON.parse(mp.localStorage.get('keybinds')); // сохранённая строка или null, если ключа нет
+const loaded = stored ? JSON.parse(stored) : {};
+mp.localStorage.delete('keybinds');
+mp.localStorage.deleteAll();
+mp.localStorage.save();
+```
+
+| API | Примечание |
+| --- | --- |
+| Значения | Только непустые строки. Сериализация: `JSON.stringify` / `JSON.parse`. |
+| `get()` | Возвращает значение в JSON-кодировке (`'"abc"'` для `'abc'`, `'null'` для отсутствующего ключа). Разворачивайте через `JSON.parse`. |
+| `save()` | Запись на диск. До `save()` изменения живут только в памяти, автосохранения нет. |
+| Область | Только клиент (бинды, UI). Состояние сессии: [meta](/ru/guides/general/sync-and-meta), [RPC](/ru/guides/general/rpc). |
+
+Опции лаунчера: [`mp.getLauncherSettings`](/ru/guides/game-client/launcher). TypeDoc: [`MpLocalStorage`](/ru/reference/client/api/global/mplocalstorage/).

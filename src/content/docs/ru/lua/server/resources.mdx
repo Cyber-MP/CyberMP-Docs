@@ -1,0 +1,48 @@
+---
+title: Управление ресурсами (Lua)
+description: Запуск, остановка и обновление ресурсов из серверного скрипта Lua.
+---
+
+Консольные команды (`refresh`, `start`, `stop`, `restart`) одинаковы для всех сред: [управление ресурсами](/ru/lua/server/resources#console). Из серверного скрипта Lua используйте `mp.resources`.
+
+| Вызов | Возвращает |
+| --- | --- |
+| `mp.resources.getCurrentName()` | Имя этого ресурса. |
+| `mp.resources.getState(name)` | Число: `0` не найден, `1` запускается, `2` запущен, `3` остановлен (или найден, но ни разу не запускался). |
+| `mp.resources.start(name)` / `stop(name)` / `restart(name)` | Запускает, останавливает или перезапускает ресурс. |
+| `mp.resources.refreshAll()` | Пересканирует папку ресурсов, как консольная команда `refresh`. |
+| `mp.resources.getTomlFile(name)` | `resource.toml` ресурса строкой JSON. |
+| `mp.resources.loadFile(name, path)` | Содержимое файла этого ресурса строкой. |
+| `mp.getServerTomlFile()` | `server.toml` строкой JSON. |
+
+```lua title="server.lua"
+mp.commands.add('rs', function(player, args)
+  if player ~= 0 then return end -- server console only
+
+  local name = args[1]
+  if not name or mp.resources.getState(name) == 0 then
+    print('unknown resource', name)
+    return
+  end
+
+  mp.resources.restart(name)
+end)
+```
+
+## Что освобождает остановка
+
+При `stop` и `restart` платформа закрывает состояние Lua ресурса. Обработчики событий, задачи, таймауты и колбэки `mp.onUpdateLoop` старого экземпляра исчезают, его серверные команды удаляются. Сущности, созданные через `mp.*.create`, остаются на сервере: удаляйте их в `resourceStop` ([пример](/ru/lua/shared/hotreload#очистка-перед-перезапуском)).
+
+После правки скрипта нужен `restart`: [живые обновления](/ru/lua/server/live-updates).
+
+<a id="console"></a>
+## Консоль сервера
+
+| Команда | Действие |
+| --- | --- |
+| `refresh` | Перечитать папки ресурсов и манифесты. |
+| `start hello_world` | Запустить указанный ресурс. |
+| `stop hello_world` | Остановить указанный ресурс. |
+| `restart hello_world` | Остановить и запустить ресурс для перезагрузки скриптов. |
+
+Выполняйте команды в консоли выделенного сервера. Для новой папки нужен `refresh` перед `start`. `restart` не перечитывает манифест: после изменения `resource.toml` сначала выполните `refresh`. Из серверного скрипта ту же команду выполняет `mp.commands.execute('restart hello_world')`.

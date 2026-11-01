@@ -29,6 +29,8 @@ Defined in: objects.ts:21
 
 Defined in: objects.ts:20
 
+Default: `false`
+
 ***
 
 <a id="model"></a>
@@ -58,3 +60,5 @@ Defined in: objects.ts:18
 > `optional` **yaw?**: `number`
 
 Defined in: objects.ts:19
+
+Default: `0`

@@ -1,0 +1,116 @@
+---
+title: Game natives
+description: Call REDengine systems from CyberMP client scripts through mp.game.
+slug: reference/client/working-with-game-natives
+---
+
+Client scripts reach Cyberpunk systems through `mp.game`: the player, stats, teleport, TweakDB, method hooks.
+
+:::tip[NativeDB]
+All game classes, functions and enums are listed on [NativeDB](https://nativedb.red4ext.com/). Names there match the names you call from scripts.
+:::
+
+`mp.game` natives are bound only when the resource's `resource.toml` sets `use_game_natives = true`. Without it, `mp.game` stays empty.
+
+Call natives only after the world is loaded. `resourceStart` only means the script started. Wait for `mp.game.onGameLoaded`. TweakDB waits for `mp.game.onTweak`. See [client lifecycle](/guides/client/lifecycle).
+
+## Systems and player
+
+```js title="client.js"
+mp.game.onGameLoaded(() => {
+  const player = mp.game.GetPlayer();
+  const playerObj = mp.game.GetPlayerObject();
+  const stats = mp.game.ScriptGameInstance.GetStatsSystem();
+  const pools = mp.game.ScriptGameInstance.GetStatPoolsSystem();
+  const teleport = mp.game.ScriptGameInstance.GetTeleportationFacility();
+
+  console.log('entity', player.GetEntityID());
+});
+```
+
+`GetPlayer()` can still return empty right after `mp.local.spawnPlayer`. Poll until the puppet exists before health, appearance, or teleport.
+
+Hashes: [hashes](/guides/general/hashes). Client `mp.game.hashes`, server `mp.hashes`. Three algorithms — `cname`, `tweakdbid`, `resref` — are not interchangeable.
+
+```js
+// Client
+const itemHash = mp.game.hashes.toTweakdbid('Items.Preset_Nue_Default');
+const name = mp.game.hashes.fromTweakdbid(itemHash);
+const look = mp.game.hashes.toCname('default');
+const ent = mp.game.hashes.toResref('base\\characters\\main_npc\\jackie.ent');
+
+// Server (numeric GameHash, not a string)
+const model = mp.hashes.tweakdbid('Vehicle.v_standard2_archer_hella');
+const appearance = mp.hashes.cname('default');
+```
+
+Older snippets used `mp.game.getHashFromName(...)`. That helper is gone from both the current types and the client runtime. Vehicle and ped `appearance`: always `cname('default')` unless a specific look is required — see [appearances](/guides/general/appearances).
+
+## Observe and override
+
+[Observe](/guides/client/observes) covers observers, arguments, and deferred/Raw execution. [Override](/guides/client/overrides) covers method replacement, chain continuation, and return values.
+
+## Input, screen, timer
+
+```js
+mp.game.onInputKeyEvent((action, key) => {
+  // EInputAction / EInputKey from client-types
+});
+
+const [width, height] = mp.game.getDisplayResolution();
+const elapsedMs = mp.getTimer(); // older types: mp.getGameTimer()
+```
+
+`onceGameLoaded` is the one-shot twin of `onGameLoaded`. Launcher JSON: `mp.getLauncherSettingsJSON()` / `mp.getLauncherSettings()`.
+
+`mp.game.ScriptGameInstance.GetMultiplayerSystem()` can strip world classes (`DeclareDeletedObjects`), set a default spawn (`SetDefaultSpawnPosition`), and toggle default MP effects.
+
+TweakDB (`mp.game.TweakDB`) is safe after `onTweak`: `getRecord`, `getFlat`, `setFlat`, `createRecord`, `updateRecord`. `setFlat` writes without refreshing the record, so batch several `setFlat` calls and then call `updateRecord`. Despite its name, `setFlatNoUpdate` refreshes the parent record after each write.
+
+## Variants
+
+Some natives take or return engine `Variant` boxes. Convert at the boundary:
+
+```js
+const boxed = mp.game.toVariant({ x: 1, y: 2, z: 3 }, 'Vector3');
+const plain = mp.game.fromVariant(boxed);
+```
+
+## JS bridge: pass vectors as objects
+
+Type definitions often list overloads such as `SetTranslation(x, y)` **and** `SetTranslation({ x, y })`. The JS bridge currently honors the **object** form. Separate numeric arguments are ignored or no-op.
+
+```js
+// widget is an inkWidget
+
+// Does nothing in the current bridge
+widget.SetAnchorPoint(0.5, 0.5);
+
+// Works
+widget.SetAnchorPoint({ x: 0.5, y: 0.5 });
+```
+
+Same rule for `SetRenderTransformPivot`, `SetTranslation`, `SetScale`, `SetSize`, and most other `inkWidget` transforms. If a native does nothing, wrap the numbers in `{ x, y }` (or `{ x, y, z }`) before adding more logic. Details: [JS bridge](/guides/general/js-bridge).
+
+## Ticks vs natives
+
+`mp.setTick(cb)` runs every render frame. Keep the callback tiny (distance checks, input). Do not allocate, query TweakDB, or walk every streamed entity on each tick.
+
+```js
+const tickId = mp.setTick(() => {
+  const player = mp.game.GetPlayer();
+  if (!player) return;
+});
+
+mp.events.on('resourceStop', () => {
+  mp.clearTick(tickId);
+});
+```
+
+## Finding a native
+
+1. Search the [client API](/reference/client/api/readme/) — `MpGame`, extended classes, enums.
+2. Look up the REDscript name on [NativeDB](https://nativedb.red4ext.com/).
+3. Call it as `mp.game.ClassName.Method(...)` or through `ScriptGameInstance.Get…()`.
+
+If a method exists in-game but not in `@cybermp/client-types`, that is a types gap. Do not invent a signature. Wrap the call and isolate it until the package is updated.

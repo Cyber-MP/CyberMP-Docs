@@ -1,0 +1,43 @@
+---
+title: Introduction
+description: CyberMP documentation structure and first run.
+---
+
+import { LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+CyberMP is a multiplayer platform for Cyberpunk 2077. Clients connect to a dedicated server. Game logic is implemented as **resources**: directories of JavaScript or Lua loaded by the server.
+
+| Section | Contents |
+| --- | --- |
+| Client | Game client setup: supported platforms, system requirements, launcher settings, direct connect, fast connect, F8 console |
+| Server | Dedicated server hosting: hardware and OS, `server.toml`, console commands, CDN for resource files |
+| Server Manager | Server registration, access tokens, plans, and listing in the Master List |
+| Concepts | Hashes and models, `resource.toml`, custom assets, client lifecycle, dimensions, sync and meta, troubleshooting |
+| JavaScript and Lua | The `mp` API in both languages, in sections with the same structure: server scripting, client scripting, shared scripting |
+| Recipes | Example resources |
+| Reference | TypeDoc from `@cybermp/server-types`, `client-types`, `browser-types` |
+
+## First run
+
+<CardGrid>
+  <LinkCard
+    title="Install the client"
+    href="/guides/getting-started/install-client"
+    description="Cyberpunk 2077 and the CyberMP client"
+  />
+  <LinkCard
+    title="Install the server"
+    href="/guides/getting-started/install-server"
+    description="Docker or binary, server.toml"
+  />
+  <LinkCard
+    title="Run the server"
+    href="/guides/getting-started/run-server"
+    description="Start the process and verify the port"
+  />
+  <LinkCard
+    title="Create a resource"
+    href="/guides/resources/creating-resource"
+    description="Hello World in resources/"
+  />
+</CardGrid>

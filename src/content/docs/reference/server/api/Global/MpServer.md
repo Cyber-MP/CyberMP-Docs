@@ -27,6 +27,8 @@ Defined in: mp.ts:66
 
 Defined in: mp.ts:90
 
+Contents of `server.toml`, parsed on every access. `null` if the file is missing or cannot be parsed.
+
 ***
 
 <a id="entities"></a>
@@ -196,6 +198,8 @@ Defined in: mp.ts:68
 > **cancelEvent**(): `void`
 
 Defined in: mp.ts:75
+
+Cancels the platform event that is currently being handled. For game events received from a client (`damage`, `explosion`, `playerHealing`, …) the server then does not relay the event to other clients; state the server already applied is not rolled back. Returning `false` from the handler has no effect — call this method instead.
 
 #### Returns
 

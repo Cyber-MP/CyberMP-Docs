@@ -97,12 +97,12 @@ title: "@cybermp/server-types"
 
 ## Global
 
+- [ResourceState](/reference/server/api/global/resourcestate/)
 - [MpCommands](/reference/server/api/global/mpcommands/)
 - [MpHashes](/reference/server/api/global/mphashes/)
 - [MpMeta](/reference/server/api/global/mpmeta/)
 - [MpResources](/reference/server/api/global/mpresources/)
 - [MpServer](/reference/server/api/global/mpserver/)
-- [MpVoiceChat](/reference/server/api/global/mpvoicechat/)
 - [Rotation](/reference/server/api/global/rotation/)
 - [Vector3](/reference/server/api/global/vector3/)
 - [Vector4](/reference/server/api/global/vector4/)

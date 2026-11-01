@@ -1,0 +1,42 @@
+---
+title: Создание сервера в Server Manager
+description: Создание карточки Master List для запущенного процесса.
+---
+
+import { Steps } from '@astrojs/starlight/components';
+
+<Steps>
+
+1. ## Адрес
+
+   Задайте `connection_host_addr` как публичный IP или DNS и порт. `127.0.0.1` — только для локальных тестов.
+
+2. ## Карточка
+
+   Войдите в [Server Manager](https://manager.cyber.mp) через Discord. Нажмите **Create new...** → **Server** и введите имя (3–32 символа). Число серверов зависит от [плана](/ru/guides/server-manager/subscriptions): 2 без плана, далее 4, 6, 8 или без ограничений.
+
+3. ## Данные
+
+   На вкладке **Settings** сервера заполните поля и сохраните:
+
+   | Поле | Ограничение |
+   | --- | --- |
+   | Description | До 256 символов. |
+   | Game Mode, Language | До 16 символов каждое. |
+   | Tags | До 5 тегов по 2–12 символов. |
+   | Website | URL. |
+   | Avatar, Banner | До 15 МБ на изображение. Баннеры и анимированные изображения зависят от плана. |
+
+   Число игроков и `max_players` здесь не задаются. Бэкенд читает их из `/info` сервера.
+
+4. ## Токен
+
+   На вкладке **Manage** скопируйте **Private token** в `private_token` в `server.toml` (или задайте переменную окружения `CYBERMP_PRIVATE_TOKEN`). Перезапустите процесс. См. [токены](/ru/guides/server-manager/tokens).
+
+5. ## Проверка
+
+   Примерно за 2 минуты сервер появляется в [списке серверов](/ru/guides/server-manager/server-list) с числом игроков. Если нет, проверьте [почему сервера нет в списке](/ru/guides/server-manager/server-list#сервера-нет-в-списке). Вход по [прямому подключению](/ru/guides/game-client/direct-connect) работает и без списка.
+
+</Steps>
+
+Ресурсы остаются на диске в `resources/`.

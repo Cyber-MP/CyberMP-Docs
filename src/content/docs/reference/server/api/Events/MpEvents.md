@@ -21,7 +21,7 @@ Provides both strongly typed and generic event APIs.
 
 Defined in: events.ts:614
 
-Emit a shared custom event.
+Emit a custom event to the server-side handlers of all server resources. It is not sent to clients — use `emitClient` for that.
 
 #### Parameters
 
@@ -83,7 +83,7 @@ Defined in: events.ts:599
 
 Unregister an event listener.
 
-Works for both standard and [MpEvents.onClient](/reference/server/api/events/mpevents/#onclient) events.
+Works for standard events. Handlers registered with [MpEvents.onClient](/reference/server/api/events/mpevents/#onclient) are currently not removed: `off()` looks them up under the plain event name, while `onClient` registers them under an internal prefixed name.
 
 ##### Type Parameters
 
@@ -115,7 +115,7 @@ Defined in: events.ts:609
 
 Unregister an event listener.
 
-Works for both standard and [MpEvents.onClient](/reference/server/api/events/mpevents/#onclient) events.
+Works for standard events. Handlers registered with [MpEvents.onClient](/reference/server/api/events/mpevents/#onclient) are currently not removed: `off()` looks them up under the plain event name, while `onClient` registers them under an internal prefixed name.
 
 ##### Parameters
 

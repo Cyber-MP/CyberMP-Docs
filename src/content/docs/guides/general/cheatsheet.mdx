@@ -1,0 +1,53 @@
+---
+title: Cheatsheet
+description: Required spawn, client, event, and configuration rules.
+slug: guides/general/cheatsheet
+---
+
+Summary of the [API map](/guides/general/api-map). Spawn and stream failures: [troubleshooting](/guides/general/troubleshooting).
+
+## Spawn
+
+`create` is synchronous: it runs in the current event-loop turn. After `await` you are on another turn. Details: [vehicles](/guides/server/vehicles).
+
+```js
+mp.vehicles.create({
+  model: mp.hashes.tweakdbid('Vehicle.v_standard2_archer_hella'),
+  appearance: mp.hashes.cname('default'),
+  position: player.position, // [x, y, z]
+  yaw: player.yaw,
+  dimension: player.dimension,
+});
+```
+
+| Field | Hasher |
+| --- | --- |
+| Ped / vehicle `model` | `tweakdbid` (`Character.*`, `Vehicle.*`) |
+| Object `model` | `resref` (`…\\.ent`) |
+| Pickup `model` | `tweakdbid` (`Items.*`) |
+| `appearance` | `cname('default')` unless a specific `.app` name is known |
+
+## Client
+
+```js
+mp.game.onGameLoaded(() => {
+  mp.local.spawnPlayer(x, y, z, yaw);
+});
+
+mp.events.on('vehicleStreamIn', (netID, gameID) => {
+  mp.network.getVehicleGameId(netID); // natives want gameID
+});
+
+widget.SetTranslation({ x: 100, y: 200 }); // not (100, 200)
+```
+
+## Events / RPC
+
+- Server `onClient` first arg is `player`.
+- Need a return value → [RPC](/guides/general/rpc), not `emit` + `emitClient`.
+- `void \| boolean` events: cancel with `return false` from a synchronous handler.
+- On `restart` the script runtime is recreated; in `resourceStop` release only state outside it (e.g. spawned entities).
+
+## Config names
+
+`private_token` (Master List), `disable_voice`.

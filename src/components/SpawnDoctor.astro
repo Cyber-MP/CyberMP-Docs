@@ -1,0 +1,157 @@
+---
+interface Props {
+  lang?: 'en' | 'ru';
+}
+
+const lang = Astro.props.lang === 'ru' ? 'ru' : 'en';
+const ru = lang === 'ru';
+const prefix = ru ? '/ru' : '';
+
+const questions = ru
+  ? [
+      {
+        id: 'tick',
+        title: 'event loop',
+        detail: 'create синхронный; после await — другой ход цикла',
+        href: `${prefix}/guides/server/vehicles`,
+      },
+      {
+        id: 'hash',
+        title: 'Hasher',
+        detail: 'tweakdbid для Character.* / Vehicle.* / Items.* (пикапы), resref для .ent',
+        href: `${prefix}/guides/general/hashes`,
+      },
+      {
+        id: 'app',
+        title: 'appearance',
+        detail: "хеш cname от 'default', не 0",
+        href: `${prefix}/guides/general/appearances`,
+      },
+      {
+        id: 'dim',
+        title: 'dimension',
+        detail: 'тот же, что у игрока, и он в streamingRadius',
+        href: `${prefix}/guides/general/sync-and-meta`,
+      },
+      {
+        id: 'client',
+        title: 'lifecycle',
+        detail: 'нативы и локальный спавн после onGameLoaded',
+        href: `${prefix}/guides/client/lifecycle`,
+      },
+    ]
+  : [
+      {
+        id: 'tick',
+        title: 'event loop',
+        detail: 'create is synchronous; after await you are on another turn',
+        href: `${prefix}/guides/server/vehicles`,
+      },
+      {
+        id: 'hash',
+        title: 'Hasher',
+        detail: 'tweakdbid for Character.* / Vehicle.* / Items.* (pickups), resref for .ent',
+        href: `${prefix}/guides/general/hashes`,
+      },
+      {
+        id: 'app',
+        title: 'appearance',
+        detail: "cname hash of 'default', not 0",
+        href: `${prefix}/guides/general/appearances`,
+      },
+      {
+        id: 'dim',
+        title: 'dimension',
+        detail: 'same as the player, and they are in streamingRadius',
+        href: `${prefix}/guides/general/sync-and-meta`,
+      },
+      {
+        id: 'client',
+        title: 'lifecycle',
+        detail: 'natives and local spawn after onGameLoaded',
+        href: `${prefix}/guides/client/lifecycle`,
+      },
+    ];
+---
+
+<div class="cmp-doctor" data-spawn-doctor data-lang={lang}>
+  <header class="cmp-doctor__head">
+    <div>
+      <p class="cmp-doctor__kicker">{ru ? 'Чеклист спавна' : 'Spawn checklist'}</p>
+      <p class="cmp-doctor__title">{ru ? 'Отметьте выполненные условия' : 'Mark completed checks'}</p>
+    </div>
+    <p class="cmp-doctor__count" data-count>0/{questions.length}</p>
+  </header>
+  <div class="cmp-doctor__bar" aria-hidden="true"><span data-bar></span></div>
+  <ol class="cmp-doctor__list">
+    {
+      questions.map((item, i) => (
+        <li>
+          <label class="cmp-doctor-row" data-row={item.id}>
+            <input type="checkbox" data-q={item.id} />
+            <span class="cmp-doctor-row__index">{i + 1}</span>
+            <span class="cmp-doctor-row__body">
+              <code>{item.title}</code>
+              <span class="cmp-doctor-row__detail">{item.detail}</span>
+            </span>
+          </label>
+          <a class="cmp-doctor-row__guide" href={item.href}>
+            {ru ? 'гайд' : 'guide'}
+          </a>
+        </li>
+      ))
+    }
+  </ol>
+  <p class="cmp-doctor__verdict" data-verdict></p>
+</div>
+
+<script>
+  function bind(root: HTMLElement) {
+    const ru = root.getAttribute('data-lang') === 'ru';
+    const boxes = [...root.querySelectorAll<HTMLInputElement>('[data-q]')];
+    const verdict = root.querySelector<HTMLElement>('[data-verdict]');
+    const count = root.querySelector<HTMLElement>('[data-count]');
+    const bar = root.querySelector<HTMLElement>('[data-bar]');
+    if (!verdict) return;
+
+    const hints: Record<string, string> = ru
+      ? {
+          tick: 'После await исходное событие уже закрыто. create всё ещё синхронный, но это другой ход event loop.',
+          hash: 'Не тот hasher: сущность есть, модели нет или она чужая.',
+          app: 'appearance: 0 — у клиентов разный вид, иногда пусто.',
+          dim: 'Другой dimension: вас нет в мире этой сущности.',
+          client: 'GetPlayer() до onGameLoaded почти всегда пустой.',
+        }
+      : {
+          tick: 'After await the originating event is already finished. create is still synchronous, but it is a different event-loop turn.',
+          hash: 'Wrong hasher: the entity exists with a missing or random model.',
+          app: 'appearance: 0 — clients disagree on the look, or get nothing.',
+          dim: 'A different dimension means you are not in that entity’s world.',
+          client: 'GetPlayer() before onGameLoaded is almost always empty.',
+        };
+
+    const render = () => {
+      const total = boxes.length;
+      const done = boxes.filter((b) => b.checked).length;
+      if (count) count.textContent = `${done}/${total}`;
+      if (bar) bar.style.width = `${total ? (done / total) * 100 : 0}%`;
+      boxes.forEach((b) => {
+        b.closest('[data-row]')?.toggleAttribute('data-done', b.checked);
+      });
+      const missing = boxes.filter((b) => !b.checked);
+      verdict.toggleAttribute('data-ok', missing.length === 0);
+      if (missing.length === 0) {
+        verdict.textContent = ru
+          ? 'Все пункты зелёные. Дальше: логи F8, exists перед at, тот же resource.'
+          : 'All green. Next: F8 logs, exists before at, same resource.';
+        return;
+      }
+      verdict.textContent = hints[missing[0]?.dataset.q ?? ''] ?? '';
+    };
+
+    boxes.forEach((b) => b.addEventListener('change', render));
+    render();
+  }
+
+  document.querySelectorAll<HTMLElement>('[data-spawn-doctor]').forEach(bind);
+</script>

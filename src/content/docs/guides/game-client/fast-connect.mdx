@@ -1,0 +1,43 @@
+---
+title: Fast connect
+description: Join a server from a browser link; the launcher opens and connects.
+---
+
+Fast connect is a join link for a server listed in the [Master List](/guides/server-manager/server-list). The link looks like `https://c.cyber.mp/<id>`. The player opens it in a browser, the CyberMP launcher starts on its own and connects the player to that server. The player does not type an address.
+
+Fast connect is a [subscription](/guides/server-manager/subscriptions) feature: it is available from the Bronze plan.
+
+It is not [direct connect](/guides/game-client/direct-connect). Direct connect is joining by `host:port` typed by hand and works for any server, listed or not.
+
+## Turn it on
+
+You turn fast connect on in [Server Manager](/guides/server-manager), on the **Control** card of the server page, not in [`server.toml`](/reference/server/configuration).
+
+| Option | Plan | What it does |
+| --- | --- | --- |
+| Fast Connection | Bronze | Turns the link on. **Preview** shows the link page. |
+| Fast Connection URL | Gold | Your own id for `https://c.cyber.mp/<id>`. It must be unique. Below Gold the id is generated: 8 random characters. |
+| Fast Connection Banner | Gold | Background image of the link web page. |
+
+The **Connection Banner** on the same card is a different image: the background players see while connecting to the server. Bronze allows a static image, Gold an animated one.
+
+The game server only needs the listing's [Master List token](/guides/server-manager/tokens) in `private_token`. It reads the fast connect values from the Master List on start and with every heartbeat (about every 2 minutes), so changes in Server Manager reach a running server without a restart.
+
+The link resolves only while the server sends heartbeats. Turning off **Public Visibility** hides the server from the list but does not disable its link.
+
+## What players need
+
+The CyberMP launcher installed on the PC. The browser hands the link to the launcher, and the launcher starts the game with the server address.
+
+The server page on [cyber.mp/servers](https://cyber.mp/servers) works the same way: **Play** opens the launcher through `cybermp://connect?id=<server id>`, and the share button copies the fast connect link when fast connect is on.
+
+## Discord status
+
+The server sends listing data to every joining client for the player's Discord status:
+
+| Plan | What the server sends |
+| --- | --- |
+| Silver and higher | Server name, avatar and banner. |
+| Gold and higher, fast connect on | Also the fast connect id and banner, for the join button. |
+
+On lower plans the server leaves these fields out.

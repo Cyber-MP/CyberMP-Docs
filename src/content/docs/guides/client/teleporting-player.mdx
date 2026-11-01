@@ -1,18 +1,18 @@
 ---
-title: How to teleport player
-description: Learn how to safely teleport players in the game world.
+title: Teleport the player
+description: Move the local player. Close pause and settings menus first.
 slug: guides/client/teleporting-player
 ---
 import { Steps } from '@astrojs/starlight/components';
 
-In this guide, you will learn how to build a reusable teleportation function, handle menu closures to prevent UI lockups, and create a custom console command to move the player around the map.
+Close the pause and settings menus before teleport. Otherwise the UI often remains stuck after the move.
 
 <Steps>
-1. ## Tracking and Closing Menus
+1. ## Track and close menus
 
-   Before teleporting a player (or spawning them), it is crucial to force-close any open pause or settings menus to prevent the game's user interface from getting stuck.
+   Before teleport or spawn, force-close pause and settings menus. Otherwise the game UI can remain stuck.
 
-   First, add these observers to your `client.js` to track when the player enters and exits menus:
+   Observers in `client.js` track enter and exit:
 
    ```js title="client.js"
     let MenuScenario_PauseMenu = null;
@@ -39,7 +39,7 @@ In this guide, you will learn how to build a reusable teleportation function, ha
     });
    ```
 
-    Next, create a helper function that triggers the close events:
+    Helper that triggers close events:
     
     ```js title="client.js"
     const closeAllMenus = () => {
@@ -55,10 +55,10 @@ In this guide, you will learn how to build a reusable teleportation function, ha
     
     ```
 
-2. ## Implementing the Teleport Function
+2. ## Teleport
 
-    With menu handling out of the way, we can build the core teleport logic. We will use the game's native `TeleportationFacility` to move the player object.
-    Add the following function to `client.js`:
+    Use the native `TeleportationFacility` to move the player object.
+
     ```js title="client.js"
     const teleportPlayer = (x, y, z, yaw = 1) => {
         // Always close menus before moving the player
@@ -83,9 +83,9 @@ In this guide, you will learn how to build a reusable teleportation function, ha
     ```
 
 
-3. ## Registering the Commands
+3. ## Commands
 
-    To test your new logic, let's register a couple of chat commands via `mp.commands.add`. We will add an `afterlife` command to teleport the player directly to the Afterlife club, and a `close-menu` command for utility.
+    Register console commands with `mp.commands.add`. `afterlife` teleports to Afterlife. `close-menu` closes tracked menus.
     ```js title="client.js"
     // Teleports the player to the Afterlife club coordinates
     mp.commands.add('afterlife', () => {
@@ -100,4 +100,6 @@ In this guide, you will learn how to build a reusable teleportation function, ha
 </Steps>
 
 
-Save your file and restart your resource. You can now press `F8` to open your client console and type `afterlife` to instantly teleport to Afterlife!
+Restart the resource. Open the client console (`F8`) and run `afterlife`.
+
+When the destination is in another [dimension](/guides/general/sync-and-meta), set `player.dimension` on the server first and show a loading overlay. Same-dimension teleports can reuse already-streamed interiors and finish immediately.

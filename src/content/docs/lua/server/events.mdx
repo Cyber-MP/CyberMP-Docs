@@ -1,0 +1,101 @@
+---
+title: Events (Lua)
+description: Platform events, addClient, triggerClient, and cancelling the default action in Lua.
+---
+import EventFilter from '../../../../components/EventFilter.astro';
+
+Server scripts receive platform and network traffic through `mp.events`. Connections, deaths, vehicle interaction, and client packets arrive here.
+
+## Platform and custom events
+
+`mp.events.add(name, fn)` registers a handler for platform events and for custom events triggered inside the server process. It returns a handler id. `mp.events.trigger(name, ...)` sends a local event.
+
+```lua title="server.lua"
+mp.events.add('playerConnected', function(playerId, tempId)
+  print('Player connected - network id', playerId)
+end)
+
+mp.events.add('logServerActivity', function(action, details)
+  print(('[Activity Log] %s | %s'):format(action, details))
+end)
+
+mp.events.trigger('logServerActivity', 'Database', 'Initial connection established.')
+```
+
+Array payloads arrive as Lua tables with indexes from `1`:
+
+```lua title="server.lua"
+mp.events.add('enterVehicle', function(playerId, data)
+  local vehicleId, seat = data[1], data[2]
+  print('enter', playerId, vehicleId, seat)
+end)
+```
+
+## Client packets
+
+A client script sends a packet with `mp.events.triggerServer`. The server receives it with `mp.events.addClient`.
+
+| Call | Handler |
+| --- | --- |
+| `mp.events.addClient(name, fn)` | `fn(player, ...)`: the sender's player object, or the id when the player no longer exists. |
+| `mp.events.addClientRaw(name, fn)` | `fn(playerId, ...)` with the numeric id. |
+
+Do not take the player id from payload data: the client can spoof it. Use the first argument.
+
+```lua title="server.lua"
+mp.events.addClient('requestVehicleSpawn', function(player, modelName)
+  print(('%s (%d) requested %s'):format(player.nickname, player.id, modelName))
+end)
+```
+
+A return value needs a reply event: [network events](/lua/shared/events#request-and-response).
+
+## Events to clients
+
+| Call | Description |
+| --- | --- |
+| `mp.events.triggerClient(playerOrId, name, ...)` | Event to one client (`mp.events.addServer` there). `-1` sends to all players. Returns `false` and prints a message when the player object no longer exists. |
+| `player:trigger(name, ...)` | Same, on the player object. |
+| `mp.events.triggerClientRaw(playerId, name, ...)` | Same with a numeric id. |
+| `mp.events.triggerUnreliable(playerOrId, name, bps, ...)` | Over the unreliable channel; `bps` is the send rate passed to the network layer. `triggerUnreliableRaw` takes a numeric id. |
+
+```lua title="server.lua"
+mp.events.add('playerSpawn', function(playerId)
+  mp.events.triggerClient(playerId, 'serverNotification', 'Welcome back to Night City.')
+end)
+```
+
+## Removing handlers
+
+`mp.events.remove(name, id)` takes the id returned by `add` or `addClient`. Passing the function does nothing.
+
+- It looks for `add` handlers of that name first, and only when there are none, for `addClient` handlers. If one name is used with both, an `addClient` handler cannot be removed.
+- A name that was never registered raises an error.
+
+All handlers are dropped when the resource stops.
+
+## Cancelling the default action
+
+Return `false` from a platform event handler so the engine skips its own action (vanilla heal, knockdown, door, explosion). Any other return value, or none, lets the action run.
+
+```lua title="server.lua"
+mp.events.add('playerHealing', function(playerId)
+  return false
+end)
+```
+
+A handler runs as a coroutine that starts at once. Return `false` before any `mp.wait`: after it, the event is already finished and the return value is ignored. With several handlers, one `false` is enough.
+
+`mp.events.cancel()` was removed. Replace it with `return false`.
+
+`mp.events.isCanceled()` after `mp.events.trigger` returns `true` when a handler cancelled that event.
+
+Cancelling without matching client state leaves the player inconsistent (a door appears open while the state is still closed). Verify on a single case first.
+
+## Event catalog
+
+The full platform event catalog is below. Subscribe with `mp.events.add(name, fn)`; filter by name and check the cancellable badges.
+
+For example, `playerConnected` passes `(playerId, tempId)`. `addClient` handlers receive the sending player object, and arrays become Lua tables with indexes from `1`. For payload encoding rules, see [payloads](/lua/shared/events#payloads).
+
+<EventFilter />

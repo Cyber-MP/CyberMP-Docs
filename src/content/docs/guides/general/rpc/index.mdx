@@ -1,0 +1,357 @@
+---
+title: RPC
+description: Official @cybermp/rpc — call a method on another side and wait for the result.
+slug: guides/general/rpc
+---
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import RpcFlow from '../../../../../components/RpcFlow.astro';
+
+Events are unidirectional: the sender does not receive a result. For a menu, inventory, or a command that needs a result, use **RPC**: call a method and `await` the answer.
+
+This is an official library. Do not reimplement it on `emit` / `on`. Packages live on npm and in [cybermp-rpc](https://github.com/cyber-mp/cybermp-rpc).
+
+| Package | Where |
+| --- | --- |
+| [`@cybermp/rpc-server`](https://www.npmjs.com/package/@cybermp/rpc-server) | Server resource |
+| [`@cybermp/rpc-client`](https://www.npmjs.com/package/@cybermp/rpc-client) | Game client resource |
+| [`@cybermp/rpc-browser`](https://www.npmjs.com/package/@cybermp/rpc-browser) | CEF page |
+| [`@cybermp/rpc-router`](https://www.npmjs.com/package/@cybermp/rpc-router) | Type-safe contracts (optional) |
+| [`@cybermp/rpc-superjson`](https://www.npmjs.com/package/@cybermp/rpc-superjson) | SuperJSON serializer (optional) |
+| [`@cybermp/rpc-react`](https://www.npmjs.com/package/@cybermp/rpc-react) | React in CEF: register / on as hooks |
+| [`@cybermp/rpc-router-react`](https://www.npmjs.com/package/@cybermp/rpc-router-react) | React in CEF: implement a contract |
+| [`@cybermp/rpc-router-tanstack-query`](https://www.npmjs.com/package/@cybermp/rpc-router-tanstack-query) | TanStack Query options from a router client |
+| [`@cybermp/rpc-otel`](https://www.npmjs.com/package/@cybermp/rpc-otel) | OpenTelemetry spans for RPC |
+
+Install the package for that side. The server finds it in `node_modules` of the resource folder: through `require` in a `.js` script or `import` in an `.mjs` script. Client and CEF scripts do not resolve `node_modules`, so **bundle the package into them** (esbuild, tsdown, Bun). The samples below use `import`: on the server bundle them too, or name the file `server.mjs`.
+
+```shell
+npm install @cybermp/rpc-server @cybermp/rpc-client
+```
+
+For a CEF page, add `@cybermp/rpc-browser`. Types packages (`@cybermp/server-types` and friends) are peer dependencies. See [Type safety](/guides/general/type-safety).
+
+## Two kinds of calls
+
+| You want | Register with | Call with |
+| --- | --- | --- |
+| Wait for a result | `rpc.register('name', handler)` | `callServer` / `callClient` / `callBrowser` |
+| No return value | `rpc.on('name', handler)` | `triggerServer` / `triggerClient` / `triggerBrowser` |
+
+Handler: `(ctx, next) => …`. Return a value from `register`. That value is what the other side `await`s.
+
+`ctx` has `data`, `meta`, `packet`, and on a **call** an AbortSignal in `ctx.signal`. On the server, `ctx.player` is the [`MpPlayer`](/reference/server/api/entities/players/mpplayer/) who sent the packet. For a local `callServer` on the server there is no remote player.
+
+Give every instance the same `name`. Packets go to `{name}__rpc:invoke` / `{name}__rpc:response`. If two resources use the empty default name, they will see each other's RPC.
+
+## Server and client
+
+This matches the [official example](https://github.com/cyber-mp/cybermp-rpc/tree/main/examples/basic).
+
+<Tabs>
+  <TabItem label="Server">
+    ```js title="server.js"
+    import { RpcServer } from '@cybermp/rpc-server';
+
+    const rpc = new RpcServer({ name: 'hello' });
+
+    rpc.register('ping-call', (ctx) => {
+      return ctx.data;
+    });
+
+    rpc.on('ping-trigger', (ctx) => {
+      console.log('trigger', ctx.data);
+    });
+
+    mp.commands.add('ping-clients', async () => {
+      for (const player of mp.players.toArray()) {
+        rpc.triggerClient(player, 'ping-trigger');
+        const result = await rpc.callClient(player, 'ping-call', {
+          for: player.nickname,
+        });
+        console.log(result);
+      }
+    });
+    ```
+  </TabItem>
+  <TabItem label="Client">
+    ```js title="client.js"
+    import { RpcClient } from '@cybermp/rpc-client';
+
+    const rpc = new RpcClient({ name: 'hello' });
+
+    rpc.register('ping-call', (ctx) => ctx.data);
+    rpc.on('ping-trigger', (ctx) => {
+      console.log('trigger', ctx.data);
+    });
+
+    mp.commands.add('ping-server', async () => {
+      rpc.triggerServer('ping-trigger');
+      const result = await rpc.callServer('ping-call', { testData: 5 });
+      console.log(result);
+    });
+    ```
+  </TabItem>
+</Tabs>
+
+Call directions:
+
+<RpcFlow />
+
+| From | Methods |
+| --- | --- |
+| Server | `callClient(player, …)`, `triggerClient(player, …)`, `callBrowser(player, …)`, `triggerBrowser(player, …)`, plus local `callServer` / `triggerServer` |
+| Client | `callServer` / `triggerServer`, `callClient` / `triggerClient`, `callBrowser` / `triggerBrowser` |
+| Browser | `callServer` / `triggerServer`, `callClient` / `triggerClient` |
+
+`player` is an `MpPlayer` or a numeric id. `callClient` / `callBrowser` throw if the id is `-1`.
+
+Arguments: `(method, data?, meta?, options?)` or one object `{ data, meta, name, timeout, signal }`. `name` here is the **target instance** name, if it differs from yours (`RpcBrowser` ignores it and always targets its own `name`; its `triggerServer` / `triggerClient` take only `(method, data?, meta?)`). Default timeout is 10 seconds (`pendingTimeout`).
+
+Do not put the player id in `data` and treat it as authoritative. On the server, use `ctx.player`.
+
+## CEF
+
+`RpcBrowser` talks to the client (and through it to the server). **Keep an `RpcClient` on the client** with the same `name`: it forwards browser ↔ server. The browser cannot forward by itself.
+
+```js title="ui.js"
+import { RpcBrowser } from '@cybermp/rpc-browser';
+
+const rpc = new RpcBrowser({ name: 'hello' });
+
+document.getElementById('spawn').addEventListener('click', async () => {
+  const result = await rpc.callServer('vehicles:spawn', { model: 'Vehicle.v_standard2_archer_hella' });
+  console.log(result);
+});
+```
+
+Gameplay authority remains on the server. The client can check distance or play a sound in a `register` handler, then call the server — or let the browser call the server and validate everything again in `ctx.player`.
+
+## Errors, middleware, options
+
+Throw `RpcError` so the caller receives a code, not a generic internal error:
+
+```js
+import { RpcError } from '@cybermp/rpc-server';
+
+rpc.register('bank:withdraw', (ctx) => {
+  if (!ctx.player) throw RpcError.unauthorized();
+  throw RpcError.forbidden({ message: 'Not enough money' });
+});
+```
+
+Codes include `UNAUTHORIZED`, `FORBIDDEN`, `NOT_FOUND`, `METHOD_NOT_FOUND`, `INVALID_DATA`, `TIMEOUT`, `TOO_MANY_PENDING_REQUESTS`, `INTERNAL_ERROR`.
+
+Middleware runs on every incoming call/trigger. Call `next()` and return its result if later handlers should run:
+
+```js
+rpc.use(async (ctx, next) => {
+  console.log(ctx.packet.method, ctx.player?.nickname);
+  return next();
+});
+```
+
+Constructor options:
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `name` | `''` | Instance id; must match on every side |
+| `pendingTimeout` | `10000` | `call*` timeout in ms |
+| `maxPending` | `1000` | Cap on in-flight calls |
+| `throwUnknownMethods` | `true` | Unknown `register` name → `METHOD_NOT_FOUND` |
+| `serializer` | none | e.g. `new SuperJSONRpcSerializer()` from `@cybermp/rpc-superjson` (same on all sides) |
+
+Per-call: `{ timeout, signal }` to shorten the wait or abort. On `resourceStop`, `unregister` / `off` / `offAll` so a restart does not stack handlers.
+
+## Type-safe router
+
+[`@cybermp/rpc-router`](https://www.npmjs.com/package/@cybermp/rpc-router) describes procedures once (Zod or any [Standard Schema](https://standardschema.dev/) library) and shares that tree with the client.
+
+```ts title="shared/contract.ts"
+import { contract } from '@cybermp/rpc-router/server';
+import { RpcApplyType } from '@cybermp/rpc-core/definitions';
+import { z } from 'zod';
+
+export const appContract = {
+  vehicles: {
+    spawn: contract
+      .method(RpcApplyType.REGISTER)
+      .input(z.object({ model: z.string() }))
+      .output(z.object({ ok: z.boolean() }))
+      .build(),
+  },
+};
+```
+
+Default procedure method is `on` (trigger). For `call` / `await`, set `.method(RpcApplyType.REGISTER)`.
+
+```ts title="server.ts"
+import { RpcServer } from '@cybermp/rpc-server';
+import { RpcRouter } from '@cybermp/rpc-router/server';
+import { appContract } from './shared/contract';
+
+const rpc = new RpcServer({ name: 'hello' });
+const router = new RpcRouter(rpc, { validation: true });
+
+router.apply(appContract);
+router.implement(appContract, {
+  vehicles: {
+    spawn: async (ctx) => {
+      return { ok: true };
+    },
+  },
+});
+```
+
+```ts title="client.ts"
+import { RpcClient, MpEnv } from '@cybermp/rpc-client';
+import { createRouterClient } from '@cybermp/rpc-router/client';
+import { appContract } from './shared/contract';
+
+const rpc = new RpcClient({ name: 'hello' });
+const api = createRouterClient<typeof appContract, MpEnv.CLIENT, MpEnv.SERVER>({
+  rpc,
+  targetEnv: MpEnv.SERVER,
+});
+
+const result = await api.vehicles.spawn.call({ model: 'Vehicle.v_standard2_archer_hella' });
+```
+
+Nested keys become the method name with dots: `vehicles.spawn`. Trigger procedures expose `.trigger()`, not `.call()`.
+
+`safe()` / `createSafeClient()` return `{ error, data, isSuccess }` instead of throwing.
+
+## React (CEF)
+
+[`@cybermp/rpc-react`](https://www.npmjs.com/package/@cybermp/rpc-react) is for a React UI in the browser: peer `react` ≥ 18, `@cybermp/rpc-browser`, `@cybermp/browser-types`.
+
+Wrap the tree with `RpcProvider`. Hooks register on mount and unregister on unmount (so a remount does not stack handlers).
+
+```tsx title="ui.tsx"
+import { RpcBrowser } from '@cybermp/rpc-browser';
+import { RpcProvider, useOn, useRegister, useRpc } from '@cybermp/rpc-react';
+
+const rpc = new RpcBrowser({ name: 'hello' });
+
+function Hud() {
+  const rpc = useRpc();
+
+  useRegister('hud:ping', (ctx) => {
+    return { ok: true, from: ctx.data };
+  }, []);
+
+  useOn('hud:toast', (ctx) => {
+    console.log(ctx.data);
+  }, []);
+
+  return (
+    <button
+      onClick={async () => {
+        const result = await rpc.callServer('vehicles:spawn', { model: 'Vehicle.v_standard2_archer_hella' });
+        console.log(result);
+      }}
+    >
+      Spawn
+    </button>
+  );
+}
+
+export function App() {
+  return (
+    <RpcProvider rpc={rpc}>
+      <Hud />
+    </RpcProvider>
+  );
+}
+```
+
+`useOn(..., deps, cleanAll)`: by default `cleanAll` is `true` (`offAll` on unmount). Pass `false` to remove only this hook's handler (`off`).
+
+Without `RpcProvider`, `useRpc` does not throw: the context default is an empty object, so the hooks fail on the first `register` / `on` call.
+
+## Router + React
+
+[`@cybermp/rpc-router-react`](https://www.npmjs.com/package/@cybermp/rpc-router-react) does the same for a contract: `implement` while the component is mounted, `unimplement` when it leaves.
+
+```tsx title="ui.tsx"
+import { RpcBrowser } from '@cybermp/rpc-browser';
+import { RpcRouter } from '@cybermp/rpc-router/server';
+import { RpcRouterProvider, useImplement } from '@cybermp/rpc-router-react';
+import { appContract } from './shared/contract';
+
+const rpc = new RpcBrowser({ name: 'hello' });
+const router = new RpcRouter(rpc);
+router.apply(appContract);
+
+function VehicleUi() {
+  useImplement(appContract.vehicles.spawn, async (ctx) => {
+    return { ok: true };
+  }, []);
+
+  return null;
+}
+
+export function App() {
+  return (
+    <RpcRouterProvider router={router}>
+      <VehicleUi />
+    </RpcRouterProvider>
+  );
+}
+```
+
+`useRouter()` returns that `RpcRouter`. You can pass a handler tree to `useImplement(appContract, { vehicles: { spawn: … } })` the same way as `router.implement`.
+
+## TanStack Query
+
+[`@cybermp/rpc-router-tanstack-query`](https://www.npmjs.com/package/@cybermp/rpc-router-tanstack-query) wraps a router client into `queryOptions` / `callMutationOptions` / `triggerMutationOptions`. Peer: `@tanstack/query-core` ≥ 5.80 (React Query, Vue Query, and the rest of the family).
+
+`input` is the **argument list** of `.call()` / `.trigger()`, not the payload object.
+
+```tsx
+import { RpcBrowser, MpEnv } from '@cybermp/rpc-browser';
+import { createRouterClient } from '@cybermp/rpc-router/client';
+import { createRouterClientQuery } from '@cybermp/rpc-router-tanstack-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
+import { appContract } from './shared/contract';
+
+const rpc = new RpcBrowser({ name: 'hello' });
+const api = createRouterClientQuery(
+  createRouterClient<typeof appContract, MpEnv.BROWSER, MpEnv.SERVER>({
+    rpc,
+    targetEnv: MpEnv.SERVER,
+  }),
+);
+
+function Garage() {
+  const spawn = useQuery(
+    api.vehicles.spawn.queryOptions({
+      input: [{ model: 'Vehicle.v_standard2_archer_hella' }],
+    }),
+  );
+
+  const mutateSpawn = useMutation(api.vehicles.spawn.callMutationOptions());
+
+  return (
+    <button onClick={() => mutateSpawn.mutate([{ model: 'Vehicle.v_standard2_archer_hella' }])}>
+      {spawn.data?.ok ? 'ok' : 'spawn'}
+    </button>
+  );
+}
+```
+
+`skipToken` as `input` disables the query. Trigger procedures use `.triggerMutationOptions()` instead of `.callMutationOptions()`. There are also `queryKey`, `infiniteOptions`, and `mutationKey` if you need them by hand. Wrap the tree in `QueryClientProvider` like any other TanStack Query app.
+
+## OpenTelemetry
+
+[`@cybermp/rpc-otel`](https://www.npmjs.com/package/@cybermp/rpc-otel) plugs RPC into a tracer you already registered (`@opentelemetry/api` ≥ 1.9, `@opentelemetry/instrumentation` ≥ 0.203). After that, calls, handlers, and serialize/deserialize get spans.
+
+```js
+import { registerInstrumentations } from '@opentelemetry/instrumentation';
+import { CRPCInstrumentation } from '@cybermp/rpc-otel';
+
+registerInstrumentations({
+  instrumentations: [new CRPCInstrumentation()],
+});
+```
+
+Or `new CRPCInstrumentation().enable()`. `disable()` turns tracing off. Register your `TracerProvider` first, or there is nowhere to export the spans.

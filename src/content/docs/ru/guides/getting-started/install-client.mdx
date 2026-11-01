@@ -1,0 +1,31 @@
+---
+title: Установка клиента
+description: Установка Cyberpunk 2077 и клиента CyberMP.
+---
+
+import { Steps } from '@astrojs/starlight/components';
+
+Требуются Cyberpunk 2077 и клиент CyberMP. Выделенный сервер — отдельный процесс.
+
+<Steps>
+
+1. ## Cyberpunk 2077
+
+   Steam, GOG или Epic. Сборка игры должна совпадать со сборкой клиента CyberMP.
+
+2. ## Клиент CyberMP
+
+   Откройте [cyber.mp/download](https://cyber.mp/download) и нажмите **Download**. Браузер скачает веб-установщик `cybermp-launcher-setup.exe`. Запустите его: он скачает и установит лаунчер CyberMP.
+
+   Запускайте **CyberMP**. Не открывайте сессию из ванильного лаунчера игры. Если лаунчер не нашёл игру, укажите путь к `Cyberpunk2077.exe` в **Settings** → **Game location** → **Browse**. См. [лаунчер](/ru/guides/game-client/launcher).
+
+   Лаунчер обновляется сам.
+
+3. ## Подключение
+
+   - **Servers** в лаунчере: публичный [список серверов](/ru/guides/server-manager/server-list)
+   - **Play** на [cyber.mp/servers](https://cyber.mp/servers)
+   - Ссылка [быстрого подключения](/ru/guides/game-client/fast-connect) `https://c.cyber.mp/<id>`
+   - [Прямое подключение](/ru/guides/game-client/direct-connect) на `host:port` (локально по умолчанию `127.0.0.1:2077`)
+
+</Steps>

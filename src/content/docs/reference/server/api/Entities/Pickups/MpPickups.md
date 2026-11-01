@@ -19,7 +19,7 @@ Defined in: pickups.ts:37
 
 > **at**(`entity`): [`MpPickup`](/reference/server/api/entities/pickups/mppickup/)
 
-Defined in: entities.ts:110
+Defined in: entities.ts:108
 
 Retrieves an entity by instance or ID.
 
@@ -35,11 +35,7 @@ Entity instance or ID
 
 [`MpPickup`](/reference/server/api/entities/pickups/mppickup/)
 
-Entity instance
-
-#### Throws
-
-If entity does not exist
+Entity instance, or `undefined` if the entity does not exist (does not throw)
 
 #### Inherited from
 
@@ -73,7 +69,7 @@ Defined in: pickups.ts:38
 
 > **exists**(`entity`): `boolean`
 
-Defined in: entities.ts:100
+Defined in: entities.ts:98
 
 Checks if an entity exists.
 

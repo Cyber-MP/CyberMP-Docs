@@ -1,0 +1,42 @@
+---
+title: Set up your workspace
+description: Directory layout and TypeScript packages for CyberMP resources.
+---
+
+import { FileTree } from '@astrojs/starlight/components';
+
+The API reference is generated from the official type packages. Names in the guides (`mp.local`, `mp.network`, `mp.hashes`) match those packages.
+
+## Layout
+
+<FileTree>
+  - server.toml
+  - resources
+    - hello_world
+      - resource.toml
+      - server.js
+      - client.js
+    - my_ui
+      - resource.toml
+      - client.js
+      - ui
+        - index.html
+  - src # TypeScript compiled into resources/
+</FileTree>
+
+Server scripts run in Node: `require` resolves `node_modules` from the resource folder. A server `.js` file runs as a classic script, so `import` statements fail there; a `.mjs` file loads as an ES module through Node and can `import` packages from `node_modules`. Client and CEF scripts do not resolve `node_modules`: bundle npm imports into the file referenced by `resource.toml`.
+
+## Types
+
+Use one family of packages per `tsconfig`:
+
+```shell
+npm install -D @cybermp/server-types @cybermp/client-types @cybermp/browser-types
+```
+
+Three runtimes, three globals. Do not mix packages in one file.
+## Tools
+
+- [Hot reload](/guides/general/hotreload)
+- [Client console](/reference/client/console) (F8), [server console](/reference/server/console)
+- [`cef_debug`](/reference/server/configuration) for CEF

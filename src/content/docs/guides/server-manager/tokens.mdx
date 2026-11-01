@@ -1,0 +1,20 @@
+---
+title: Tokens
+description: Master List token in private_token.
+---
+
+Server Manager issues a **Master List** token when you [create a listing](/guides/server-manager/create-server). Only the server owner sees it: **Manage** → **Private token**. Managers do not.
+
+With the token, the dedicated process sends a heartbeat with its `connection_host_addr` to `https://api.cyber.mp/servers` about every 2 minutes.
+
+Field: [`private_token`](/reference/server/configuration), or the `CYBERMP_PRIVATE_TOKEN` environment variable. Empty string: the process does not publish.
+
+```toml title="server.toml"
+private_token = "your-master-list-token"
+```
+
+Store the value on the host. Do not include it in a client resource.
+
+The token has no expiry. **Reset** issues a new one, at most once an hour. The old token stops working at once, so update `server.toml` and restart the process.
+
+If the listing stays offline: missing token, token reset in Server Manager, or token issued for a different listing. Publishing is also rejected while the server owner is banned. See [server list](/guides/server-manager/server-list#the-server-is-not-in-the-list).

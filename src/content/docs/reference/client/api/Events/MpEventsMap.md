@@ -20,7 +20,7 @@ Covers resource lifecycles, network streaming updates, and entity synchronizatio
 
 Defined in: events.d.ts:11
 
-Fired when any local resource begins initialization and starts running.
+Fired when any local client resource starts running (not fired for the internal `CyberMP_Core` resource). The runtime also queues `anyClientResourceStart` with the same argument.
 
 #### Parameters
 
@@ -44,7 +44,7 @@ The unique identification name of the started resource.
 
 Defined in: events.d.ts:17
 
-Fired when any local resource is explicitly terminated or reloaded.
+Fired when any local client resource is stopped or restarted (not fired for `CyberMP_Core`). The runtime also queues `anyClientResourceStop` with the same argument.
 
 #### Parameters
 
@@ -68,7 +68,7 @@ The unique identification name of the stopped resource.
 
 Defined in: events.d.ts:23
 
-Fired when the server signals that a server-side resource has started.
+Server-side event. The client runtime never emits it (client code emits `anyClientResourceStart` instead), so a client listener is not called.
 
 #### Parameters
 
@@ -92,7 +92,7 @@ The unique identification name of the server resource.
 
 Defined in: events.d.ts:29
 
-Fired when the server signals that a server-side resource has stopped running.
+Server-side event. The client runtime never emits it (client code emits `anyClientResourceStop` instead), so a client listener is not called.
 
 #### Parameters
 
@@ -296,7 +296,7 @@ The native engine entity handling index ID.
 
 Defined in: events.d.ts:44
 
-Fired when the engine re-scans and refreshes the global resource manifest map.
+Server-side event, emitted after the server re-scans its resources. The client runtime never emits it.
 
 #### Returns
 

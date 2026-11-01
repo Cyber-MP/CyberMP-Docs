@@ -97,7 +97,7 @@ Triggered when a fire starts anywhere on map.
 
 ### globalMetaChange()
 
-> **globalMetaChange**(`id`, `key`, `oldValue`, `newValue`): `void`
+> **globalMetaChange**(`key`, `newValue`, `oldValue`): `void`
 
 Defined in: events.ts:410
 
@@ -105,19 +105,15 @@ Triggered when global meta changed
 
 #### Parameters
 
-##### id
-
-`string`
-
 ##### key
 
 `string`
 
-##### oldValue
+##### newValue
 
 `any`
 
-##### newValue
+##### oldValue
 
 `any`
 

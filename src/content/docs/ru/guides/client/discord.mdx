@@ -1,0 +1,38 @@
+---
+title: Discord
+description: Статус в Discord и OAuth с клиента через mp.discord.
+---
+
+Клиент взаимодействует с Discord через `mp.discord`. Только клиент. На сервере такого объекта в типах нет.
+
+## Статус (rich presence)
+
+```js title="client.js"
+mp.discord.updateRichPresence('Night City', 'Walking the Glen');
+mp.discord.updateRichPresence(); // пустые state и details
+```
+
+`state` и `details` — необязательные строки, короткие; отсутствующее значение становится пустой строкой. Вызов без аргументов не убирает статус: логотип CyberMP и таймер остаются, очищаются только две строки текста. Вызывайте снова, когда занятие меняется (работа, интерьер, смерть).
+
+## Код OAuth
+
+```js title="client.js"
+let code = '';
+const timer = mp.setInterval(() => {
+  code = mp.discord.getCodeAuthorization('YOUR_APP_ID', '["identify"]');
+  if (code) {
+    mp.clearInterval(timer);
+    mp.events.emitServer('discordCode', code);
+  }
+}, 1000);
+```
+
+`getCodeAuthorization(appId, scopes)` возвращает **authorization code**, не access token. Его отправляют на **свой сервер** и меняют на токен у Discord. Секрет приложения в клиентский ресурс не кладите.
+
+Запрос асинхронный: первый вызов запускает его и возвращает `''`. Вызывайте повторно, пока не придёт код (новый запрос уходит не чаще раза в 5 секунд). Код возвращается один раз, следующий вызов снова вернёт `''`.
+
+`scopes` — **JSON-массив** в строке, например `'["identify","guilds"]'`, а не список через пробел. App id — из Discord Developer Portal.
+
+`getOAuth2Token(appId)` принимает только app id и возвращает **access token** из Discord Game SDK. Он тоже асинхронный (пустая строка, пока токен не пришёл), а SDK инициализируется один раз с первым переданным app id.
+
+Если Discord не запущен, оба вызова продолжают возвращать пустую строку. Проверяйте значение перед использованием.

@@ -8,7 +8,7 @@ title: "MpLocalStorage"
 Defined in: local-storage.d.ts:5
 
 Interface providing access to persistent client-side key-value storage.
-Data saved here remains available across different game sessions and server reconnections.
+There is one storage per server address (file `cache/client_resources/<server hash>/.storage`), shared by all client resources of that server. Changes are written to disk only by [save](/reference/client/api/global/mplocalstorage/#save); after that they remain available across game sessions and reconnections to the same server.
 
 ## Methods
 
@@ -44,7 +44,7 @@ The unique identifier name of the entry to delete.
 
 Defined in: local-storage.d.ts:30
 
-Clears all keys and values currently held in this resource's local storage instance.
+Clears all keys and values in the storage of the current server, including keys written by other resources.
 
 #### Returns
 
@@ -74,7 +74,7 @@ The unique identifier name of the entry to fetch.
 
 `string`
 
-The stored string value, or an empty string/null if the key does not exist.
+The stored value as JSON text: a string saved with `set('k', 'abc')` is returned as `"abc"` (with quotes), a missing key as `null` (the string). Use `JSON.parse` on the result.
 
 ***
 
@@ -86,8 +86,8 @@ The stored string value, or an empty string/null if the key does not exist.
 
 Defined in: local-storage.d.ts:36
 
-Explicitly flushes the current state of the in-memory storage data down to the physical disk.
-Use this to ensure volatile data isn't lost if the game client unexpectedly crashes.
+Writes the current in-memory storage to disk.
+Nothing is written to disk without this call: unsaved changes are lost when the game exits.
 
 #### Returns
 
@@ -118,7 +118,7 @@ The unique identifier name for the storage entry.
 
 `string`
 
-The plaintext string data payload to be stored.
+The plaintext string data payload to be stored. Must be a non-empty string; an empty value is rejected with an error in the console.
 
 #### Returns
 

@@ -1,0 +1,52 @@
+---
+title: Измерения
+description: entity.dimension на CyberMP Server.
+---
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+У каждой синхронизированной сущности есть `dimension` (по умолчанию `0`). Клиенты стримят только сущности в том же измерении.
+
+<Tabs syncKey="lang">
+<TabItem label="JavaScript">
+
+```js title="server.js"
+player.dimension = houseId + 1_000_000;
+vehicle.dimension = player.dimension;
+```
+
+</TabItem>
+<TabItem label="Lua">
+
+```lua title="server.lua"
+player.dimension = houseId + 1000000
+vehicle.dimension = player.dimension
+```
+
+</TabItem>
+</Tabs>
+
+- У клиентских сущностей (`mp.local.spawn*` в JavaScript, `mp.client.spawn*` в Lua: пропы, декор) измерения нет. Сервер их не фильтрует, поэтому при смене измерения игрока удаляйте их сами.
+- Телепорт внутри одного измерения может переиспользовать уже застримленные интерьеры. Смена измерения обычно требует экран загрузки.
+- `0` — общий мир. Для инстансов назначайте большие смещения. Отрицательные значения игнорируются.
+- `at` / `exists` работают с network id. Смена измерения новый id не выделяет.
+
+На клиенте нет `mp.players.local.dimension`. Если клиентским скриптам нужно значение, реплицируйте его через синхронизируемую [player meta](/ru/guides/general/sync-and-meta):
+
+<Tabs syncKey="lang">
+<TabItem label="JavaScript">
+
+```js title="server.js"
+mp.meta.setPlayerMeta(player, 'dimension', player.dimension, true);
+```
+
+</TabItem>
+<TabItem label="Lua">
+
+```lua title="server.lua"
+mp.meta.setPlayer(player, 'dimension', player.dimension, true)
+```
+
+</TabItem>
+</Tabs>
+
+Радиус стрима действует внутри измерения.

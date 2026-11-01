@@ -1,23 +1,23 @@
 ---
-title: First CEF UI
-description: Learn how to create and communicate with embedded Chromium Embedded Framework web views.
+title: CEF UI
+description: HTML overlay and events between the page and the client script.
 ---
 import { Steps, Tabs, TabItem } from '@astrojs/starlight/components';
 
-The Chromium Embedded Framework (CEF) allows you to build user interfaces (e.g., menus, HUDs, inventory layouts) using standard web technologies like HTML, CSS, and JavaScript.
+The UI in CyberMP is an HTML page in an embedded browser (CEF). Menus, HUDs, and inventories are HTML, CSS, and JS.
 
-In this guide, you will learn how to instantiate your first CEF web view and establish a two-way communication channel between your client script and your web page.
+The example sends text from a button to the client script and back.
 
 <Steps>
-1. ## Initializing the CEF Instance
+1. ## Initialize CEF
 
-   There are two distinct ways to create a CEF browser view. You can either predefine it inside your resource configuration file, or dynamically spin it up via your client script.
+   Two ways to create a CEF view: `resource.toml`, or the client API.
 
-   > **Important:** For CyberMP to recognize and stream local assets (like your HTML, CSS, or JS files) to the client, you **must** include them in the `file` property inside your `resource.toml`.
+   > **Important:** Local assets (HTML, CSS, JS) must be listed in the `file` property of `resource.toml`. Otherwise the client does not receive them.
 
    <Tabs syncKey="cef-init-method">
      <TabItem label="Via resource.toml">
-       Add the `cef_url` parameter pointing to your local entry HTML file. The runtime will automatically initialize it when the resource loads.
+       Add `cef_url` pointing to the local entry HTML. The runtime initializes it when the resource loads.
 
        ```toml title="resource.toml"
        client_script = './client.js'
@@ -27,7 +27,7 @@ In this guide, you will learn how to instantiate your first CEF web view and est
        ```
      </TabItem>
      <TabItem label="Via client-side API">
-       Invoke the `mp.cef.setUrl` function inside your client script. If no CEF instance is running, it will automatically create one. You still need to register the local path in your manifest file.
+       Call `mp.cef.setUrl`. If no CEF instance exists, one is created. The local path must still be listed in the manifest.
 
        ```toml title="resource.toml"
        client_script = './client.js'
@@ -41,9 +41,9 @@ In this guide, you will learn how to instantiate your first CEF web view and est
      </TabItem>
    </Tabs>
 
-2. ## Building the Minimal Web Interface
+2. ## HTML page
 
-   Create your web UI folder and layout file (e.g., `ui/index.html`). CyberMP automatically injects a global `mp` interface into your CEF browser context, providing access to [`mp.events.emit`](http://localhost:4321/reference/browser/api/global/mpevents/#emit) and [`mp.events.on`](http://localhost:4321/reference/browser/api/global/mpevents/#on).
+   Create the UI folder and layout (for example `ui/index.html`). CyberMP injects a global `mp` into the CEF context: [`mp.events.emit`](/reference/browser/api/global/mpevents/#emit) and [`mp.events.on`](/reference/browser/api/global/mpevents/#on).
 
    ```html title="ui/index.html"
    <!DOCTYPE html>
@@ -97,9 +97,9 @@ In this guide, you will learn how to instantiate your first CEF web view and est
    </html>
    ```
 
-3. ## Controlling Focus and Routing Payloads in client.js
+3. ## Focus and payloads
 
-   Now update your `client.js` file to capture interactions, display the operating system cursor, and transfer data updates back to your CEF frame.
+   Capture interactions, show the OS cursor, and send data back to the CEF frame.
 
    ```js title="client.js"
    // Create a command to display the UI and capture input routing priority
@@ -128,13 +128,15 @@ In this guide, you will learn how to instantiate your first CEF web view and est
    });
    ```
 
-4. ## Testing the Interface
+4. ## Verify
 
-   Connect to your development server and execute your console setups:
+   Connect to the development server.
 
-   1. Press `F8` to display your game console.
-   2. Execute `ui` to display your HTML overlay. Your mouse pointer will appear over the game screen.
-   3. Click the **Send Data to Client** button.
-   4. Observe your client console logs registering the data, and your UI text field updating automatically via the returned event.
-   5. Type `closeui` into your console to return mouse and keyboard control back to the game environment.
+   1. Press `F8` to open the client console.
+   2. Run `ui` to show the HTML overlay. The mouse pointer appears over the game.
+   3. Click **Send Data to Client**.
+   4. The client console logs the payload. The UI status text updates from the return event.
+   5. Run `closeui` to return mouse and keyboard control to the game.
 </Steps>
+
+Return value from the server: [RPC](/guides/general/rpc) (`RpcBrowser` + `RpcClient` on the client).

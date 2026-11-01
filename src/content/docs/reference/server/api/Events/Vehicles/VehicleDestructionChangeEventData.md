@@ -9,6 +9,10 @@ title: "VehicleDestructionChangeEventData"
 
 Defined in: events.ts:183
 
+:::caution
+The current server sends this payload as an **array**, not as an object with named fields. Read the values by index in this order: `[vehicleID, brokenGlass, brokenLights, flatTire, windshieldShattered]`.
+:::
+
 ## Properties
 
 <a id="brokenglass"></a>

@@ -99,6 +99,8 @@ Defined in: events.ts:455
 
 Triggered when a vehicle is hit by a player.
 
+`id` is the ID of the player who sent the event. `data` is an array: `[vehicleID, componentNameHash, weaponHash, byOwner]`.
+
 #### Parameters
 
 ##### id
@@ -146,6 +148,8 @@ Triggered when a vehicle spawns.
 Defined in: events.ts:447
 
 Triggered when a vehicle's weapon shoots.
+
+`id` is the ID of the player who sent the event (the vehicle ID is inside `data`).
 
 #### Parameters
 

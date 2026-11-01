@@ -1,0 +1,75 @@
+---
+title: Install the server
+description: Obtain CyberMP Server and create server.toml.
+---
+
+import { FileTree, Tabs, TabItem, Steps } from '@astrojs/starlight/components';
+import TomlGenerator from '../../../../components/TomlGenerator.astro';
+
+Deployment: **Docker** or **binary**. Both require a `resources` directory and `server.toml`.
+<Steps>
+
+1. ## Files
+
+   <Tabs syncKey="execute-method">
+     <TabItem label="Docker">
+       ```shell
+       docker pull ghcr.io/cyber-mp/server:latest
+       ```
+     </TabItem>
+     <TabItem label="Binary">
+       1. Open <a href="https://github.com/cyber-mp/cybermp-server-releases/releases" target="_blank">GitHub releases</a>.
+       2. Download the archive for Windows or Linux.
+       3. Extract it to the install directory.
+     </TabItem>
+   </Tabs>
+
+2. ## Layout
+
+   <Tabs syncKey="execute-method">
+     <TabItem label="Docker">
+       <FileTree>
+         - resources
+           - ...
+         - server.toml
+       </FileTree>
+     </TabItem>
+     <TabItem label="Binary">
+       `data` must sit next to the executable. `resources` and `server.toml` are read from the working directory, so start the server from this folder:
+
+       <FileTree>
+         - bin
+           - ...
+         - data
+           - ...
+         - resources
+           - ...
+         - **cybermp-server.exe** # (cybermp-server on Linux)
+         - server.toml
+       </FileTree>
+     </TabItem>
+   </Tabs>
+
+3. ## `server.toml`
+
+   Use the configuration example below or the generator.
+
+   Full keys: [configuration](/reference/server/configuration).
+
+</Steps>
+
+:::note[Configuration example]
+```toml title="server.toml"
+tcp_host = "0.0.0.0:2077"
+udp_host = "0.0.0.0:2077"
+connection_host_addr = "127.0.0.1:2077"
+
+max_players = 20
+
+resources = []
+
+disable_voice = false
+```
+:::
+
+<TomlGenerator />

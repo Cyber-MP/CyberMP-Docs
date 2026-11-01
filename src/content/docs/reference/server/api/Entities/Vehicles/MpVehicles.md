@@ -19,7 +19,7 @@ Defined in: vehicles.ts:60
 
 > **at**(`entity`): [`MpVehicle`](/reference/server/api/entities/vehicles/mpvehicle/)
 
-Defined in: entities.ts:110
+Defined in: entities.ts:108
 
 Retrieves an entity by instance or ID.
 
@@ -35,11 +35,7 @@ Entity instance or ID
 
 [`MpVehicle`](/reference/server/api/entities/vehicles/mpvehicle/)
 
-Entity instance
-
-#### Throws
-
-If entity does not exist
+Entity instance, or `undefined` if the entity does not exist (does not throw)
 
 #### Inherited from
 
@@ -60,6 +56,17 @@ Defined in: vehicles.ts:61
 ##### options
 
 `CreateVehicleOptions`
+
+Object with the fields:
+
+| Name | Type | Default |
+| ------ | ------ | ------ |
+| `model` | [`GameHash`](/reference/server/api/hashes/gamehash/) | — |
+| `appearance` | [`GameHash`](/reference/server/api/hashes/gamehash/) | — |
+| `position` | [`Vector3`](/reference/server/api/global/vector3/) | — |
+| `dimension?` | `number` | — |
+| `health?` | `number` | `300` |
+| `yaw?` | `number` | `0` |
 
 #### Returns
 
@@ -93,7 +100,7 @@ Defined in: vehicles.ts:62
 
 > **exists**(`entity`): `boolean`
 
-Defined in: entities.ts:100
+Defined in: entities.ts:98
 
 Checks if an entity exists.
 

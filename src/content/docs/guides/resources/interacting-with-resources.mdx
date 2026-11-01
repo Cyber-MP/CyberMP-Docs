@@ -1,38 +1,33 @@
 ---
-title: Interacting with resources
-description: CyberMP Server Configuration
+title: Managing resources
+description: Start, stop, and refresh resources while the server is running.
 slug: guides/resources/interacting-with-resources
 ---
-This guide covers the manual lifecycle management of server resources using the [Server Console](/reference/server/console).
 
-## Refreshing the Resource Index
+Start, stop, restart, and refresh resources without shutting down the process. Console: [server console](/reference/server/console). Scripts: `mp.resources.start`, `stop`, `restart`, `refresh`.
 
-If you add a completely new folder to your `/resources` directory while the server is running, the server will not recognize it immediately.
+## New folder not listed
 
-To force the server to rescan the directory, use:
+A directory added under `resources` while the process is running is not visible until:
+
 ```shell
 refresh
 ```
 
-- When to use: Only when you add or delete resource folders or change resource.toml.
-- Effect: The server re-indexes the disk and triggers the `onResourcesRefreshed` event.
+`refresh` re-scans the disk. Then `start folder_name`. Already running resources are not restarted, but their `resource.toml` is re-read and applies on the next `restart`.
 
-## Starting and Stopping Resources
+## Start and stop
 
-You can toggle resources on and off without shutting down the server. This is useful for debugging specific scripts or disabling heavy resources during maintenance.
-
-- To Enable:
 ```shell
-start {resource_name}
+start hello_world
+stop hello_world
 ```
 
-- To Disable:
-```shell
-stop {resource_name}
-```
-
-Example:
 ```ansi
 > stop hello_world
-[38;2;179;133;0m[00:00:00] [Resources][0m Stopped resource hello_world
+[38;2;179;133;0m[00:00:00] [resources][0m Stopped resource hello_world
 ```
+
+State from code: `mp.resources.getState('hello_world')` returns a number: `0` not found, `1` starting, `2` started, `3` stopped (or found but never started).
+
+Script edits require `restart`: [live updates](/guides/resources/live-updates).

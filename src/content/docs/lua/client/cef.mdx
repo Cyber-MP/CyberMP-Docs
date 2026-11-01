@@ -1,0 +1,103 @@
+---
+title: CEF UI (Lua)
+description: HTML overlay and events between the page and a Lua client script.
+---
+import { Steps, Tabs, TabItem } from '@astrojs/starlight/components';
+
+The UI in CyberMP is an HTML page in an embedded browser (CEF).
+
+The example sends text from a button to the client script and back.
+
+<Steps>
+1. ## Initialize CEF
+
+   All local page assets must be listed in the `file` property of `resource.toml`. Otherwise the client does not receive them.
+
+   <Tabs syncKey="lua-cef-init-method">
+     <TabItem label="Via resource.toml">
+       `cef_url` is read per resource, so it works for a Lua resource too.
+
+       ```toml title="resource.toml"
+       client_script = 'client.lua'
+       cef_url = './ui/index.html'
+       file = ["./ui/index.html"]
+       ```
+     </TabItem>
+     <TabItem label="Via client-side API">
+       Call `mp.cef.setUrl`. If no CEF instance exists, one is created. The local path must still be listed in the manifest.
+
+       ```toml title="resource.toml"
+       client_script = 'client.lua'
+       file = ["./ui/index.html"]
+       ```
+
+       ```lua title="client.lua"
+       mp.cef.setUrl('./ui/index.html')
+       ```
+     </TabItem>
+   </Tabs>
+
+2. ## HTML page
+
+   Create `ui/index.html`. Its button sends `uiClickEvent`, and its status text receives `acknowledgeClientData`:
+
+   ```html title="ui/index.html"
+   <!doctype html>
+   <html lang="en">
+   <head>
+     <meta charset="utf-8">
+     <title>CyberMP UI</title>
+   </head>
+   <body>
+   <button id="action-btn">Send Data to Client</button>
+   <p id="status-text" role="status"></p>
+   <script>
+       document.getElementById('action-btn').addEventListener('click', () => {
+           mp.events.emit('uiClickEvent', 'Hello from the CEF browser context!');
+       });
+
+       mp.events.on('acknowledgeClientData', (payload) => {
+           document.getElementById('status-text').innerText = payload;
+       });
+   </script>
+   </body>
+   </html>
+   ```
+
+3. ## Focus and payloads
+
+   ```lua title="client.lua"
+   -- Show the UI and capture keyboard and mouse
+   mp.commands.add('ui', function()
+     mp.cef.setUrl('./ui/index.html')
+     mp.cef.setFocus(true, true) -- focus, cursor
+     print('UI focused:', mp.cef.isInFocus())
+   end)
+
+   -- Return control to the game
+   mp.commands.add('closeui', function()
+     mp.cef.setFocus(false, false)
+     print('UI focused:', mp.cef.isInFocus())
+   end)
+
+   -- Events from the page
+   mp.events.addCef('uiClickEvent', function(message)
+     print('[Client Script] Received payload: ' .. message)
+     mp.events.triggerCef('acknowledgeClientData', 'Data received! System synchronized.')
+   end)
+   ```
+
+   In Lua pass both arguments to `mp.cef.setFocus(focus, cursor)`.
+
+4. ## Verify
+
+   Connect to the development server.
+
+   1. Press `F8` to open the client console.
+   2. Run `ui` to show the HTML overlay. The mouse pointer appears over the game.
+   3. Click **Send Data to Client**.
+   4. The client console logs the payload. The UI status text updates from the return event.
+   5. Run `closeui` to return mouse and keyboard control to the game.
+</Steps>
+
+Payload rules and built-in page events: [client events](/lua/client/events).

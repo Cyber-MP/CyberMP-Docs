@@ -1,0 +1,19 @@
+---
+title: Server scripting (Lua)
+description: Lua scripts on CyberMP Server.
+---
+
+import { LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+A `.lua` file in `server_script` (or `shared_script`) runs in the Lua runtime of CyberMP Server. The global `mp` table provides the server API. There is no game layer on the server.
+
+Resource layout: [create a resource](/lua/shared#create-resource). Runtime basics (libraries, `require`, vectors): [shared Lua scripting](/lua/shared).
+
+<CardGrid>
+  <LinkCard title="Events" href="/lua/server/events" description="mp.events.add, addClient, triggerClient, cancel with return false" />
+  <LinkCard title="Pools and entity objects" href="/lua/server/entities" description="mp.players, fields, methods" />
+  <LinkCard title="Vehicles" href="/lua/server/vehicles" description="mp.vehicles.create, seats, meta" />
+  <LinkCard title="Objects, peds, pickups" href="/lua/server/world-entities" description="mp.objects, mp.peds, mp.pickups" />
+  <LinkCard title="Resources" href="/lua/server/resources" description="start, stop, restart, getState" />
+  <LinkCard title="HTTP and utilities" href="/lua/server/http" description="sendHttpRequest, bcrypt, console variables" />
+</CardGrid>

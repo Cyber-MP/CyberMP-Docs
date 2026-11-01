@@ -1,0 +1,174 @@
+---
+title: Client lifecycle
+description: Order of resourceStart, onTweak, onInit, onGameLoaded, and spawn.
+slug: guides/client/lifecycle
+---
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import LifecycleTimeline from '../../../../components/LifecycleTimeline.astro';
+
+The client script starts before the world is ready. Getting the player and teleporting are invalid until `onGameLoaded`.
+
+## Timeline
+
+<LifecycleTimeline />
+
+| Stage | JavaScript | Lua | Safe | Unsafe |
+| --- | --- | --- | --- | --- |
+| `resourceStart` | `mp.events.on('resourceStart', fn)` | `mp.events.add('resourceStart', fn)` | Register events, RPC handlers, commands | Any game native |
+| `onTweak` | `mp.game.onTweak(fn)` | `mp.registerGameState('onTweak', fn)` | TweakDB reads / writes | Assuming the local player exists |
+| `onInit` | `mp.game.onInit(fn)` | `mp.registerGameState('onInit', fn)` | Early runtime setup | World queries |
+| `onGameLoaded` | `mp.game.onGameLoaded(fn)` / `onceGameLoaded(fn)` | `mp.registerGameState('onGameLoaded', fn)` / `'onceGameLoaded'` | Get the player, systems, observe/override, spawn | — |
+| `onLocalPlayerSpawned` | `mp.game.onLocalPlayerSpawned(fn)` | — (JavaScript only) | Post-spawn appearance, health, UI | Assuming gender / puppet is final. Wait if needed. |
+| `resourceStop` | `mp.events.on('resourceStop', fn)` | `mp.events.add('resourceStop', fn)` | Release state outside the script, CEF focus | Starting new long work |
+
+In JavaScript and Lua, game classes and functions are available only after `onInit` ([game natives in Lua](/lua/client/game-natives#stages)).
+
+Each stage handler is queued and runs on the next script tick after the stage is reached. If the stage was already reached when the resource started (game already loaded, for example after a restart), handlers registered while the script starts still run on the first tick.
+
+<Tabs syncKey="lang">
+<TabItem label="JavaScript">
+
+```js title="client.js" del={2} ins={6-8}
+mp.events.on('resourceStart', () => {
+  mp.game.GetPlayer(); // too early
+  mp.events.onServer('serverNotification', console.log);
+});
+
+mp.game.onGameLoaded(() => {
+  const player = mp.game.GetPlayer();
+  mp.local.spawnPlayer(-1392.637329, 1271.536865, 123.082397, 1);
+});
+```
+
+</TabItem>
+<TabItem label="Lua">
+
+```lua title="client.lua" del={2} ins={6-8}
+mp.events.add('resourceStart', function()
+  Game.GetPlayer() -- too early
+  mp.events.addServer('serverNotification', print)
+end)
+
+mp.registerGameState('onGameLoaded', function()
+  local player = Game.GetPlayer()
+  mp.client.spawnPlayer(-1392.637329, 1271.536865, 123.082397, 1)
+end)
+```
+
+</TabItem>
+</Tabs>
+
+## Puppet not ready
+
+A spawn call returning `true` only means spawn **started**. Getting the player can still return nothing for a few frames. Poll with a timeout:
+
+<Tabs syncKey="lang">
+<TabItem label="JavaScript">
+
+```js title="client.js"
+const waitForPlayer = async (timeoutMs = 10_000) => {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    const player = mp.game.GetPlayer();
+    if (player) return player;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  return null;
+};
+```
+
+</TabItem>
+<TabItem label="Lua">
+
+```lua title="client.lua"
+-- call inside a task or a handler: mp.wait needs a coroutine
+local function waitForPlayer(timeoutMs)
+  local started = mp.getTimer()
+  while mp.getTimer() - started < (timeoutMs or 10000) do
+    local player = Game.GetPlayer()
+    if player then return player end
+    mp.wait(50)
+  end
+  return nil
+end
+```
+
+</TabItem>
+</Tabs>
+
+Until the puppet exists:
+
+- Appearance, inventory, and teleport natives no-op or throw.
+- `GetGender()` (when available on the puppet) can report a sentinel / incomplete value. Do not apply character-specific meshes yet. Spawn first, then wait, then customize.
+
+Close pause and settings menus before spawn or teleport. A stuck `MenuScenario_PauseMenu` blocks input after the world move. Observers: teleport guide ([JavaScript](/guides/client/teleporting-player), [Lua](/lua/client/teleporting-player)).
+
+## Network vs world
+
+The session address (`mp.network.getServerAddress()` in JavaScript, `mp.getServerAddress()` in Lua) becomes non-null when the session is connected. That can happen before `onGameLoaded`. Spawn-point fetches on boot retry until both the endpoint and the game are ready.
+
+Local net id without a puppet: `mp.network.getLocalPlayerId()`.
+
+## Streaming ids
+
+After other players and vehicles exist, convert between network and engine ids:
+
+<Tabs syncKey="lang">
+<TabItem label="JavaScript">
+
+```js title="client.js"
+const gameId = mp.network.getVehicleGameId(netId);
+const vehicleNetId = mp.network.getVehicleId(gameId);
+const players = mp.network.getStreamedPlayers();
+const vehicles = mp.network.getStreamedPool('CVehicle');
+```
+
+</TabItem>
+<TabItem label="Lua">
+
+```lua title="client.lua"
+local gameId = mp.network.getVehicleGameId(netId)
+local vehicleNetId = mp.network.getVehicleId(gameId)
+local players = mp.network.getStreamedPlayers()
+local vehicles = mp.network.getStreamedPool('CVehicle')
+```
+
+</TabItem>
+</Tabs>
+
+Use these in `vehicleStreamIn` / `remotePlayerStreamIn` handlers, not during `resourceStart`. Full table: network ids ([JavaScript](/guides/client/network-and-local), [Lua](/lua/client/network-and-local)).
+
+## Tear down
+
+<Tabs syncKey="lang">
+<TabItem label="JavaScript">
+
+```js title="client.js"
+const onStreamIn = (netID, gameID) => console.log(netID, gameID);
+let previewHandle = 0; // from mp.local.spawnVehicle(...)
+
+mp.events.on('vehicleStreamIn', onStreamIn);
+
+mp.events.on('resourceStop', () => {
+  mp.events.off('vehicleStreamIn', onStreamIn);
+  if (previewHandle) mp.local.despawnVehicle(previewHandle); // client-only entities are not removed automatically
+});
+```
+
+</TabItem>
+<TabItem label="Lua">
+
+```lua title="client.lua"
+local previewHandle = nil -- from mp.client.spawnVehicle(...)
+
+mp.events.add('resourceStop', function()
+  if previewHandle then
+    mp.client.despawnVehicle(previewHandle) -- client-only entities are not removed automatically
+  end
+end)
+```
+
+</TabItem>
+</Tabs>
+
+In JavaScript, `off` removes only `on` handlers; `onServer` / `onCef` handlers cannot be removed with it ([client events](/guides/client/events)). On stop the client destroys the resource's script runtime (the JavaScript context or the Lua state) and removes its game hooks, so script handlers do not survive a [hotreload](/guides/general/hotreload). Use `resourceStop` for state outside the script: client-only entities, game objects you changed.

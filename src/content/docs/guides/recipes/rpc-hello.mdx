@@ -1,0 +1,78 @@
+---
+title: RPC hello
+description: Complete resource demonstrating callServer / register with the same RPC name.
+slug: guides/recipes/rpc-hello
+---
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import ExampleDownload from '../../../../components/ExampleDownload.astro';
+
+Complete resource demonstrating `callServer` / `register` with the same RPC `name` on server and client. `server.js` and `client.js` use `import`, so the resource runs their bundles from `dist/`: client scripts do not resolve `node_modules`, and a server `.js` file runs as a classic script.
+
+<ExampleDownload href="/examples/rpc-hello.zip" />
+
+CEF cannot call the server directly: [RPC](/guides/general/rpc).
+
+<Tabs syncKey="recipe-rpc">
+<TabItem label="resource.toml">
+
+```toml title="resource.toml"
+client_script = './dist/client.js'
+server_script = './dist/server.js'
+```
+
+</TabItem>
+<TabItem label="package.json">
+
+```json title="package.json"
+{
+  "private": true,
+  "scripts": {
+    "build": "esbuild server.js --bundle --platform=node --format=cjs --outfile=dist/server.js && esbuild client.js --bundle --format=iife --outfile=dist/client.js"
+  },
+  "dependencies": {
+    "@cybermp/rpc-client": "0.2.1",
+    "@cybermp/rpc-server": "0.2.1"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2"
+  }
+}
+```
+
+</TabItem>
+<TabItem label="server.js">
+
+```js title="server.js"
+import { RpcServer } from '@cybermp/rpc-server';
+
+const rpc = new RpcServer({ name: 'hello' });
+
+rpc.register('ping-call', (ctx) => ctx.data);
+
+mp.events.on('playerConnected', (playerId) => {
+  rpc.triggerClient(playerId, 'welcome', { id: playerId });
+});
+```
+
+</TabItem>
+<TabItem label="client.js">
+
+```js title="client.js"
+import { RpcClient } from '@cybermp/rpc-client';
+
+const rpc = new RpcClient({ name: 'hello' });
+
+rpc.on('welcome', (ctx) => {
+  console.log('welcome', ctx.data);
+});
+
+mp.commands.add('ping', async () => {
+  const result = await rpc.callServer('ping-call', { testData: 5 });
+  console.log(result);
+});
+```
+
+</TabItem>
+</Tabs>
+
+`npm install` and `npm run build` write `dist/server.js` and `dist/client.js`. The archive already contains them.

@@ -1,0 +1,30 @@
+---
+title: Обзор сервера
+description: Выделенный сервер CyberMP — конфигурация, консоль, сеть.
+---
+
+import { LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+**Сервер** — headless-процесс. Загружает `server.toml`, запускает перечисленные ресурсы и принимает клиентов по TCP/UDP. Cyberpunk 2077 не запускает.
+
+Установка: образ Docker `ghcr.io/cyber-mp/server` или [релизный бинарник](https://github.com/cyber-mp/cybermp-server-releases/releases). Порядок: [установка](/ru/guides/getting-started/install-server), [запуск](/ru/guides/getting-started/run-server).
+
+<CardGrid>
+  <LinkCard title="Железо и ОС" href="/ru/guides/dedicated-server/hardware" description="Windows, Linux, порты, библиотеки" />
+  <LinkCard title="Команды консоли" href="/ru/reference/server/console" description="start / stop / refresh, mp.commands.add" />
+  <LinkCard title="server.toml" href="/ru/reference/server/configuration" description="Адреса, ресурсы, [core], токен" />
+  <LinkCard title="CDN" href="/ru/guides/dedicated-server/cdn" description="Доставка файлов ресурсов" />
+</CardGrid>
+
+## Аргументы командной строки
+
+| Аргумент | Описание |
+| --- | --- |
+| `-run` | Читает `server.toml` из рабочего каталога и запускает сервер. |
+| `-rdir=<путь>` | Берёт ресурсы из `<путь>` вместо папки `resources/` сервера, при старте и по `refresh`. Встроенный `cybermp_core` из `data/` по-прежнему находится. Если в обеих папках есть ресурс с одним именем, используется тот, что в `<путь>`. |
+| `--justpack` | Упаковывает клиентские файлы для [CDN](/ru/guides/dedicated-server/cdn) и завершает работу. |
+
+```shell
+cybermp-server.exe -run -rdir="D:\cybermp\resources"
+./cybermp-server -run -rdir=/srv/cybermp/resources
+```

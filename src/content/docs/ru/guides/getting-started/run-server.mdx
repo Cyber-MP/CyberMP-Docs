@@ -1,0 +1,80 @@
+---
+title: Запуск сервера
+description: Запуск CyberMP Server и проверка порта.
+---
+
+import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
+
+Предварительно: [установка](/ru/guides/getting-started/install-server) (`server.toml`, `resources`). Библиотеки Linux: [железо и ОС](/ru/guides/dedicated-server/hardware).
+
+<Steps>
+
+1. ## Старт
+
+   <Tabs syncKey="execute-method">
+     <TabItem label="Docker">
+       <Tabs>
+         <TabItem label="Docker run">
+           ```shell
+           docker run -it \
+           --mount type=bind,source="$(pwd)"/server.toml,target=/cybermp/server.toml \
+           --mount type=bind,source="$(pwd)"/resources,target=/cybermp/resources \
+           -p 2077:2077/tcp \
+           -p 2077:2077/udp \
+           ghcr.io/cyber-mp/server:latest
+           ```
+         </TabItem>
+         <TabItem label="Docker Compose">
+           ```yaml title="docker-compose.yml"
+           services:
+             server:
+               image: ghcr.io/cyber-mp/server:latest
+               stdin_open: true
+               tty: true
+               volumes:
+                 - ./server.toml:/cybermp/server.toml
+                 - ./resources:/cybermp/resources
+                 - ./crashdumps:/cybermp/crashdumps
+                 - ./logs:/cybermp/logs
+               ports:
+                 - 2077:2077/tcp
+                 - 2077:2077/udp
+           ```
+
+           ```shell
+           docker compose up
+           ```
+         </TabItem>
+       </Tabs>
+     </TabItem>
+     <TabItem label="Бинарник">
+       Из корня сервера:
+
+       <Tabs>
+         <TabItem label="Windows">
+           ```shell
+           .\cybermp-server.exe -run
+           ```
+         </TabItem>
+         <TabItem label="Linux">
+           ```shell
+           ./cybermp-server -run
+           ```
+         </TabItem>
+       </Tabs>
+     </TabItem>
+   </Tabs>
+
+2. ## Проверка
+
+   ```ansi
+   [38;2;179;133;0m[00:00:00] [Server][0m CyberMP server starting...
+   [38;2;179;133;0m[00:00:00] [Server][0m Resources initializing...
+   >
+   ```
+
+   `http://127.0.0.1:2077/` (порт `tcp_host`) возвращает JSON с версией сервера: `{"version":"server …"}`.
+
+</Steps>
+
+`>` — [консоль сервера](/ru/reference/server/console) (`start`, `stop`, `restart`, `refresh`).

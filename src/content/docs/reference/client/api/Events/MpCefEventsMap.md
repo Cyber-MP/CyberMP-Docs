@@ -19,7 +19,7 @@ Map containing standard event listeners bound to web context layers (Chromium Em
 
 Defined in: events.d.ts:131
 
-Fired when a target browser instance finishes parsing the document structure tree.
+Fired on `DOMContentLoaded` of each CEF frame.
 
 #### Parameters
 
@@ -27,7 +27,7 @@ Fired when a target browser instance finishes parsing the document structure tre
 
 `string`
 
-Unique registration name tracking the browser frame entity.
+The frame's `window.name`.
 
 #### Returns
 
@@ -43,7 +43,7 @@ Unique registration name tracking the browser frame entity.
 
 Defined in: events.d.ts:137
 
-Fired if the underlying browser layer drops connectivity or triggers initialization errors.
+Fired from a CEF frame on any uncaught `error` event (script errors and failed resource loads) and on any unhandled promise rejection.
 
 #### Parameters
 

@@ -1,0 +1,21 @@
+---
+title: Обзор скриптов клиента
+description: JavaScript в игровом клиенте CyberMP.
+---
+
+import { LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+Клиентские скрипты выполняются в процессе игры после входа. Глобальный `mp` — `MpClient` ([`@cybermp/client-types`](/ru/guides/general/type-safety)). CEF использует `MpBrowser`.
+
+Вызывайте `mp.game` и спавн только после [`onGameLoaded`](/ru/guides/client/lifecycle). События стрима передают `(netID, gameID)`. Нативам нужны game id ([сеть](/ru/guides/client/network-and-local)).
+
+Клиентский скрипт `.lua` выполняется в отдельной среде Lua со своим `mp`: [скрипты клиента на Lua](/ru/lua/client).
+
+<CardGrid>
+  <LinkCard title="Жизненный цикл" href="/ru/guides/client/lifecycle" description="resourceStart, onTweak, onGameLoaded" />
+  <LinkCard title="События" href="/ru/guides/client/events" description="Stream-in, emit, emitServer, CEF" />
+  <LinkCard title="Игровые нативы" href="/ru/reference/client/working-with-game-natives" description="mp.game, observe, override" />
+  <LinkCard title="Локальное хранилище" href="/ru/guides/scripting/local-storage" description="mp.localStorage" />
+  <LinkCard title="CEF" href="/ru/guides/client/first-cef-ui" description="HTML UI" />
+  <LinkCard title="Discord" href="/ru/guides/client/discord" description="Rich Presence, OAuth" />
+</CardGrid>

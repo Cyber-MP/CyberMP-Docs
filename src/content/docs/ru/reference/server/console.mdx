@@ -1,0 +1,79 @@
+---
+title: Консоль сервера
+description: Команды start, stop, restart, refresh и регистрация своих.
+---
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+
+Консоль сервера — текстовая строка запущенного процесса. Через неё запускают и останавливают ресурсы и регистрируют команды `mp.commands.add`.
+
+## Встроенные команды
+
+| Команда | Аргументы | Описание |
+| --- | --- | --- |
+| cmdlist | — | Все зарегистрированные команды (ядро + ресурсы) и значения переменных консоли. |
+| config | — | Действующие значения `server.toml` и их источник (файл или окружение). `private_token` маскируется. |
+| kick_player | `<id игрока>` | Отключить игрока с этим id (без причины). |
+| max_players | `[число]` | Вывести или задать переменную консоли. Действующий лимит слотов читается из `server.toml` при старте и не меняется. |
+| quit | `[причина]` | Завершить процесс сервера. |
+| refresh | — | Повторно просканировать каталог `resources` без перезапуска уже запущенных. |
+| restart | `<имя>` | Перезапустить ресурс. |
+| start | `<имя>` | Запустить ресурс. |
+| stop | `<имя>` | Остановить ресурс. |
+| version | — | Версия сервера. |
+
+Те же действия из скрипта: `mp.resources.start`, `stop`, `restart`, `refresh`.
+
+## Пользовательская команда
+
+На **сервере** колбэк получает игрока и список аргументов (имя без `/`):
+
+<Tabs syncKey="lang">
+<TabItem label="JavaScript">
+
+```js title="server.js"
+mp.commands.add('kickme', (player, args) => {
+  player.kick(args[0] || 'bye');
+});
+
+mp.commands.remove('kickme');
+```
+
+</TabItem>
+<TabItem label="Lua">
+
+```lua title="server.lua"
+mp.commands.add('kickme', function(player, args)
+  player:kick(args[1] or 'bye')
+end)
+
+mp.commands.remove('kickme')
+```
+
+</TabItem>
+</Tabs>
+
+На **клиенте** первый аргумент — числовой сетевой id локального игрока, а не объект игрока:
+
+<Tabs syncKey="lang">
+<TabItem label="JavaScript">
+
+```js title="client.js"
+mp.commands.add('spawn', (id, args) => {
+  mp.local.spawnPlayer(-1392.637329, 1271.536865, 123.082397, 1);
+});
+```
+
+</TabItem>
+<TabItem label="Lua">
+
+```lua title="client.lua"
+mp.commands.add('spawn', function(playerId, args)
+  mp.client.spawnPlayer(-1392.637329, 1271.536865, 123.082397, 1)
+end)
+```
+
+</TabItem>
+</Tabs>
+
+Консоль клиента: [F8](/ru/reference/client/console).

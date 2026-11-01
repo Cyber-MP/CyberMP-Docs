@@ -1,0 +1,63 @@
+---
+title: Дроп
+description: Полный ресурс, демонстрирующий синхронизированный объект у позиции игрока.
+---
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import ExampleDownload from '../../../../../components/ExampleDownload.astro';
+
+Полный ресурс, демонстрирующий команду F8 `drop`. Модель — `.ent` через `resref`. У объектов нет поля `appearance`.
+
+<ExampleDownload href="/examples/drop.zip" lang="ru" />
+
+<Tabs syncKey="recipe-drop">
+<TabItem label="resource.toml">
+
+```toml title="resource.toml"
+client_script = './client.js'
+server_script = './server.js'
+```
+
+</TabItem>
+<TabItem label="server.js">
+
+```js title="server.js"
+const GATE = mp.hashes.resref(
+  'base\\gameplay\\devices\\doors\\gates\\appearances\\w300_h250_mall_metal.ent',
+);
+
+mp.events.onClient('requestDrop', (player) => {
+  const [x, y, z] = player.position;
+
+  const object = mp.objects.create({
+    model: GATE,
+    position: [x, y + 0.5, z],
+    yaw: player.yaw,
+    dimension: player.dimension,
+    dynamic: false,
+  });
+
+  object.setMeta('dropId', String(object.id), true);
+});
+
+mp.events.on('resourceStop', () => {
+  for (const object of mp.objects.toArray()) {
+    if (object.getMeta('dropId')) object.destroy();
+  }
+});
+```
+
+</TabItem>
+<TabItem label="client.js">
+
+```js title="client.js"
+mp.commands.add('drop', () => {
+  mp.events.emitServer('requestDrop');
+});
+
+mp.events.on('objectStreamIn', (netID, gameID) => {
+  console.log('drop in range', netID, gameID, mp.meta.getEntityMeta(netID, 'dropId'));
+});
+```
+
+</TabItem>
+</Tabs>

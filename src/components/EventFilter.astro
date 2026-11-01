@@ -1,0 +1,69 @@
+---
+import { SERVER_EVENTS } from '../data/server-events';
+
+interface Props {
+  lang?: 'en' | 'ru';
+}
+
+const lang = Astro.props.lang === 'ru' ? 'ru' : 'en';
+
+const t =
+  lang === 'ru'
+    ? {
+        search: 'Фильтр по имени',
+        cancel: 'можно отменить',
+        empty: 'Ничего не нашлось',
+      }
+    : {
+        search: 'Filter by name',
+        cancel: 'cancellable',
+        empty: 'No matches',
+      };
+---
+
+<div class="cmp-widget" data-event-filter data-lang={lang}>
+  <input
+    class="cmp-widget__input"
+    type="search"
+    data-query
+    placeholder={t.search}
+    autocomplete="off"
+  />
+  <p class="cmp-widget__empty" data-empty hidden>{t.empty}</p>
+  <ul class="cmp-event-list">
+    {
+      SERVER_EVENTS.map((event) => (
+        <li data-name={event.name.toLowerCase()} data-cancellable={event.cancellable ? '1' : '0'}>
+          <code>{event.name}</code>
+          {event.cancellable ? <span class="cmp-badge cmp-badge--warn">{t.cancel}</span> : null}
+          <span>{lang === 'ru' ? event.hint.ru : event.hint.en}</span>
+        </li>
+      ))
+    }
+  </ul>
+</div>
+
+<script>
+  function bind(root: HTMLElement) {
+    const query = root.querySelector<HTMLInputElement>('[data-query]');
+    const empty = root.querySelector<HTMLElement>('[data-empty]');
+    const items = [...root.querySelectorAll<HTMLElement>('.cmp-event-list li')];
+    if (!query || !empty) return;
+
+    const render = () => {
+      const q = query.value.trim().toLowerCase();
+      let shown = 0;
+      for (const item of items) {
+        const on = !q || (item.dataset.name ?? '').includes(q);
+        item.hidden = !on;
+        if (on) shown += 1;
+      }
+      empty.hidden = shown > 0;
+    };
+
+    query.addEventListener('input', render);
+    render();
+  }
+
+  document.querySelectorAll<HTMLElement>('[data-event-filter]').forEach(bind);
+</script>

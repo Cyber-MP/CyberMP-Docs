@@ -1,0 +1,11 @@
+<!doctype html>
+<button id="hi">hello</button>
+<pre id="out"></pre>
+<script>
+  document.getElementById('hi').onclick = () => {
+    mp.events.emit('ui:hello', 'from cef');
+  };
+  mp.events.on('ui:ack', (msg) => {
+    document.getElementById('out').textContent = msg;
+  });
+</script>

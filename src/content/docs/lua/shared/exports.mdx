@@ -1,0 +1,47 @@
+---
+title: Exports (Lua)
+description: Call functions in another resource with mp.exports in Lua.
+---
+
+## Register
+
+In the resource that owns the code:
+
+```lua title="resources/notify/server.lua"
+mp.exports('show', function(message)
+  print('notify', message)
+  return true
+end)
+```
+
+A global function can also be exported by name from `resource.toml`. The value must be an array:
+
+```toml title="resource.toml"
+server_script = 'server.lua'
+export = ['show']
+```
+
+`export` is read on the server and on the client, `server_export` only on the server.
+
+## Call from another resource
+
+Call with `:`:
+
+```lua title="resources/gamemode/server.lua"
+local ok = mp.exports.notify:show('Welcome')
+```
+
+The export proxy passes itself as the first argument, so call with `:` (or write `mp.exports.notify.show(nil, 'Welcome')`).
+
+- A missing export or a stopped resource raises `Cant find <name> in <resource>`.
+- An error inside the export raises `failed emit export <name> in resource <resource>`.
+
+## Load order and sides
+
+```toml title="server.toml"
+resources = ['notify', 'gamemode']
+```
+
+If `gamemode` calls `mp.exports.notify:show(...)` before `notify` has started, the call raises an error. Put shared resources first. After a live `stop` / `start`, check `mp.resources.getState('notify') == 2`.
+
+Exports are local to one side: an export registered in a server script is called from server scripts, one registered in a client script from client scripts.

@@ -1,0 +1,68 @@
+---
+title: Vehicle spawn
+description: Complete resource demonstrating a synced vehicle from a client command.
+slug: guides/recipes/spawn-vehicle
+---
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import ExampleDownload from '../../../../components/ExampleDownload.astro';
+import F8Console from '../../../../components/F8Console.astro';
+
+Complete resource demonstrating the F8 command `car`. The server creates the vehicle in the `onClient` handler. Model uses `tweakdbid`. Appearance uses `cname('default')`.
+
+<ExampleDownload href="/examples/spawn-car.zip" />
+
+<F8Console />
+
+Add the folder name to `server.toml` `resources`.
+
+<Tabs syncKey="recipe-car">
+<TabItem label="resource.toml">
+
+```toml title="resource.toml"
+client_script = './client.js'
+server_script = './server.js'
+```
+
+</TabItem>
+<TabItem label="server.js">
+
+```js title="server.js"
+mp.events.onClient('requestVehicleSpawn', (player, modelName) => {
+  const vehicle = mp.vehicles.create({
+    model: mp.hashes.tweakdbid(modelName),
+    appearance: mp.hashes.cname('default'),
+    position: player.position,
+    yaw: player.yaw,
+    health: 5000,
+    dimension: player.dimension,
+  });
+
+  vehicle.setMeta('ownerId', String(player.id), true);
+  mp.events.emitClient(player, 'vehicleSpawned', vehicle.id);
+});
+
+mp.events.on('resourceStop', () => {
+  for (const vehicle of mp.vehicles.toArray()) {
+    if (vehicle.getMeta('ownerId')) vehicle.destroy();
+  }
+});
+```
+
+</TabItem>
+<TabItem label="client.js">
+
+```js title="client.js"
+mp.commands.add('car', () => {
+  mp.events.emitServer('requestVehicleSpawn', 'Vehicle.v_standard2_archer_hella');
+});
+
+mp.events.on('vehicleStreamIn', (netID, gameID) => {
+  const ownerId = mp.meta.getEntityMeta(netID, 'ownerId');
+  console.log('vehicle in range', netID, gameID, ownerId);
+});
+```
+
+</TabItem>
+</Tabs>
+
+Related: [vehicles](/guides/server/vehicles), [hashes](/guides/general/hashes), [appearances](/guides/general/appearances).

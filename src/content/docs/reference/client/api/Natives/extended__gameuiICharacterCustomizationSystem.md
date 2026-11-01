@@ -5,7 +5,7 @@ prev: false
 title: "extended__gameuiICharacterCustomizationSystem"
 ---
 
-Defined in: game.d.ts:374
+Defined in: game.d.ts:427
 
 Extended by CyberMP `gameuiICharacterCustomizationSystem` class
 
@@ -17,9 +17,9 @@ Extended by CyberMP `gameuiICharacterCustomizationSystem` class
 
 > **OnPlayerGenderChanged**(`gender`): `void`
 
-Defined in: game.d.ts:386
+Defined in: game.d.ts:439
 
-Callback fired immediately following successful adjustments to player character gender states.
+Empty callback called after the session reload started by `SetPlayerGender` finishes. Hook it with `observeAfter` to react.
 
 #### Parameters
 
@@ -41,9 +41,9 @@ The incoming target modified gender enumeration value.
 
 > **SetPlayerGender**(`gender`, `savedPos?`): `void`
 
-Defined in: game.d.ts:380
+Defined in: game.d.ts:433
 
-Updates player's gender state representation variables directly inside system profiles.
+Changes the local player's gender. If it differs from the current one, the game goes through the main menu and reloads the session; when the reload finishes, `OnPlayerGenderChanged` is called. Does nothing if the gender is already the same.
 
 #### Parameters
 
@@ -57,7 +57,7 @@ Target gender enum identifier asset option.
 
 `boolean`
 
-Optional parameter to persist or retain vector frame state context layout positions.
+Optional, defaults to `true`. Return the player to the current position and yaw after the reload.
 
 #### Returns
 

@@ -120,7 +120,7 @@ The requested record.
 
 Defined in: game.d.ts:76
 
-Retrieves an array of records matching a specific query or record type.
+Retrieves all records of one record type. Returns `null` if the type is unknown.
 
 #### Type Parameters
 
@@ -136,7 +136,7 @@ The expected type of the records.
 
 `string`
 
-The TweakDB record path or type identifier.
+The record type name (RTTI class name, e.g. `"gamedataVehicle_Record"`), not a record path.
 
 #### Returns
 
@@ -180,7 +180,7 @@ An array of matching string IDs.
 
 Defined in: game.d.ts:115
 
-Overwrites a single flat property value in TweakDB and updates the engine immediately.
+Writes (or creates) a single flat property value in TweakDB. Does **not** refresh the record: call [updateRecord](/reference/client/api/natives/tweakdb/#updaterecord) afterwards.
 
 #### Parameters
 
@@ -212,8 +212,8 @@ The new value to assign.
 
 Defined in: game.d.ts:124
 
-Overwrites a flat property value in TweakDB *without* triggering an immediate engine update.
-Useful when batching multiple TweakDB edits before a manual refresh.
+Writes (or creates) a flat property value in TweakDB and then refreshes the parent record (`updateRecord`).
+Despite the name, this is the variant that updates the record. For batches use [setFlat](/reference/client/api/natives/tweakdb/#setflat) and one `updateRecord`.
 
 #### Parameters
 
@@ -245,7 +245,8 @@ The new value to assign.
 
 Defined in: game.d.ts:107
 
-Overwrites an array flat property in TweakDB and updates the engine immediately.
+Intended to write several flats `<str>.<key>` of one record and then refresh it with `updateRecord`.
+In the current runtime both the key and the value are taken from the same array element, so each string element `s` only sets flat `<str>.s` to `s`. Use [setFlat](/reference/client/api/natives/tweakdb/#setflat) for each flat instead.
 
 #### Parameters
 
@@ -253,7 +254,7 @@ Overwrites an array flat property in TweakDB and updates the engine immediately.
 
 `string`
 
-The path to the flat property.
+The record path.
 
 ##### arr
 

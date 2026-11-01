@@ -1,0 +1,130 @@
+---
+title: События на клиенте (Lua)
+description: Локальные, серверные и CEF-события в клиентском скрипте Lua.
+---
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+На клиенте `mp.events` работает с тремя адресатами: локальным скриптом, сервером и HTML-интерфейсом. Каждый вызов `add*` возвращает id обработчика или токен для снятия.
+
+<Tabs syncKey="lua-client-events-side">
+<TabItem label="Локальные">
+
+`mp.events.add(name, fn)` / `mp.events.trigger(name, ...)` остаются на этом клиенте. Сюда же приходят платформенные события (`resourceStart`, события стрима).
+
+```lua title="client.lua"
+mp.events.add('resourceStart', function()
+  print('The client resource has successfully started.')
+end)
+
+mp.events.add('vehicleStreamIn', function(netID, gameID)
+  print('Vehicle streamed in - NetID', netID, 'GameID', gameID)
+end)
+
+mp.events.add('myCustomLocalEvent', function(data)
+  print('Received local data:', data)
+end)
+
+mp.events.trigger('myCustomLocalEvent', 'Hello local script!')
+```
+
+</TabItem>
+<TabItem label="Сервер">
+
+`mp.events.triggerServer(name, ...)` отправляет на сервер (там `mp.events.addClient`). `mp.events.addServer(name, fn)` принимает то, что сервер шлёт через `mp.events.triggerClient`. `mp.events.triggerUnreliable(name, bps, ...)` отправляет по ненадёжному каналу; `bps` — частота отправки, передаётся сетевому слою. Возврат значения: [запрос и ответ](/ru/lua/shared/events#запрос-и-ответ).
+
+```lua title="client.lua"
+mp.events.triggerServer('requestVehicleSpawn', 'Vehicle.v_standard2_archer_hella')
+
+mp.events.addServer('serverNotification', function(message)
+  print('[Server]: ' .. message)
+end)
+```
+
+</TabItem>
+<TabItem label="CEF">
+
+`mp.events.addCef(name, fn)` принимает то, что страница шлёт через `mp.events.emit`. `mp.events.triggerCef(name, ...)` отправляет на страницу (там `mp.events.on`). Страница: [CEF](/ru/lua/client/cef).
+
+Данные страницы передаются в JSON. Несколько аргументов приходят отдельными аргументами Lua. Один массив тоже раскладывается на отдельные аргументы; один объект приходит одной таблицей.
+
+Процесс CEF также отправляет в каждый фрейм два встроенных события: `domReady` на `DOMContentLoaded` (аргумент — `window.name` фрейма) и `loadingFailed` на любую непойманную ошибку страницы или необработанный отказ промиса на странице (одна таблица с `frameName`, `message` и другими полями). `loadingFailed` — не ошибка сетевой/HTTP-загрузки.
+
+```lua title="client.lua"
+mp.events.addCef('domReady', function(frameName)
+  mp.events.triggerCef('initializeDashboard', { playerName = 'V', initialHealth = 300 })
+end)
+
+mp.events.addCef('loadingFailed', function(err)
+  print(('CEF error in %s: %s'):format(err.frameName, err.message))
+end)
+
+mp.events.addCef('uiButtonPressed', function(buttonId)
+  print('Player clicked UI button:', buttonId)
+end)
+```
+
+</TabItem>
+</Tabs>
+
+Отмены событий в клиентском Lua нет.
+
+## Снятие обработчиков
+
+- `mp.events.remove(name, id)` принимает id из `add` или `addServer`. Сначала ищутся обработчики `add` с этим именем, и только если их нет — обработчики `addServer`. Передача функции ничего не делает.
+- `mp.events.removeCef(name, token)` принимает таблицу, которую вернул `addCef`.
+- При остановке ресурса снимаются все обработчики.
+
+```lua title="client.lua"
+local id = mp.events.add('remotePlayerStreamIn', function(netID, gameID)
+  print('Player streamed in', netID)
+end)
+mp.events.remove('remotePlayerStreamIn', id)
+
+local token = mp.events.addCef('uiButtonPressed', function(buttonId) end)
+mp.events.removeCef('uiButtonPressed', token)
+```
+
+## Каталог событий
+
+Подписывайтесь на платформенные события через `mp.events.add(name, fn)`. В таблицах указаны аргументы, передаваемые в `fn`; `—` означает отсутствие аргументов.
+
+### События ресурсов
+
+| Событие | Аргументы | Описание |
+| --- | --- | --- |
+| `resourceStart` | — | Этот клиентский ресурс завершил загрузку. |
+| `resourceStop` | — | Этот клиентский ресурс останавливается. |
+| `anyResourceStart` | `resourceName` | Запущен локальный клиентский ресурс. |
+| `anyResourceStop` | `resourceName` | Остановлен локальный клиентский ресурс. |
+| `anyClientResourceStart` | `resourceName` | Запущен клиентский ресурс; приходит вместе с `anyResourceStart`. |
+| `anyClientResourceStop` | `resourceName` | Остановлен клиентский ресурс; приходит вместе с `anyResourceStop`. |
+
+`resourceName` — строка. Внутренний ресурс `CyberMP_Core` не отправляет уведомления ресурсов `any*`. События `resourcesRefresh`, `anyServerResourceStart` и `anyServerResourceStop` существуют только на сервере и на клиенте не приходят.
+
+### События стриминга
+
+| Событие | Аргументы | Описание |
+| --- | --- | --- |
+| `vehicleStreamIn` | `netID, gameID` | Транспорт вошёл в радиус стриминга. |
+| `vehicleStreamOut` | `netID, gameID` | Транспорт вышел из радиуса стриминга. |
+| `remotePlayerStreamIn` | `netID, gameID` | Другой игрок вошёл в радиус стриминга. |
+| `remotePlayerStreamOut` | `netID, gameID` | Другой игрок вышел из радиуса стриминга. |
+| `pedStreamIn` | `netID, gameID` | Пед вошёл в радиус стриминга. |
+| `pedStreamOut` | `netID, gameID` | Пед вышел из радиуса стриминга. |
+| `objectStreamIn` | `netID, gameID` | Объект вошёл в радиус стриминга. |
+| `objectStreamOut` | `netID, gameID` | Объект вышел из радиуса стриминга. |
+
+`netID` — сетевой id сущности; `gameID` идентифицирует сущность в локальной игре. Переводите id через [`mp.network`](/ru/lua/client/network-and-local).
+
+### События CEF
+
+Подписывайтесь на них через `mp.events.addCef(name, fn)`.
+
+| Событие | Аргументы | Описание |
+| --- | --- | --- |
+| `domReady` | `frameName` | Фрейм отправил `DOMContentLoaded`; `frameName` — строка `window.name` фрейма. |
+| `loadingFailed` | `err` | Ошибка страницы или необработанный отказ промиса; `err` — таблица с `frameName`, `message` и другими полями ошибки. |
+
+Имена своих локальных, серверных и CEF-событий задаются вашими скриптами и не входят в этот каталог платформенных событий.
+
+Статус в Discord: [`mp.discord`](/ru/lua/client/discord).

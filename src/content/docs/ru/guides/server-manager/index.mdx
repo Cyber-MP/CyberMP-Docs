@@ -1,0 +1,33 @@
+---
+title: Обзор Server Manager
+description: Карточки, токен Master List, планы.
+---
+
+import { LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+**Server Manager** на [manager.cyber.mp](https://manager.cyber.mp) регистрирует запущенный выделенный процесс в Master List. Вход через Discord.
+
+| Раздел | Что в нём |
+| --- | --- |
+| **Servers** | Ваши серверы и серверы, где вы менеджер. **Create new...** → **Server** создаёт карточку. |
+| **Benefits** | [Планы](/ru/guides/server-manager/subscriptions) и ваш текущий уровень. |
+| **Settings** | Язык интерфейса и удаление аккаунта. |
+
+На странице сервера три вкладки:
+
+| Вкладка | Что в ней |
+| --- | --- |
+| **Settings** | **Display**: имя, описание, аватар, баннер. **Metadata**: игровой режим, язык, теги, сайт. **Control**: видимость в списке, [быстрое подключение](/ru/guides/game-client/fast-connect), баннер подключения. |
+| **Statistics** | История онлайна и пик за 24 часа. Gold и выше. |
+| **Manage** | Менеджеры (Silver и выше, добавляет владелец), [приватный токен](/ru/guides/server-manager/tokens), удаление сервера. |
+
+Карточка появляется в [списке серверов](/ru/guides/server-manager/server-list) лаунчера и на [cyber.mp/servers](https://cyber.mp/servers).
+
+Локальный `127.0.0.1` не требует Server Manager.
+
+<CardGrid>
+  <LinkCard title="Создание сервера" href="/ru/guides/server-manager/create-server" description="Карточка и токен" />
+  <LinkCard title="Токены" href="/ru/guides/server-manager/tokens" description="private_token / Master List" />
+  <LinkCard title="Планы" href="/ru/guides/server-manager/subscriptions" description="Bronze / Silver / Gold / Diamond" />
+  <LinkCard title="Список серверов" href="/ru/guides/server-manager/server-list" description="Master List в лаунчере и на сайте" />
+</CardGrid>

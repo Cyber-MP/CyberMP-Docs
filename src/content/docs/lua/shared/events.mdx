@@ -1,0 +1,53 @@
+---
+title: Network events (Lua)
+description: Events between server and client in Lua, payload rules, and request-response.
+---
+
+Platform events (`playerConnected`, `vehicleStreamIn`, …), custom events, and network events use one bus. A handler receives payload values as separate arguments.
+
+| Server | Client | Purpose |
+| --- | --- | --- |
+| `mp.events.add(name, fn)` | `mp.events.add(name, fn)` | Platform and local events. Returns a handler id. |
+| `mp.events.remove(name, id)` | `mp.events.remove(name, id)` | Removes a handler by the id from `add`. Passing the function does nothing. |
+| `mp.events.trigger(name, ...)` | `mp.events.trigger(name, ...)` | Local event in this process. |
+| `mp.events.addClient(name, fn)` | `mp.events.addServer(name, fn)` | Network event from the other side. |
+| `mp.events.triggerClient(player, name, ...)` | `mp.events.triggerServer(name, ...)` | Network event to the other side. |
+
+Details per side: [server events](/lua/server/events), [client events](/lua/client/events).
+
+## Payloads
+
+- Arguments are packed with MessagePack: pass numbers, strings, booleans and tables.
+- An array arrives as a Lua table with indexes from `1`.
+- A function can be passed to a local event or an export and called by the receiver. A function that arrives over the network cannot be called: the call does nothing.
+- On the server, returning `false` from a platform event handler (before any `mp.wait`) cancels the default action: [server events](/lua/server/events#cancelling-the-default-action). Client events cannot be cancelled.
+
+## Request and response
+
+Events do not return a value. Reply with a second event and match the request id:
+
+```lua title="server.lua"
+mp.events.addClient('bank:balance', function(player, requestId)
+  player:trigger('bank:balance:reply', requestId, 1500)
+end)
+```
+
+```lua title="client.lua"
+local pending, nextId = {}, 0
+
+local function requestBalance(callback)
+  nextId = nextId + 1
+  pending[nextId] = callback
+  mp.events.triggerServer('bank:balance', nextId)
+end
+
+mp.events.addServer('bank:balance:reply', function(requestId, balance)
+  local callback = pending[requestId]
+  pending[requestId] = nil
+  if callback then callback(balance) end
+end)
+
+requestBalance(function(balance) print('balance', balance) end)
+```
+
+Take the sender from the first argument of `addClient` on the server, never from the payload.

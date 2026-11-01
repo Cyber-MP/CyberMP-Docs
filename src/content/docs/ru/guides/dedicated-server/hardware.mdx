@@ -1,0 +1,26 @@
+---
+title: Железо и ОС
+description: Требования к хосту CyberMP Server.
+---
+
+CyberMP Server — сетевой процесс. Код ресурсов определяет дополнительную нагрузку на CPU, RAM и канал.
+
+## Операционная система
+
+| Хост | Примечание |
+| --- | --- |
+| Windows | `cybermp-server.exe -run` из корня сервера |
+| Linux | `./cybermp-server -run` из корня сервера. Основная тестовая платформа: Ubuntu |
+| Docker | `ghcr.io/cyber-mp/server:latest`. Пробросьте TCP и UDP |
+
+## Сеть
+
+Порт по умолчанию **2077**, TCP и UDP. `tcp_host` / `udp_host` — локальная привязка. `connection_host_addr` — адрес для клиентов. Пробросьте оба протокола.
+
+`http://<host>:2077/` возвращает JSON с версией сервера (проверка живости).
+
+## Ёмкость
+
+`max_players` в [`server.toml`](/ru/reference/server/configuration) ограничивает число игроков.
+
+Нагрузка растёт со скриптами, стримом сущностей, [голосом](/ru/guides/general/voice) и [кастомными ассетами](/ru/guides/resources/adding-resource-files). Публичные архивы размещайте на [CDN](/ru/guides/dedicated-server/cdn).

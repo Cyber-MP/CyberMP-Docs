@@ -1,0 +1,130 @@
+---
+title: Client events (Lua)
+description: Local, server, and CEF events in a Lua client script.
+---
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+On the client, `mp.events` addresses three targets: the local script, the server, and the HTML UI. Every `add*` call returns a handler id or token for removal.
+
+<Tabs syncKey="lua-client-events-side">
+<TabItem label="Local">
+
+`mp.events.add(name, fn)` / `mp.events.trigger(name, ...)` stay on this client. Platform events (`resourceStart`, stream events) arrive here too.
+
+```lua title="client.lua"
+mp.events.add('resourceStart', function()
+  print('The client resource has successfully started.')
+end)
+
+mp.events.add('vehicleStreamIn', function(netID, gameID)
+  print('Vehicle streamed in - NetID', netID, 'GameID', gameID)
+end)
+
+mp.events.add('myCustomLocalEvent', function(data)
+  print('Received local data:', data)
+end)
+
+mp.events.trigger('myCustomLocalEvent', 'Hello local script!')
+```
+
+</TabItem>
+<TabItem label="Server">
+
+`mp.events.triggerServer(name, ...)` sends to the server (`mp.events.addClient` there). `mp.events.addServer(name, fn)` receives what the server sends with `mp.events.triggerClient`. `mp.events.triggerUnreliable(name, bps, ...)` sends over the unreliable channel; `bps` is the send rate passed to the network layer. Return value: [request and response](/lua/shared/events#request-and-response).
+
+```lua title="client.lua"
+mp.events.triggerServer('requestVehicleSpawn', 'Vehicle.v_standard2_archer_hella')
+
+mp.events.addServer('serverNotification', function(message)
+  print('[Server]: ' .. message)
+end)
+```
+
+</TabItem>
+<TabItem label="CEF">
+
+`mp.events.addCef(name, fn)` receives what the page sends with `mp.events.emit`. `mp.events.triggerCef(name, ...)` sends to the page (`mp.events.on` there). UI page: [CEF](/lua/client/cef).
+
+Page payloads travel as JSON. Several arguments arrive as separate Lua arguments. One array is also spread into separate arguments; one object arrives as one table.
+
+The CEF process also emits two built-in events into every frame: `domReady` on `DOMContentLoaded` (argument: the frame's `window.name`) and `loadingFailed` on any uncaught page error or unhandled promise rejection in the page (one table with `frameName`, `message` and other fields). `loadingFailed` is not a network/HTTP load error.
+
+```lua title="client.lua"
+mp.events.addCef('domReady', function(frameName)
+  mp.events.triggerCef('initializeDashboard', { playerName = 'V', initialHealth = 300 })
+end)
+
+mp.events.addCef('loadingFailed', function(err)
+  print(('CEF error in %s: %s'):format(err.frameName, err.message))
+end)
+
+mp.events.addCef('uiButtonPressed', function(buttonId)
+  print('Player clicked UI button:', buttonId)
+end)
+```
+
+</TabItem>
+</Tabs>
+
+There is no event cancel on the client in Lua.
+
+## Cleanup
+
+- `mp.events.remove(name, id)` takes the id from `add` or `addServer`. It looks for `add` handlers of that name first, and only when there are none, for `addServer` handlers. Passing the function does nothing.
+- `mp.events.removeCef(name, token)` takes the table returned by `addCef`.
+- All handlers are dropped when the resource stops.
+
+```lua title="client.lua"
+local id = mp.events.add('remotePlayerStreamIn', function(netID, gameID)
+  print('Player streamed in', netID)
+end)
+mp.events.remove('remotePlayerStreamIn', id)
+
+local token = mp.events.addCef('uiButtonPressed', function(buttonId) end)
+mp.events.removeCef('uiButtonPressed', token)
+```
+
+## Event catalog
+
+Register platform events with `mp.events.add(name, fn)`. Each row lists the arguments passed to `fn`; `—` means no arguments.
+
+### Resource events
+
+| Event | Arguments | Description |
+| --- | --- | --- |
+| `resourceStart` | — | This client resource finished loading. |
+| `resourceStop` | — | This client resource is stopping. |
+| `anyResourceStart` | `resourceName` | A local client resource started. |
+| `anyResourceStop` | `resourceName` | A local client resource stopped. |
+| `anyClientResourceStart` | `resourceName` | A client resource started; emitted alongside `anyResourceStart`. |
+| `anyClientResourceStop` | `resourceName` | A client resource stopped; emitted alongside `anyResourceStop`. |
+
+`resourceName` is a string. The internal `CyberMP_Core` resource does not emit the `any*` resource notifications. `resourcesRefresh`, `anyServerResourceStart`, and `anyServerResourceStop` are server-only events and do not fire on the client.
+
+### Streaming events
+
+| Event | Arguments | Description |
+| --- | --- | --- |
+| `vehicleStreamIn` | `netID, gameID` | A vehicle entered the streaming radius. |
+| `vehicleStreamOut` | `netID, gameID` | A vehicle left the streaming radius. |
+| `remotePlayerStreamIn` | `netID, gameID` | A remote player entered the streaming radius. |
+| `remotePlayerStreamOut` | `netID, gameID` | A remote player left the streaming radius. |
+| `pedStreamIn` | `netID, gameID` | A ped entered the streaming radius. |
+| `pedStreamOut` | `netID, gameID` | A ped left the streaming radius. |
+| `objectStreamIn` | `netID, gameID` | An object entered the streaming radius. |
+| `objectStreamOut` | `netID, gameID` | An object left the streaming radius. |
+
+`netID` is the network entity id; `gameID` identifies the entity in the local game. Convert ids with [`mp.network`](/lua/client/network-and-local).
+
+### CEF events
+
+Register these with `mp.events.addCef(name, fn)`.
+
+| Event | Arguments | Description |
+| --- | --- | --- |
+| `domReady` | `frameName` | The frame fired `DOMContentLoaded`; `frameName` is its `window.name` string. |
+| `loadingFailed` | `err` | A page error or unhandled promise rejection; `err` is a table with `frameName`, `message`, and other error fields. |
+
+Custom local, server, and CEF event names are defined by your scripts; they are not part of this platform catalog.
+
+Discord status: [`mp.discord`](/lua/client/discord).

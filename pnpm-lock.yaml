@@ -46,11 +46,11 @@ importers:
         specifier: ^2.0.0
         version: 2.0.0
       '@cybermp/client-types':
-        specifier: ^2.2.2
-        version: 2.2.2
+        specifier: ^2.3.5
+        version: 2.3.5
       '@cybermp/server-types':
-        specifier: ^3.2.4
-        version: 3.2.4
+        specifier: ^3.2.7
+        version: 3.2.7
 
 packages:
 
@@ -170,11 +170,11 @@ packages:
   '@cybermp/browser-types@2.0.0':
     resolution: {integrity: sha512-WaQtefYRmH+JnkgKLyJfeOn2uxJG+OUThm1IPhSgV5DZiPL5H/qkDZi9N+KY/y14OlaPGOO1qIdMfbj6dA1msQ==}
 
-  '@cybermp/client-types@2.2.2':
-    resolution: {integrity: sha512-tizJMVEemOlkucJyYY5gQzwHxfMj38CCzG7W4C+2YZgn+0/InbFKk7XeG35TWNZjXD0oQGq0q7W5dWNQxwSjzg==}
+  '@cybermp/client-types@2.3.5':
+    resolution: {integrity: sha512-WqpETecL9Hv4ASz/nyHcwGVZLYC3Lyh32ALBGUuO7xYjeb6v4OEwUdCod1zf8FhP710FutlkukbncM0+Qdqy4A==}
 
-  '@cybermp/server-types@3.2.4':
-    resolution: {integrity: sha512-kQNnJ1OYIQuiq63eVg0nGlP62wXNQrlv2PBnSFc7GLceKw076rXZylKRiANwTCAtGD7o0I9bEO8hwaIOMWKUzQ==}
+  '@cybermp/server-types@3.2.7':
+    resolution: {integrity: sha512-wDzrMszNznfTbCAU/irSQC0AKtgpa8RQ04uHwgkdvYB+2QVKZTIvEio1KeMZJUzR8EZ58UXy5X7fT+ztFb3A9A==}
 
   '@emnapi/runtime@1.10.0':
     resolution: {integrity: sha512-ewvYlk86xUoGI0zQRNq/mC+16R1QeDlKQy21Ki3oSYXNgLb45GV1P6A0M+/s6nyCuNDqe5VpaY84BzXGwVbwFA==}
@@ -2335,9 +2335,9 @@ snapshots:
 
   '@cybermp/browser-types@2.0.0': {}
 
-  '@cybermp/client-types@2.2.2': {}
+  '@cybermp/client-types@2.3.5': {}
 
-  '@cybermp/server-types@3.2.4': {}
+  '@cybermp/server-types@3.2.7': {}
 
   '@emnapi/runtime@1.10.0':
     dependencies:

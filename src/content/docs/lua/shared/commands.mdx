@@ -1,0 +1,41 @@
+---
+title: Commands (Lua)
+description: Console commands with mp.commands on server and client in Lua.
+---
+
+## Server
+
+| Call | Description |
+| --- | --- |
+| `mp.commands.add(name, fn)` | `fn(player, args, raw)`: the player object (the number `0` for the server console), the arguments as a table of strings, the command text. |
+| `mp.commands.addRaw(name, fn)` | Same, the first argument is the numeric id. |
+| `mp.commands.remove(name)` | Removes a command. |
+| `mp.commands.execute(line)` | Runs a console command. |
+| `mp.commands.getAll()` | Table of registered command names. |
+
+```lua title="server.lua"
+mp.commands.add('pos', function(player, args, raw)
+  if player == 0 then return end
+  local p = player.position
+  print(('%s: %.1f %.1f %.1f'):format(player.nickname, p.x, p.y, p.z))
+end)
+```
+
+Commands also run from the [server console](/lua/server/resources#console).
+
+## Client
+
+| Call | Description |
+| --- | --- |
+| `mp.commands.add(name, fn)` | Console command. `fn(playerId, args, raw)`: the local player's network id, the arguments as a table of strings, the command text. |
+| `mp.commands.remove(name)` / `mp.commands.execute(line)` / `mp.commands.getAll()` | Remove, run, list. |
+
+```lua title="client.lua"
+mp.commands.add('say', function(playerId, args, raw)
+  mp.events.triggerServer('chat:say', table.concat(args, ' '))
+end)
+```
+
+Players open the client console with `F8`. [Client console](/lua/shared/commands#client).
+
+Command handlers are coroutines, so `mp.wait` works inside them ([scheduler](/lua/shared/scheduler)). On both sides, a resource's commands are removed when it stops.

@@ -1,0 +1,49 @@
+---
+title: resource.toml
+description: Resource manifest fields.
+---
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+A resource is a directory under `resources/` that contains `resource.toml`. The directory name is the resource name in `server.toml`. Procedure: [create a resource](/guides/resources/creating-resource).
+
+<Tabs syncKey="lang">
+<TabItem label="JavaScript">
+
+```toml title="resource.toml"
+client_script = './client.js'
+server_script = './server.js'
+```
+
+</TabItem>
+<TabItem label="Lua">
+
+```toml title="resource.toml"
+client_script = './client.lua'
+server_script = './server.lua'
+```
+
+</TabItem>
+</Tabs>
+
+Lua uses the same keys with `.lua` paths. Omit `client_script` or `server_script` when that side has no script.
+
+## Fields
+
+| Field | Description |
+| --- | --- |
+| `client_script` | Game client script. |
+| `server_script` | Dedicated server script. |
+| `shared_script` | Script loaded on both the server and the client. |
+| `file` | Client files: UI, archives, mods. [Custom assets](/guides/resources/adding-resource-files). |
+| `cef_url` | CEF HTML entry. [CEF UI](/guides/client/first-cef-ui). |
+| `use_game_natives` | `true` when client scripts use game natives: `mp.game` in JavaScript, the game layer (`Game`, `TweakDB`, hooks, client `mp.hashes`) in Lua. Without it the game natives are not initialized for this resource. |
+| `hot_reload` | Not read by the platform. Convention for the [hotreload](/guides/general/hotreload) watcher example, which reads it from the file itself. |
+| `author`, `description`, `version` | Optional. Metadata. `mp.resources.getTOML(name)` (JavaScript) or `mp.resources.getTomlFile(name)` (Lua) returns the whole `resource.toml` as a JSON string. |
+
+The server does not install npm packages. Server scripts can `require` from a `node_modules` folder inside the resource; clients receive only the files listed in these keys, so bundle client imports into them ([workspace](/guides/getting-started/workspace)).
+
+```toml title="server.toml"
+resources = ['hello_world']
+```
+
+Array order is load order. Shared helpers first, gamemode last.

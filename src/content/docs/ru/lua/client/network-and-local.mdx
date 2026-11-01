@@ -1,0 +1,88 @@
+---
+title: Сетевые id, локальный спавн, тики (Lua)
+description: Перевод netId в gameId, сущности только на клиенте и код на каждом тике в Lua.
+---
+
+Сервер работает с **сетевыми id**. Нативам нужны **игровые id** (хэндлы REDengine). Если передать не тот вид, клиент выдаст `entity not found`.
+
+## `mp.network`
+
+| Вызов | Направление |
+| --- | --- |
+| `mp.network.getVehicleGameId(netId)` / `getVehicleId(gameId)` | Транспорт |
+| `mp.network.getPedGameId(netId)` / `getPedId(gameId)` | Пед |
+| `mp.network.getObjectGameId(netId)` / `getObjectId(gameId)` | Объект |
+| `mp.network.getPlayerGameId(netId)` / `getPlayerId(gameId)` | Игрок |
+| `mp.network.getLocalPlayerId()` | Сетевой id локального игрока. |
+| `mp.network.getStreamedPlayers()` | Игровые id удалённых игроков в зоне стрима. |
+| `mp.network.getStreamedPool(name)` | Игровые id в пуле: `'CVehicle'`, `'CPed'`, `'CPickup'`, `'CObject'`. |
+| `mp.getServerAddress()` | Адрес сессии, например `127.0.0.1:2077`. В Lua он на `mp`, а не на `mp.network`. |
+
+```lua title="client.lua"
+mp.events.add('vehicleStreamIn', function(netID, gameID)
+  local locked = mp.meta.getEntity(netID, 'locked')
+  local back = mp.network.getVehicleId(gameID) -- same as netID while streamed
+  print(netID, gameID, locked, back)
+end)
+
+local me = mp.network.getLocalPlayerId()
+local nearby = mp.network.getStreamedPlayers()
+```
+
+Переводите id в обработчиках стрима, а не в `resourceStart`: у сущности вне зоны стрима нет игрового id.
+
+## Спавн только у себя (`mp.client`)
+
+`spawnPed` / `spawnVehicle` / `spawnObject` создают сущности **только на этом клиенте**. Другие игроки их не видят. Подходит для превью транспорта, декораций, чекпоинтов.
+
+| Вызов | Возвращает |
+| --- | --- |
+| `mp.client.spawnPlayer(x, y, z, yaw)` | `true`, если спавн начался. См. [спавн игрока](/ru/lua/client/spawning-player). |
+| `mp.client.spawnPed(model, appearance, x, y, z, yaw, streaming)` | Handle (целое). |
+| `mp.client.spawnVehicle(model, appearance, x, y, z, roll, pitch, yaw, streaming)` | Handle (целое). |
+| `mp.client.spawnObject(model, appearance, x, y, z, roll, pitch, yaw, streaming)` | Handle (целое). |
+| `mp.client.despawnPed(handle)` / `despawnVehicle(handle)` / `despawnObject(handle)` | `true`, если удалено. |
+
+```lua title="client.lua"
+local function hash(str) return tonumber(str, 10) end
+
+local handle = mp.client.spawnVehicle(
+  hash(mp.hashes.toTweakdbid('Vehicle.v_standard2_archer_hella')),
+  hash(mp.hashes.toCname('default')),
+  x, y, z,
+  0, 0, yaw,
+  true -- streaming
+)
+
+mp.client.despawnVehicle(handle)
+```
+
+`model` и `appearance` передавайте целыми числами: `tonumber(hashString, 10)` ([почему](/ru/lua/shared/hashes)). Клиентским `mp.hashes` нужен `use_game_natives = true`. Для стабильного вида передавайте `toCname('default')` как appearance: [appearance](/ru/lua/shared/hashes#models-and-appearances). У локальных сущностей нет измерения: удаляйте их сами, когда игрок меняет измерение.
+
+## Тики
+
+| Вызов | Описание |
+| --- | --- |
+| `mp.onUpdateLoop(fn)` | Вызывает `fn` на каждом тике скриптов. Снять нельзя, ошибка внутри `fn` теряется без сообщения. |
+| `mp.registerGameState('onUpdate', fn)` | Вызывает `fn(dt)` на каждом тике после `onInit`. Нужен `use_game_natives = true`. |
+
+Ни один не возвращает id для остановки. Защищайте тело флагом и держите его дешёвым:
+
+```lua title="client.lua"
+local hudEnabled = false
+
+mp.onUpdateLoop(function()
+  if not hudEnabled then return end
+  -- distance checks, HUD, animation helpers
+end)
+```
+
+Для периодической работы проще задача с `mp.wait`: [планировщик](/ru/lua/shared/scheduler).
+
+## Локальное хранилище
+
+Хранилище строк на этой машине: [локальное хранилище](/ru/lua/client/local-storage).
+
+## Таймер и лаунчер
+
+`mp.getTimer()` — счётчик миллисекунд. `mp.getLauncherSettings()` возвращает настройки лаунчера строкой JSON: `json.decode(mp.getLauncherSettings())`. Считайте результат нетипизированным. Поля меняются между сборками лаунчера.

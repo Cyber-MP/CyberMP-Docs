@@ -1,0 +1,54 @@
+---
+title: Сетевые события (Lua)
+description: События между сервером и клиентом в Lua, правила данных и запрос-ответ.
+---
+
+Платформенные события (`playerConnected`, `vehicleStreamIn`, …), свои события и сетевые события идут через одну шину. Обработчик получает значения отдельными аргументами.
+
+| Сервер | Клиент | Назначение |
+| --- | --- | --- |
+| `mp.events.add(name, fn)` | `mp.events.add(name, fn)` | Платформенные и локальные события. Возвращает id обработчика. |
+| `mp.events.remove(name, id)` | `mp.events.remove(name, id)` | Снимает обработчик по id из `add`. Передача функции ничего не делает. |
+| `mp.events.trigger(name, ...)` | `mp.events.trigger(name, ...)` | Локальное событие в этом процессе. |
+| `mp.events.addClient(name, fn)` | `mp.events.addServer(name, fn)` | Сетевое событие с другой стороны. |
+| `mp.events.triggerClient(player, name, ...)` | `mp.events.triggerServer(name, ...)` | Сетевое событие на другую сторону. |
+
+Подробнее по сторонам: [события сервера](/ru/lua/server/events), [события на клиенте](/ru/lua/client/events).
+
+<a id="payloads"></a>
+## Данные
+
+- Аргументы упаковываются в MessagePack: передавайте числа, строки, булевы значения и таблицы.
+- Массив приходит таблицей Lua с индексами от `1`.
+- Функцию можно передать в локальное событие или экспорт, и получатель сможет её вызвать. Функцию, пришедшую по сети, вызвать нельзя: вызов ничего не делает.
+- На сервере `return false` из обработчика платформенного события (до любого `mp.wait`) отменяет стандартное действие: [события сервера](/ru/lua/server/events#отмена-стандартного-действия). Клиентские события не отменяются.
+
+## Запрос и ответ
+
+События не возвращают значение. Отвечайте вторым событием и сопоставляйте id запроса:
+
+```lua title="server.lua"
+mp.events.addClient('bank:balance', function(player, requestId)
+  player:trigger('bank:balance:reply', requestId, 1500)
+end)
+```
+
+```lua title="client.lua"
+local pending, nextId = {}, 0
+
+local function requestBalance(callback)
+  nextId = nextId + 1
+  pending[nextId] = callback
+  mp.events.triggerServer('bank:balance', nextId)
+end
+
+mp.events.addServer('bank:balance:reply', function(requestId, balance)
+  local callback = pending[requestId]
+  pending[requestId] = nil
+  if callback then callback(balance) end
+end)
+
+requestBalance(function(balance) print('balance', balance) end)
+```
+
+Отправителя на сервере берите из первого аргумента `addClient`, а не из данных.

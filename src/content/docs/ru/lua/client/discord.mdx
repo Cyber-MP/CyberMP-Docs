@@ -1,0 +1,39 @@
+---
+title: Discord (Lua)
+description: Статус и OAuth из клиентского скрипта Lua через mp.discord.
+---
+
+Клиент общается с приложением Discord через `mp.discord`. Только клиент.
+
+## Статус (rich presence)
+
+```lua title="client.lua"
+mp.discord.updateRichPresence('Night City', 'Walking the Glen')
+```
+
+`updateRichPresence(state, details)` задаёт две строки текста. Передавайте обе строки; `''` очищает строку. Логотип CyberMP и таймер остаются. Делайте строки короткими. Вызывайте снова, когда активность меняется (работа, интерьер, смерть).
+
+## Код OAuth
+
+```lua title="client.lua"
+mp.spawnTask(function()
+  while true do
+    local code = mp.discord.getCodeAuthorization('YOUR_APP_ID', '["identify"]')
+    if code and code ~= '' then
+      mp.events.triggerServer('discordCode', code)
+      return
+    end
+    mp.wait(1000)
+  end
+end)
+```
+
+`getCodeAuthorization(appId, scopes)` возвращает **код авторизации**, а не access token. Отправьте его **на свой сервер** и обменяйте через token endpoint Discord. Не встраивайте client secret Discord в клиентский ресурс.
+
+Запрос асинхронный: первый вызов запускает его и возвращает пустую строку. Вызывайте снова, пока не придёт код (новый запрос отправляется не чаще раза в 5 секунд). Код возвращается один раз, затем следующий вызов снова возвращает пустую строку.
+
+`scopes` — **JSON-массив** в строке, например `'["identify","guilds"]'`, а не список через пробел. Зарегистрируйте приложение на портале разработчиков Discord и используйте его app id.
+
+`getOAuth2Token(appId)` принимает только app id и возвращает **access token** из Discord Game SDK. Он тоже асинхронный (пустая строка, пока токен не пришёл), а SDK инициализируется один раз первым переданным app id.
+
+Если Discord не запущен, оба вызова продолжают возвращать пустую строку. Проверяйте значение перед использованием.

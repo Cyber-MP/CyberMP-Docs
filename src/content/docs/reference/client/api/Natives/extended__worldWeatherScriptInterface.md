@@ -5,7 +5,7 @@ prev: false
 title: "extended__worldWeatherScriptInterface"
 ---
 
-Defined in: game.d.ts:393
+Defined in: game.d.ts:446
 
 Extended by CyberMP `worldWeatherScriptInterface` class
 
@@ -17,7 +17,7 @@ Extended by CyberMP `worldWeatherScriptInterface` class
 
 > **ResetWeather**(`forceRestore?`, `blendTime?`): `boolean`
 
-Defined in: game.d.ts:413
+Defined in: game.d.ts:466
 
 Clears ongoing script-driven environmental alterations and returns to automated weather loops.
 
@@ -49,7 +49,7 @@ Optional transition timeline layout duration in seconds.
 
 > **SetWeather**(`weather`, `blendTime?`, `priority?`): `boolean`
 
-Defined in: game.d.ts:401
+Defined in: game.d.ts:454
 
 Commands the environment engine manager to override active weather profiles.
 

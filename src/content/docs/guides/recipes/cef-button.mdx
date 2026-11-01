@@ -1,0 +1,60 @@
+---
+title: CEF button
+description: Complete resource demonstrating HTML emit to the client onCef handler.
+slug: guides/recipes/cef-button
+---
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import ExampleDownload from '../../../../components/ExampleDownload.astro';
+
+Complete resource demonstrating an HTML button that emits to the client. The page does not communicate with the server. `emit` from HTML arrives on the client (`onCef`). List the HTML in `file`. The page gets mouse input only with CEF focus: run `ui` in F8 before clicking.
+
+<ExampleDownload href="/examples/cef-button.zip" />
+
+CEF overview: [First CEF UI](/guides/client/first-cef-ui). White screen: [troubleshooting](/guides/general/troubleshooting).
+
+<Tabs syncKey="recipe-cef">
+<TabItem label="resource.toml">
+
+```toml title="resource.toml"
+client_script = './client.js'
+cef_url = './ui/index.html'
+file = ['./ui/index.html']
+```
+
+</TabItem>
+<TabItem label="client.js">
+
+```js title="client.js"
+let focused = false;
+
+// F8: `ui` toggles keyboard focus and the cursor for the page
+mp.commands.add('ui', () => {
+  focused = !focused;
+  mp.cef.setFocus(focused, focused);
+});
+
+mp.events.onCef('ui:hello', (text) => {
+  console.log('from UI', text);
+  mp.events.emitCef('ui:ack', `got: ${text}`);
+});
+```
+
+</TabItem>
+<TabItem label="ui/index.html">
+
+```html title="ui/index.html"
+<!doctype html>
+<button id="hi">hello</button>
+<pre id="out"></pre>
+<script>
+  document.getElementById('hi').onclick = () => {
+    mp.events.emit('ui:hello', 'from cef');
+  };
+  mp.events.on('ui:ack', (msg) => {
+    document.getElementById('out').textContent = msg;
+  });
+</script>
+```
+
+</TabItem>
+</Tabs>

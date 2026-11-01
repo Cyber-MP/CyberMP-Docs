@@ -1,0 +1,47 @@
+---
+title: HTTP и утилиты (Lua)
+description: mp.sendHttpRequest, bcrypt, консольные переменные и server.toml в Lua.
+---
+
+## HTTP
+
+```lua title="server.lua"
+mp.sendHttpRequest('https://example.com/api', function(status, body, headers, err)
+  if err then
+    print('request failed', err)
+    return
+  end
+  local data = json.decode(body)
+end, 'POST', json.encode({ hello = 'world' }), { ['Content-Type'] = 'application/json' })
+```
+
+`mp.sendHttpRequest(url, callback, method, data, headers, options)`. `method` по умолчанию `'GET'`, `data` — строка, `headers` — таблица. `options.followLocation` (по умолчанию `true`) следует редиректам. Колбэк получает `status, body, headers, err`: при ошибке `body` — `nil`, а `err` содержит текст ошибки. Запрос без ответа в течение 5 секунд завершается ошибкой.
+
+## Пароли
+
+```lua title="server.lua"
+local stored = mp.generateBcryptHash('secret')
+print(mp.verifyBcryptHash('secret', stored)) -- true
+```
+
+`mp.generateBcryptHash(password)` возвращает хэш строкой. `mp.verifyBcryptHash(password, hash)` возвращает `true`, если пароль совпадает.
+
+## Консольные переменные
+
+| Вызов | Описание |
+| --- | --- |
+| `mp.getVar(name)` | Значение строкой. Для несуществующей переменной — ошибка. |
+| `mp.getVarInt(name)` | Значение целым (`'true'` читается как `1`), `0` для несуществующей переменной. |
+| `mp.addVar(name, value)` | Задаёт переменную, как консольная команда `add_var`. Передавайте `value` строкой: число `0` уходит как `nil`, и вызов падает. |
+
+## Конфигурация
+
+`mp.getServerTomlFile()` возвращает `server.toml` строкой JSON, `mp.resources.getTomlFile(name)` — `resource.toml` ресурса. Разбирайте через `json.decode`.
+
+## Прочее
+
+| Вызов | Описание |
+| --- | --- |
+| `mp.hashes.toCname(name)` / `toTweakdbid(name)` / `toResref(name)` | Хэш десятичной строкой. `mp.getHashFromName(name, type)` с `'cname'`, `'tweakdbid'` или `'resref'` делает то же. [Числа и хэши](/ru/lua/shared/hashes). |
+| `mp.isServer()` | `true`. |
+| `mp.getTimer()` | Счётчик миллисекунд. [Планировщик](/ru/lua/shared/scheduler). |

@@ -1,0 +1,21 @@
+---
+title: Client scripting overview
+description: JavaScript in the CyberMP game client.
+---
+
+import { LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+Client scripts run in the game process after join. Global `mp` is `MpClient` ([`@cybermp/client-types`](/guides/general/type-safety)). CEF uses `MpBrowser`.
+
+Call `mp.game` and spawn only after [`onGameLoaded`](/guides/client/lifecycle). Stream events pass `(netID, gameID)`. Natives require game ids ([network](/guides/client/network-and-local)).
+
+A `.lua` client script runs in a separate Lua runtime with its own `mp`: [Lua client scripting](/lua/client).
+
+<CardGrid>
+  <LinkCard title="Lifecycle" href="/guides/client/lifecycle" description="resourceStart, onTweak, onGameLoaded" />
+  <LinkCard title="Events" href="/guides/client/events" description="Stream-in, emit, emitServer, CEF" />
+  <LinkCard title="Game natives" href="/reference/client/working-with-game-natives" description="mp.game, observe, override" />
+  <LinkCard title="Local storage" href="/guides/scripting/local-storage" description="mp.localStorage" />
+  <LinkCard title="CEF" href="/guides/client/first-cef-ui" description="HTML UI" />
+  <LinkCard title="Discord" href="/guides/client/discord" description="Rich presence, OAuth" />
+</CardGrid>

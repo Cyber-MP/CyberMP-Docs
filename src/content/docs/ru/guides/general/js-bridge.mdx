@@ -1,0 +1,56 @@
+---
+title: JS-мост
+description: Перегрузки векторов и ограничения JavaScript-моста CyberMP.
+---
+import VectorConverter from '../../../../../components/VectorConverter.astro';
+
+Клиентский JavaScript обращается к движку через мост. В типах часто указаны оба варианта: `(x, y)` и `{ x, y }`. Мост сейчас принимает **объект**. Два числа игнорируются: ни ошибки, ни эффекта.
+
+## Координаты — объектом
+
+| Метод | Не сработает | Сработает |
+| --- | --- | --- |
+| `SetAnchorPoint` | `(0.5, 0.5)` | `{ x: 0.5, y: 0.5 }` |
+| `SetRenderTransformPivot` | `(0.5, 0.5)` | `{ x: 0.5, y: 0.5 }` |
+| `SetTranslation` | `(100, 200)` | `{ x: 100, y: 200 }` |
+| `SetScale` | `(2, 2)` | `{ x: 2, y: 2 }` |
+| `SetSize` | `(100, 100)` | `{ x: 100, y: 100 }` |
+
+Так же у большинства `inkWidget`. Если вызов не даёт эффекта, сначала оберните числа в объект.
+
+:::caution
+`(x, y)` выполняется без ошибки и без эффекта. Нужен `{ x, y }`.
+:::
+
+```js del={1} ins={2}
+widget.SetAnchorPoint(0.5, 0.5);
+widget.SetAnchorPoint({ x: 0.5, y: 0.5 });
+```
+
+Три числа — `{ x, y, z }`, не `(x, y, z)`.
+
+<VectorConverter lang="ru" />
+
+## Кортежи сервера и объекты клиента
+
+- На сервере позиция — `[x, y, z]`, поворот — `[roll, pitch, yaw]`.
+- Многие клиентские нативы ждут `{ x, y, z }` или объекты `Vector4` / `EulerAngles`. Пример в [телепорте](/ru/guides/client/teleporting-player).
+
+```js
+player.position; // сервер: [x, y, z]
+
+teleportFacility.Teleport(
+  playerObj,
+  Object.assign(new mp.game.Vector4(), { x, y, z, w: 1 }),
+  Object.assign(new mp.game.EulerAngles(), { roll: 0, pitch: 0, yaw }),
+);
+```
+
+## Другие правила моста
+
+- Имена в `observe` / `override` — как в REDscript. Опечатка проходит без ошибки.
+- В `observe*Raw` можно вызывать только другие `mp.game.*`, не `fetch` и не `emitServer`.
+- `mp.*.create` на сервере синхронный и идёт через event loop. После `await` вы уже в другом ходе. См. [транспорт](/ru/guides/server/vehicles).
+- BigInt приходят как `GameHash`. Хеши лучше собирать через [`mp.hashes`](/ru/guides/general/hashes) (`cname` / `tweakdbid` / `resref`), а не вручную. `appearance` у машин и педов: [`cname('default')`](/ru/guides/general/appearances), не `0`.
+
+Если в типах указаны обе формы, ориентируйтесь на объектную. Её используют рабочие ресурсы.

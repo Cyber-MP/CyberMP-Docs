@@ -1,0 +1,85 @@
+---
+title: Общий скриптинг (Lua)
+description: Среда Lua, библиотеки и API mp на сервере и клиенте.
+---
+
+import { LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+CyberMP выполняет `.lua`-файлы из `server_script`, `client_script` или `shared_script` в среде Lua. У каждого ресурса своё состояние Lua и глобальные переменные.
+
+В среде Lua доступны встроенные векторные типы. Глобальный `mp` — таблица с API для событий, сущностей, ресурсов и других возможностей CyberMP.
+
+## Карта API
+
+| Область | Сервер | Клиент |
+| --- | --- | --- |
+| События | `add`, `addClient`, `trigger`, `triggerClient`, отмена через `return false`: [события сервера](/ru/lua/server/events) | `add`, `addServer`, `trigger`, `triggerServer`, `addCef`, `triggerCef`: [события на клиенте](/ru/lua/client/events) |
+| Сущности | Пулы и объекты сущностей: [сущности](/ru/lua/server/entities) | Числовые id, `mp.network`, `mp.client.spawn*`: [сетевые id](/ru/lua/client/network-and-local) |
+| Игра | — | `Game`, `mp.observe`, `mp.registerGameState` с `use_game_natives = true`: [игровые нативы](/ru/lua/client/game-natives) |
+| Хэши | `mp.hashes.to*` | `mp.hashes.to*` / `from*` (нужен игровой слой): [числа и хэши](/ru/lua/shared/hashes) |
+| Мета, команды, экспорты | [Мета](/ru/lua/shared/meta), [команды](/ru/lua/shared/commands), [экспорты](/ru/lua/shared/exports) | Те же страницы |
+| Ресурсы | Запуск, остановка, перезапуск: [ресурсы](/ru/lua/server/resources) | Только чтение: `getCurrentName`, `getState`, `getTomlFile`, `loadFile` |
+| Прочее | [HTTP, bcrypt, консольные переменные](/ru/lua/server/http) | [Локальное хранилище](/ru/lua/client/local-storage), [CEF](/ru/lua/client/cef), [Discord](/ru/lua/client/discord) |
+| Планирование | [Планировщик](/ru/lua/shared/scheduler) | То же плюс `mp.setImmediate` |
+
+`mp.isServer()` возвращает `true` на сервере и `false` на клиенте. Сводка на одной странице: [шпаргалка](/ru/lua/shared/cheatsheet).
+
+## resource.toml
+
+```toml title="resource.toml"
+server_script = 'server.lua'
+client_script = ['utils.lua', 'client.lua']
+shared_script = 'shared.lua'
+```
+
+- Файлы выполняются по порядку: сначала `shared_script`, затем `server_script` на сервере или `client_script` на клиенте. Все Lua-файлы одного ресурса работают в одном состоянии Lua и видят общие глобальные переменные.
+- `shared_script` выполняется и на сервере, и на каждом клиенте.
+- Игрокам как скрипты передаются только файлы из `client_script` / `shared_script`. Сервер шифрует их для передачи, клиент расшифровывает перед загрузкой.
+- Игровым нативам клиента нужен `use_game_natives = true`. См. [игровые нативы](/ru/lua/client/game-natives).
+
+Все поля [`resource.toml`](/ru/lua/shared#manifest) действуют. Lua дополнительно читает `export` (и `server_export` на сервере): см. [экспорты](/ru/lua/shared/exports).
+
+## Библиотеки
+
+| Библиотека | Сервер | Клиент |
+| --- | --- | --- |
+| `base`, `table`, `string`, `math`, `utf8`, `coroutine`, `debug` | Да | Да |
+| `json` (`json.encode`, `json.decode`), `msgpack` (`msgpack.pack`, `msgpack.unpack`) | Да | Да |
+| `io`, `os` | Да | Нет. С `use_game_natives = true` клиент также получает `io`, `package` и `os`, ограниченный `clock`, `date`, `difftime`, `time`. |
+| `dofile`, `loadfile` | Удалены | Удалены |
+
+`print(...)` пишет в консоль с именем ресурса. `mp.log(text)` пишет `text` без перевода строки.
+
+### require
+
+- **Сервер:** `require('lib/util')` выполняет `lib/util.lua` из папки ресурса один раз и при следующих вызовах возвращает его результат. Точки в имени не превращаются в слэши. Файл должен существовать: отсутствующий файл не сообщается обычной ошибкой Lua.
+- **Клиент:** `require` не загружает файлы ресурса. Перечислите каждый файл в `client_script`; у них общие глобальные переменные.
+
+## Векторы
+
+`vector2(x, y)`, `vector3(x, y, z)` и `vector4(x, y, z, w)` встроены и читаются через `.x`, `.y`, `.z`, `.w`. Компоненты — 32-битные float. Позиции, повороты и скорости из серверного API — `vector3`.
+
+<CardGrid>
+  <LinkCard title="Скрипты сервера" href="/ru/lua/server" description="События, сущности, ресурсы, HTTP" />
+  <LinkCard title="Скрипты клиента" href="/ru/lua/client" description="События, игровые нативы, CEF, локальный спавн" />
+</CardGrid>
+
+<a id="create-resource"></a>
+## Создание ресурса
+
+Создайте `resources/hello_world/` с файлами `resource.toml`, `server.lua` и `client.lua`. Используйте пример манифеста выше и добавьте `resources = ['hello_world']` в `server.toml`. Имя папки — имя ресурса. Если на одной из сторон скрипта нет, пропустите соответствующее поле. В консоли сервера выполните `refresh`, затем `start hello_world`.
+
+<a id="manifest"></a>
+## Поля манифеста
+
+| Поле | Назначение |
+| --- | --- |
+| `server_script`, `client_script`, `shared_script` | Пути скриптов Lua для сервера, клиента или обеих сторон. |
+| `file` | Локальные файлы интерфейса, архивы и другие файлы для клиентов. |
+| `cef_url` | Входная HTML-страница интерфейса CEF ресурса. |
+| `use_game_natives` | `true` для `Game`, TweakDB, хуков и клиентских хэш-функций. |
+| `export`, `server_export` | Имена экспортируемых функций; см. [экспорты](/ru/lua/shared/exports). |
+| `author`, `description`, `version` | Необязательные метаданные ресурса. |
+| `hot_reload` | Соглашение для отдельного наблюдателя файлов; платформа поле не читает. |
+
+`mp.resources.getTomlFile(name)` возвращает манифест строкой JSON. Разбирайте её через `json.decode`. После правки скриптов перезапустите ресурс; после правки манифеста сначала выполните `refresh`.

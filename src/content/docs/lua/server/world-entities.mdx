@@ -1,0 +1,84 @@
+---
+title: Objects, peds, and pickups (Lua)
+description: mp.objects, mp.peds, and mp.pickups in Lua.
+---
+
+The server also creates objects, peds, and pickups. Nearby clients in the same `dimension` stream them in.
+
+`model` is a [hash](/lua/shared/hashes) converted with `tonumber(str, 10)`: object `.ent` via `toResref`, ped TweakDB `Character.*` via `toTweakdbid`, pickup TweakDB item record (`Items.*`) via `toTweakdbid`. Peds also need an [appearance](/lua/shared/hashes#models-and-appearances): `toCname('default')` unless you have a specific look.
+
+| Pool | `create` fields (default) |
+| --- | --- |
+| `mp.objects` | `model`, `position`, `yaw` (`0`), `dynamic` (`true`), `dimension` |
+| `mp.peds` | `model`, `appearance`, `position`, `health` (`200`), `yaw` (`0`), `dimension` |
+| `mp.pickups` | `model`, `type`, `position`, `yaw` (`0`), `dimension` |
+
+`position` is a `vector3` or a table with `x`, `y`, `z` (default `0, 0, 0`). If the entity does not appear: [troubleshooting](/lua/shared/cheatsheet#troubleshooting).
+
+## Objects
+
+```lua title="server.lua"
+local function hash(str) return tonumber(str, 10) end
+
+local gate = hash(mp.hashes.toResref(
+  'base\\gameplay\\devices\\doors\\gates\\appearances\\w300_h250_mall_metal.ent'
+))
+
+local object = mp.objects.create({
+  model = gate,
+  position = vector3(x, y + 0.5, z),
+  dynamic = false,
+})
+
+mp.meta.setEntity(object, 'dropId', dropId, true)
+```
+
+```lua title="server.lua"
+if mp.objects.exists(id) then
+  mp.objects.at(id):destroy()
+end
+
+for _, o in ipairs(mp.objects.toArray()) do
+  if o:getMeta('dropId') then o:destroy() end
+end
+```
+
+On the client: `objectStreamIn` / `objectStreamOut` with `(netID, gameID)`. Convert ids with [`mp.network`](/lua/client/network-and-local).
+
+## Peds (NPCs)
+
+```lua title="server.lua"
+local ped = mp.peds.create({
+  model = hash(mp.hashes.toTweakdbid('Character.CivilianFemaleAverage')),
+  appearance = hash(mp.hashes.toCname('default')),
+  position = vector3(x, y, z),
+  yaw = heading,
+  health = 5000,
+})
+
+mp.meta.setEntity(ped, 'npcId', npcId, true)
+```
+
+Write gameplay ids on synced meta so the client can read them on `pedStreamIn`. Destroy with `ped:destroy()` or `mp.peds.destroy(id)`. Destroy your peds in `resourceStop` so a restart does not leave leftovers:
+
+```lua title="server.lua"
+mp.events.add('resourceStop', function()
+  for _, p in ipairs(mp.peds.toArray()) do
+    if p:getMeta('npcId') then p:destroy() end
+  end
+end)
+```
+
+## Pickups
+
+```lua title="server.lua"
+local pickup = mp.pickups.create({
+  model = hash(mp.hashes.toTweakdbid('Items.Preset_Nue_Default')), -- item record, not an .ent
+  type = 2, -- 1 clothes, 2 weapon, 3 other
+  position = vector3(x, y, z),
+})
+```
+
+Read the type back with `pickup.pickupType`. Use pickups when the engine should treat the item as a pickup. Use objects when the item is a prop and interaction is your own (distance check, events).
+
+Which file or TweakDB record to pass: [resource types](/lua/shared/hashes#models-and-appearances). Fields shared by all entities: [pools and entity objects](/lua/server/entities).

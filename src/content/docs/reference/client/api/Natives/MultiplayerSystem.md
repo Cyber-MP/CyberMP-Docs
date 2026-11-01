@@ -5,7 +5,7 @@ prev: false
 title: "MultiplayerSystem"
 ---
 
-Defined in: game.d.ts:147
+Defined in: game.d.ts:196
 
 Custom CyberMP System managing asset deletion maps, and basic spawn configurations.
 Accessible through `mp.game.ScriptGameInstance.GetMultiplayerSystem()`
@@ -30,9 +30,9 @@ Accessible through `mp.game.ScriptGameInstance.GetMultiplayerSystem()`
 
 > **DeclareDeletedObjects**(`objectClassMap`): `void`
 
-Defined in: game.d.ts:152
+Defined in: game.d.ts:201
 
-Removes game object classes (e.g., `GameObject`, `Door`) from the active multiplayer map state.
+Declares game object classes (e.g., `GameObject`, `Door`) whose world entities the client disposes locally when they appear.
 
 #### Parameters
 
@@ -54,7 +54,7 @@ Array of class names from `MpClasses` to clear.
 
 > **DeletedObjectsByUniqueHash**(`objectHashMap`): `void`
 
-Defined in: game.d.ts:158
+Defined in: game.d.ts:207
 
 Removes specific game objects from the network replication map using their unique hash keys.
 
@@ -78,7 +78,7 @@ Array of unique entity hashes to delete.
 
 > **SetDefaultSpawnPosition**(`position`, `yaw`): `void`
 
-Defined in: game.d.ts:171
+Defined in: game.d.ts:220
 
 Sets the initial default coordinate and orientation fallback position when spawning players.
 
@@ -108,7 +108,7 @@ The horizontal rotation (yaw angle) in degrees/radians.
 
 > **UseDefaultEffectsByPlatform**(`value`): `void`
 
-Defined in: game.d.ts:164
+Defined in: game.d.ts:213
 
 Enables or disables synchronization of default game effects, as defined by the CyberMP platform.
 

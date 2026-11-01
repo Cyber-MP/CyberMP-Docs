@@ -1,0 +1,32 @@
+---
+title: Управление ресурсами
+description: Старт, стоп и refresh ресурсов на работающем сервере.
+---
+
+Старт, стоп, restart и refresh ресурсов без остановки процесса. Консоль: [консоль сервера](/ru/reference/server/console). Скрипты: `mp.resources.start`, `stop`, `restart`, `refresh`.
+
+## Новый каталог не в списке
+
+Каталог, добавленный в `resources` при работающем процессе, не виден до:
+
+```shell
+refresh
+```
+
+`refresh` повторно сканирует диск. Затем `start имя_каталога`. Уже запущенные ресурсы не перезапускаются, но их `resource.toml` перечитывается и применяется при следующем `restart`.
+
+## Старт и стоп
+
+```shell
+start hello_world
+stop hello_world
+```
+
+```ansi
+> stop hello_world
+[38;2;179;133;0m[00:00:00] [resources][0m Stopped resource hello_world
+```
+
+Состояние из кода: `mp.resources.getState('hello_world')` возвращает число: `0` — не найден, `1` — запускается, `2` — запущен, `3` — остановлен (или найден, но ещё не запускался).
+
+Правки скриптов требуют `restart`: [живые обновления](/ru/guides/resources/live-updates).

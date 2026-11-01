@@ -1,0 +1,58 @@
+---
+title: Экспорты ресурсов
+description: Вызов функции другого ресурса через mp.exports.
+---
+
+`mp.exports` — вызов функции, которую зарегистрировал другой ресурс. Так подключают общие хелперы (Lua-прокси, noclip, уведомления), не копируя код.
+
+На **клиенте** это `mp.exports`. В серверных скриптах тот же механизм — глобальный `exports` (без `mp.`); между сервером и клиентом экспорты не работают. Экспорт ищется в момент обращения, поэтому ресурс-экспортёр к этому моменту уже должен быть запущен: если потребитель вызывает экспорт при старте, ставьте экспортёр в `server.toml` в `resources` **раньше** него.
+
+## Зарегистрировать
+
+В ресурсе с логикой вызываете `mp.exports` как функцию:
+
+```js title="resources/notify/client.js"
+mp.exports('show', (message) => {
+  console.log('notify', message);
+});
+```
+
+Имя экспорта принадлежит **этому** ресурсу.
+
+## Вызвать из другого ресурса
+
+Сначала **имя папки**, потом имя экспорта:
+
+```js title="resources/gamemode/client.js"
+mp.exports.notify.show('Welcome');
+```
+
+Обращение к незарегистрированному экспорту (или к ресурсу, который не запущен) бросает `Can't find <export> in <resource>`. Optional chaining не помогает: `mp.exports.<ресурс>` всегда объект. Если хелпера может не быть, оберните вызов:
+
+```js
+try {
+  mp.exports['lua-proxy'].override(className, methodSignature, behavior, payload);
+} catch (e) {
+  // lua-proxy не запущен или не экспортирует `override`
+}
+```
+
+Аргументы и возврат сериализуются между ресурсами (MessagePack). Передавайте простые данные; функции передаются как ссылки, возвращённый Promise остаётся Promise. Это не граница безопасности: любой клиентский ресурс может вызвать публичный экспорт.
+
+## Порядок загрузки
+
+```toml title="server.toml"
+resources = ['lua-utils', 'lua-proxy', 'gamemode']
+```
+
+Если `gamemode` вызовет `mp.exports['lua-proxy'].…` до старта `lua-proxy`, вызов бросит исключение. Общие ресурсы — выше в списке. После `stop` / `start` проверьте, что провайдер запущен: `mp.resources.getState('lua-proxy') === 2`.
+
+## Файлы внутри ресурса
+
+Прочитать файл из бандла (на клиенте он должен быть в `file` у того ресурса):
+
+```js
+const name = mp.resources.getCurrentName();
+const toml = JSON.parse(mp.resources.getTOML(name)); // resource.toml как JSON
+const raw = mp.resources.loadFile('gamemode', 'data/catalog.json'); // строка
+```

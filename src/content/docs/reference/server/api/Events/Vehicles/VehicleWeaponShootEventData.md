@@ -9,6 +9,10 @@ title: "VehicleWeaponShootEventData"
 
 Defined in: events.ts:194
 
+:::caution
+The current server sends this payload as an **array**, not as an object with named fields. Read the values by index in this order: `[vehicleID, type, numBullets, vehicleType, waeponHash, slotHash, animHash, weaponPosX, weaponPosY, weaponPosZ, offsetPosX, offsetPosY, offsetPosZ, tracePosX, tracePosY, tracePosZ]`.
+:::
+
 ## Properties
 
 <a id="animhash"></a>

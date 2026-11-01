@@ -1,0 +1,41 @@
+---
+title: CDN
+description: Доставка файлов ресурсов по HTTP.
+---
+
+Клиенты скачивают каждый путь из массива [`file`](/ru/guides/resources/adding-resource-files) ресурса: CEF UI, `.archive` / `.xl`, tweak-файлы.
+
+[Планы Server Manager](/ru/guides/server-manager/subscriptions) начиная с Bronze разрешают CDN для ресурсов. Файлы размещаете вы, включается CDN в `server.toml`. Массив `file` в `resource.toml` обязателен.
+
+## Процесс сервера
+
+Выделенный сервер сохраняет:
+
+- `server.toml` и `server_script`
+- стрим сущностей, события, RPC
+- список `file`
+
+## Содержимое CDN
+
+Упакованные клиентские файлы каждого запущенного ресурса, кроме `server_only`: `resource.toml`, `client_script`, `shared_script` и записи `file`, например:
+
+- паки `.archive` (транспорт, одежда, оружие)
+- дополнения REDmod / ArchiveXL
+- изображения и собранный UI
+
+Часто изменяемые HTML/JS оставляйте в ресурсе при использовании [hot reload](/ru/guides/general/hotreload).
+
+## Конфигурация
+
+1. Запустите сервер с `--justpack` (опционально `--host=<ip> --port=<port>`). Он загрузит `server.toml`, запустит ресурсы, запишет упакованные клиентские файлы и `connect.json` в `cdn_upload/` и завершится.
+2. Загрузите всё содержимое `cdn_upload/` в корень домена CDN.
+3. Задайте ключи в `server.toml` и запустите сервер обычным образом:
+
+```toml title="server.toml"
+useCdn = true
+cdnUrl = "https://cdn.example.com"
+```
+
+Этих ключей нет в [`ServerConfig`](/ru/reference/server/api/global/config/serverconfig/) (в `mp.config` они попадают под индексную сигнатуру). Если план карточки ниже Bronze, сервер пишет предупреждение в лог и раздаёт файлы встроенным файловым сервером.
+
+`core.files` выбирает опциональные файлы встроенного ресурса `cybermp_core`. См. [`[core]`](/ru/reference/server/configuration).

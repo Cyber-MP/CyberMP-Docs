@@ -1,0 +1,118 @@
+---
+title: Транспорт (Lua)
+description: mp.vehicles.create, места и мета в Lua.
+---
+import { Steps } from '@astrojs/starlight/components';
+
+Транспорт, видимый всем игрокам, создаётся на сервере через `mp.vehicles.create`. Его получают ближайшие клиенты в том же `dimension`.
+
+## Параметры create
+
+| Поле | По умолчанию | Значение |
+| --- | --- | --- |
+| `model` | — | Целое: tweakdbid записи `Vehicle.*`. |
+| `appearance` | — | Целое: cname, `'default'`, если нет конкретного вида. |
+| `position` | `0, 0, 0` | `vector3` или таблица с `x`, `y`, `z`. |
+| `yaw` | `0` | Направление. |
+| `health` | `300` | Начальное здоровье. |
+| `dimension` | `0` | Применяется сразу после создания транспорта. [Измерения](/ru/lua/server/entities#dimensions). |
+
+Хэш-функции возвращают десятичные строки. Перед передачей переводите их через `tonumber(str, 10)` ([почему](/ru/lua/shared/hashes)):
+
+```lua title="server.lua"
+local function hash(str) return tonumber(str, 10) end
+
+local vehicle = mp.vehicles.create({
+  model = hash(mp.hashes.toTweakdbid('Vehicle.v_standard2_archer_hella')),
+  appearance = hash(mp.hashes.toCname('default')),
+  position = vector3(-1392.6, 1271.5, 123.1),
+})
+print('vehicle', vehicle.id)
+```
+
+Не хэшируйте запись транспорта через `toCname` и не передавайте `appearance = 0`: клиенты не согласуют внешний вид. Подробнее: [хэши](/ru/lua/shared/hashes#models-and-appearances), [appearance](/ru/lua/shared/hashes#models-and-appearances), [типы ресурсов](/ru/lua/shared/hashes#models-and-appearances).
+
+`create` возвращается, когда транспорт уже существует на сервере и получил `id`. Обработчик выполняется, пока не вернётся или не вызовет `mp.wait`; код после `mp.wait` выполняется на одном из следующих тиков.
+
+## Синхронизированная мета
+
+`vehicle:setMeta` никогда не синхронизирует. Для ключей, которые читают клиенты, используйте `mp.meta.setEntity` с `sync = true`:
+
+```lua title="server.lua"
+mp.meta.setEntity(vehicle, 'locked', true, true)
+mp.meta.setEntity(vehicle, 'ownerId', tostring(player.id), true)
+```
+
+Клиенты читают их через `mp.meta.getEntity(netId, key)` после того, как транспорт попал в зону стрима (`vehicleStreamIn`). См. [мету](/ru/lua/shared/meta).
+
+## Места и время жизни
+
+| Член | Описание |
+| --- | --- |
+| `vehicle.seats` / `vehicle.lastSeats` | Таблицы с `driver`, `passenger`, `rearLeft`, `rearRight`: объект игрока или `nil`. |
+| `vehicle:getPlayerInSeat(seat)` / `vehicle:getLastPlayerInSeat(seat)` | Место `0` водитель, `1` пассажир, `2` сзади слева, `3` сзади справа. |
+| `vehicle.model`, `vehicle.appearance`, `vehicle.health`, `vehicle.velocity`, `vehicle.angularVelocity` | Только чтение. |
+| `vehicle:destroy()` | Удаляет транспорт. |
+
+```lua title="server.lua"
+mp.events.add('enterVehicle', function(playerId, data)
+  local vehicleId, seat = data[1], data[2] -- the payload is an array
+  if not mp.vehicles.exists(vehicleId) then return end
+
+  local driver = mp.vehicles.at(vehicleId).seats.driver
+  print('seat', seat, 'driver', driver and driver.id)
+end)
+
+mp.events.add('vehicleDespawn', function(id)
+  print('gone', id)
+end)
+
+if vehicle.exist then
+  vehicle:destroy()
+end
+```
+
+Выход — `exitVehicle` с `(playerId, data)`, где `data[1]` — id транспорта.
+
+## Пример ресурса
+
+Команда `car` в F8 просит у сервера транспорт.
+
+<Steps>
+
+1. ## Сервер: создание транспорта
+
+   ```lua title="server.lua"
+   local function hash(str) return tonumber(str, 10) end
+
+   mp.events.addClient('requestVehicleSpawn', function(player, modelName)
+     local vehicle = mp.vehicles.create({
+       model = hash(mp.hashes.toTweakdbid(modelName)),
+       appearance = hash(mp.hashes.toCname('default')),
+       position = player.position,
+       yaw = player.yaw,
+       health = 5000,
+       dimension = player.dimension,
+     })
+
+     mp.meta.setEntity(vehicle, 'ownerId', tostring(player.id), true)
+     player:trigger('vehicleSpawned', vehicle.id)
+   end)
+   ```
+
+2. ## Клиент: запрос и вход в зону стрима
+
+   ```lua title="client.lua"
+   mp.commands.add('car', function()
+     mp.events.triggerServer('requestVehicleSpawn', 'Vehicle.v_standard2_archer_hella')
+   end)
+
+   mp.events.add('vehicleStreamIn', function(netID, gameID)
+     local ownerId = mp.meta.getEntity(netID, 'ownerId')
+     print('vehicle in range', netID, gameID, ownerId)
+   end)
+   ```
+
+</Steps>
+
+Если транспорт не появился, см. [решение проблем](/ru/lua/shared/cheatsheet#troubleshooting).

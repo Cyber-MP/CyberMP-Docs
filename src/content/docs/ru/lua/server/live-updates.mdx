@@ -1,0 +1,51 @@
+---
+title: Живые обновления (Lua)
+description: Перезапуск Lua-ресурса после правки скрипта без остановки сервера.
+---
+import { Steps } from '@astrojs/starlight/components';
+
+После правки `server.lua` или `client.lua` перезапустите этот ресурс. Процесс продолжает работать.
+
+Нужно:
+
+- запущенный сервер
+- [консоль сервера](/ru/lua/server/resources#console)
+- ресурс со скриптом Lua, например `hello_world` с `server_script = 'server.lua'`
+
+<Steps>
+    1. #### Правка скрипта
+
+        В `resources/hello_world/server.lua`:
+
+        ```lua title="server.lua" ins={2-3}
+        print('Hello World from CyberMP Server!')
+        -- New test log:
+        print('The resource has been updated live!')
+        ```
+
+    2. #### Перезапуск ресурса
+
+        Консоль:
+
+        ```shell
+        restart hello_world
+        ```
+
+        Из кода: `mp.resources.restart('hello_world')`.
+
+    3. #### Проверка логов
+
+        Старый экземпляр останавливается, новый запускается с обновлённым текстом:
+
+        ```text
+        [resources] Stopped resource hello_world
+        [hello_world] Hello World from CyberMP Server!
+        [hello_world] The resource has been updated live!
+        [resources] Loaded resource hello_world
+        ```
+
+</Steps>
+
+`restart` создаёт новое состояние Lua: глобальные переменные старого экземпляра теряются. `restart` также перезагружает клиентские скрипты. Подключённые клиенты скачивают их заново.
+
+Слежение за файлами вместо ручного `restart`: [hotreload](/ru/lua/shared/hotreload).

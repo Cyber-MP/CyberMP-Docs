@@ -1,0 +1,356 @@
+---
+title: RPC
+description: "Официальные пакеты @cybermp/rpc: вызвать метод на другой стороне и дождаться ответа."
+---
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import RpcFlow from '../../../../../../components/RpcFlow.astro';
+
+События односторонние: отправитель не получает результат. Для меню, инвентаря или команды с результатом нужен **RPC**: вызвать метод и `await` ответа.
+
+Официальная библиотека. Не дублируйте её поверх `emit` / `on`. Пакеты — на npm и в [cybermp-rpc](https://github.com/cyber-mp/cybermp-rpc).
+
+| Пакет | Где |
+| --- | --- |
+| `@cybermp/rpc-server` | сервер |
+| `@cybermp/rpc-client` | клиент игры |
+| `@cybermp/rpc-browser` | страница CEF |
+| `@cybermp/rpc-router` | контракты с типами (по желанию) |
+| `@cybermp/rpc-superjson` | сериализатор SuperJSON (по желанию) |
+| `@cybermp/rpc-react` | React в CEF: `register` / `on` как хуки |
+| `@cybermp/rpc-router-react` | React в CEF: implement контракта |
+| `@cybermp/rpc-router-tanstack-query` | опции TanStack Query из router-клиента |
+| `@cybermp/rpc-otel` | спаны OpenTelemetry для RPC |
+
+Установите пакет для нужной стороны. Сервер находит его в `node_modules` папки ресурса: через `require` в скрипте `.js` или `import` в скрипте `.mjs`. Клиентские и CEF-скрипты `node_modules` не резолвят, поэтому **соберите пакет в них** (esbuild, tsdown, Bun). Примеры ниже используют `import`: на сервере тоже соберите их или назовите файл `server.mjs`.
+
+```shell
+npm install @cybermp/rpc-server @cybermp/rpc-client
+```
+
+Для страницы CEF добавьте `@cybermp/rpc-browser`. Типы `mp` — отдельные пакеты, см. [типизация](/ru/guides/general/type-safety).
+
+## Два вида вызовов
+
+| Нужно | Регистрируете | Вызываете |
+| --- | --- | --- |
+| Дождаться ответа | `rpc.register('имя', handler)` | `callServer` / `callClient` / `callBrowser` |
+| Без возвращаемого значения | `rpc.on('имя', handler)` | `triggerServer` / `triggerClient` / `triggerBrowser` |
+
+Обработчик: `(ctx, next) => …`. То, что вернёте из `register`, и есть результат `await`.
+
+В `ctx` есть `data`, `meta`, `packet`, на **call** ещё `ctx.signal`. На сервере `ctx.player` — [`MpPlayer`](/ru/reference/server/api/entities/players/mpplayer/), кто прислал запрос. У локального `callServer` на сервере игрока нет.
+
+`name` у экземпляров должен совпадать. Пакеты идут в события `{name}__rpc:invoke` и `{name}__rpc:response`. Пустое имя у двух ресурсов — они будут получать чужой RPC.
+
+## Сервер и клиент
+
+Так же, как в [официальном примере](https://github.com/cyber-mp/cybermp-rpc/tree/main/examples/basic).
+
+<Tabs>
+  <TabItem label="Сервер">
+    ```js title="server.js"
+    import { RpcServer } from '@cybermp/rpc-server';
+
+    const rpc = new RpcServer({ name: 'hello' });
+
+    rpc.register('ping-call', (ctx) => {
+      return ctx.data;
+    });
+
+    rpc.on('ping-trigger', (ctx) => {
+      console.log('trigger', ctx.data);
+    });
+
+    mp.commands.add('ping-clients', async () => {
+      for (const player of mp.players.toArray()) {
+        rpc.triggerClient(player, 'ping-trigger');
+        const result = await rpc.callClient(player, 'ping-call', {
+          for: player.nickname,
+        });
+        console.log(result);
+      }
+    });
+    ```
+  </TabItem>
+  <TabItem label="Клиент">
+    ```js title="client.js"
+    import { RpcClient } from '@cybermp/rpc-client';
+
+    const rpc = new RpcClient({ name: 'hello' });
+
+    rpc.register('ping-call', (ctx) => ctx.data);
+    rpc.on('ping-trigger', (ctx) => {
+      console.log('trigger', ctx.data);
+    });
+
+    mp.commands.add('ping-server', async () => {
+      rpc.triggerServer('ping-trigger');
+      const result = await rpc.callServer('ping-call', { testData: 5 });
+      console.log(result);
+    });
+    ```
+  </TabItem>
+</Tabs>
+
+Направления вызовов:
+
+<RpcFlow lang="ru" />
+
+| Откуда | Методы |
+| --- | --- |
+| Сервер | `callClient(player, …)`, `triggerClient(player, …)`, `callBrowser(player, …)`, `triggerBrowser(player, …)`, плюс локальные `callServer` / `triggerServer` |
+| Клиент | `callServer` / `triggerServer`, `callClient` / `triggerClient`, `callBrowser` / `triggerBrowser` |
+| Браузер | `callServer` / `triggerServer`, `callClient` / `triggerClient` |
+
+`player` — объект игрока или числовой id. У `callClient` / `callBrowser` id `-1` нельзя.
+
+Аргументы: `(метод, data?, meta?, options?)` или один объект `{ data, meta, name, timeout, signal }`. `name` здесь — имя **чужого** экземпляра, если оно другое (`RpcBrowser` его игнорирует и всегда шлёт на свой `name`; его `triggerServer` / `triggerClient` принимают только `(метод, data?, meta?)`). Таймаут по умолчанию 10 секунд (`pendingTimeout`).
+
+Не используйте id игрока из `data` как источник истины. На сервере берите `ctx.player`.
+
+## CEF
+
+`RpcBrowser` говорит с клиентом (и через него с сервером). **На клиенте должен быть `RpcClient` с тем же `name`**: он пересылает browser ↔ server. Браузер не пересылает пакеты самостоятельно.
+
+```js title="ui.js"
+import { RpcBrowser } from '@cybermp/rpc-browser';
+
+const rpc = new RpcBrowser({ name: 'hello' });
+
+document.getElementById('spawn').addEventListener('click', async () => {
+  const result = await rpc.callServer('vehicles:spawn', { model: 'Vehicle.v_standard2_archer_hella' });
+  console.log(result);
+});
+```
+
+Игровая логика проверяется на сервере. Клиент может в своём `register` проверить дистанцию или проиграть звук и затем вызвать сервер — либо браузер вызывает сервер напрямую, а сервер смотрит `ctx.player`.
+
+## Ошибки, middleware, опции
+
+Выбрасывайте `RpcError`, чтобы на той стороне был код, а не общая внутренняя ошибка:
+
+```js
+import { RpcError } from '@cybermp/rpc-server';
+
+rpc.register('bank:withdraw', (ctx) => {
+  if (!ctx.player) throw RpcError.unauthorized();
+  throw RpcError.forbidden({ message: 'Не хватает денег' });
+});
+```
+
+Коды: `UNAUTHORIZED`, `FORBIDDEN`, `NOT_FOUND`, `METHOD_NOT_FOUND`, `INVALID_DATA`, `TIMEOUT`, `TOO_MANY_PENDING_REQUESTS`, `INTERNAL_ERROR`.
+
+Middleware срабатывает на каждый входящий call/trigger. Если дальше должны пойти обработчики — вызовите `next()` и верните его результат:
+
+```js
+rpc.use(async (ctx, next) => {
+  console.log(ctx.packet.method, ctx.player?.nickname);
+  return next();
+});
+```
+
+Опции конструктора:
+
+| Опция | По умолчанию | Зачем |
+| --- | --- | --- |
+| `name` | `''` | Имя экземпляра, одинаковое на всех сторонах |
+| `pendingTimeout` | `10000` | Таймаут `call*` в мс |
+| `maxPending` | `1000` | Сколько вызовов может висеть одновременно |
+| `throwUnknownMethods` | `true` | Неизвестный `register` → `METHOD_NOT_FOUND` |
+| `serializer` | нет | Например `new SuperJSONRpcSerializer()` из `@cybermp/rpc-superjson` (одинаковый везде) |
+
+На один вызов: `{ timeout, signal }`. При `resourceStop` снимайте `unregister` / `off` / `offAll`, иначе после рестарта обработчики наложатся.
+
+## Роутер с типами
+
+`@cybermp/rpc-router` описывает процедуры один раз (Zod или любая схема [Standard Schema](https://standardschema.dev/)) и отдаёт это дерево клиенту.
+
+```ts title="shared/contract.ts"
+import { contract } from '@cybermp/rpc-router/server';
+import { RpcApplyType } from '@cybermp/rpc-core/definitions';
+import { z } from 'zod';
+
+export const appContract = {
+  vehicles: {
+    spawn: contract
+      .method(RpcApplyType.REGISTER)
+      .input(z.object({ model: z.string() }))
+      .output(z.object({ ok: z.boolean() }))
+      .build(),
+  },
+};
+```
+
+По умолчанию метод процедуры — `on` (trigger). Для `call` / `await` нужен `.method(RpcApplyType.REGISTER)`.
+
+```ts title="server.ts"
+import { RpcServer } from '@cybermp/rpc-server';
+import { RpcRouter } from '@cybermp/rpc-router/server';
+import { appContract } from './shared/contract';
+
+const rpc = new RpcServer({ name: 'hello' });
+const router = new RpcRouter(rpc, { validation: true });
+
+router.apply(appContract);
+router.implement(appContract, {
+  vehicles: {
+    spawn: async (ctx) => {
+      return { ok: true };
+    },
+  },
+});
+```
+
+```ts title="client.ts"
+import { RpcClient, MpEnv } from '@cybermp/rpc-client';
+import { createRouterClient } from '@cybermp/rpc-router/client';
+import { appContract } from './shared/contract';
+
+const rpc = new RpcClient({ name: 'hello' });
+const api = createRouterClient<typeof appContract, MpEnv.CLIENT, MpEnv.SERVER>({
+  rpc,
+  targetEnv: MpEnv.SERVER,
+});
+
+const result = await api.vehicles.spawn.call({ model: 'Vehicle.v_standard2_archer_hella' });
+```
+
+Вложенные ключи склеиваются через точку: `vehicles.spawn`. У trigger-процедур метод `.trigger()`, не `.call()`.
+
+`safe()` и `createSafeClient()` возвращают `{ error, data, isSuccess }` и не выбрасывают исключение.
+
+## React (CEF)
+
+`@cybermp/rpc-react` — для React в браузере. Пиры: `react` ≥ 18, `@cybermp/rpc-browser`, `@cybermp/browser-types`.
+
+Обёрните дерево в `RpcProvider`. Хуки регистрируют обработчик при монтировании и снимают при размонтировании. Повторный mount не добавляет второй обработчик.
+
+```tsx title="ui.tsx"
+import { RpcBrowser } from '@cybermp/rpc-browser';
+import { RpcProvider, useOn, useRegister, useRpc } from '@cybermp/rpc-react';
+
+const rpc = new RpcBrowser({ name: 'hello' });
+
+function Hud() {
+  const rpc = useRpc();
+
+  useRegister('hud:ping', (ctx) => {
+    return { ok: true, from: ctx.data };
+  }, []);
+
+  useOn('hud:toast', (ctx) => {
+    console.log(ctx.data);
+  }, []);
+
+  return (
+    <button
+      onClick={async () => {
+        const result = await rpc.callServer('vehicles:spawn', { model: 'Vehicle.v_standard2_archer_hella' });
+        console.log(result);
+      }}
+    >
+      Spawn
+    </button>
+  );
+}
+
+export function App() {
+  return (
+    <RpcProvider rpc={rpc}>
+      <Hud />
+    </RpcProvider>
+  );
+}
+```
+
+`useOn(..., deps, cleanAll)`: по умолчанию `cleanAll = true` (при уходе снимется `offAll`). `false` — снять только обработчик этого хука (`off`).
+
+Без `RpcProvider` хук `useRpc` не выбрасывает исключение: значение контекста по умолчанию — пустой объект, поэтому хуки падают на первом вызове `register` / `on`.
+
+## Роутер и React
+
+`@cybermp/rpc-router-react` — то же для контракта: пока компонент смонтирован — `implement`, при размонтировании — `unimplement`.
+
+```tsx title="ui.tsx"
+import { RpcBrowser } from '@cybermp/rpc-browser';
+import { RpcRouter } from '@cybermp/rpc-router/server';
+import { RpcRouterProvider, useImplement } from '@cybermp/rpc-router-react';
+import { appContract } from './shared/contract';
+
+const rpc = new RpcBrowser({ name: 'hello' });
+const router = new RpcRouter(rpc);
+router.apply(appContract);
+
+function VehicleUi() {
+  useImplement(appContract.vehicles.spawn, async (ctx) => {
+    return { ok: true };
+  }, []);
+
+  return null;
+}
+
+export function App() {
+  return (
+    <RpcRouterProvider router={router}>
+      <VehicleUi />
+    </RpcRouterProvider>
+  );
+}
+```
+
+`useRouter()` отдаёт этот `RpcRouter`. В `useImplement` можно передать дерево обработчиков: `useImplement(appContract, { vehicles: { spawn: … } })`, как у `router.implement`.
+
+## TanStack Query
+
+`@cybermp/rpc-router-tanstack-query` оборачивает router-клиент в `queryOptions` / `callMutationOptions` / `triggerMutationOptions`. Пир: `@tanstack/query-core` ≥ 5.80 (React Query, Vue Query и остальные).
+
+`input` — это **список аргументов** `.call()` / `.trigger()`, не сам объект данных.
+
+```tsx
+import { RpcBrowser, MpEnv } from '@cybermp/rpc-browser';
+import { createRouterClient } from '@cybermp/rpc-router/client';
+import { createRouterClientQuery } from '@cybermp/rpc-router-tanstack-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
+import { appContract } from './shared/contract';
+
+const rpc = new RpcBrowser({ name: 'hello' });
+const api = createRouterClientQuery(
+  createRouterClient<typeof appContract, MpEnv.BROWSER, MpEnv.SERVER>({
+    rpc,
+    targetEnv: MpEnv.SERVER,
+  }),
+);
+
+function Garage() {
+  const spawn = useQuery(
+    api.vehicles.spawn.queryOptions({
+      input: [{ model: 'Vehicle.v_standard2_archer_hella' }],
+    }),
+  );
+
+  const mutateSpawn = useMutation(api.vehicles.spawn.callMutationOptions());
+
+  return (
+    <button onClick={() => mutateSpawn.mutate([{ model: 'Vehicle.v_standard2_archer_hella' }])}>
+      {spawn.data?.ok ? 'ok' : 'spawn'}
+    </button>
+  );
+}
+```
+
+`skipToken` в `input` выключает запрос. У trigger-процедур — `.triggerMutationOptions()`, не `.callMutationOptions()`. Есть ещё `queryKey`, `infiniteOptions`, `mutationKey`, если ключ нужен руками. Дерево, как обычно, оборачивайте в `QueryClientProvider`.
+
+## OpenTelemetry
+
+`@cybermp/rpc-otel` подключает RPC к уже зарегистрированному трейсеру (`@opentelemetry/api` ≥ 1.9, `@opentelemetry/instrumentation` ≥ 0.203). После этого на вызовы, обработчики и serialize/deserialize появляются спаны.
+
+```js
+import { registerInstrumentations } from '@opentelemetry/instrumentation';
+import { CRPCInstrumentation } from '@cybermp/rpc-otel';
+
+registerInstrumentations({
+  instrumentations: [new CRPCInstrumentation()],
+});
+```
+
+Или `new CRPCInstrumentation().enable()`. `disable()` выключает трассировку. Сначала зарегистрируйте `TracerProvider` — иначе спанам некуда уходить.

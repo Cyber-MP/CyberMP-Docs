@@ -1,0 +1,83 @@
+---
+title: Объекты, педы и пикапы
+description: mp.objects, mp.peds и mp.pickups.
+---
+
+Сервер также создаёт объекты, педов и пикапы. Создание — на сервере. Ближайшие клиенты в том же `dimension` стримят их.
+
+`model` — [хеш](/ru/guides/general/hashes): `.ent` объекта через `resref`, TweakDB `Character.*` педа через `tweakdbid`, запись предмета TweakDB (`Items.*`) пикапа через `tweakdbid` — клиент создаёт пикап как выпавший предмет этой записи. Педам нужна [внешность](/ru/guides/general/appearances) — `mp.hashes.cname('default')`, пока нет конкретного вида.
+
+Позиция на сервере всегда `[x, y, z]`. Примеры: [дроп](/ru/guides/recipes/drop), [NPC](/ru/guides/recipes/npc). Если сущность не появляется: [диагностика](/ru/guides/general/troubleshooting).
+
+## Объекты
+
+```js title="server.js"
+const gate = mp.hashes.resref(
+  'base\\gameplay\\devices\\doors\\gates\\appearances\\w300_h250_mall_metal.ent',
+);
+
+const object = mp.objects.create({
+  model: gate,
+  position: [x, y + 0.5, z],
+  yaw: 0,
+  dimension: 0,
+  dynamic: false,
+});
+
+object.setMeta('dropId', dropId, true);
+```
+
+`create` синхронный и выполняется в текущем ходе event loop — то же взаимодействие, что у [транспорта](/ru/guides/server/vehicles). После `await` это уже другой ход.
+
+```js
+if (mp.objects.exists(id)) {
+  const obj = mp.objects.at(id);
+  obj.destroy();
+}
+
+for (const o of mp.objects.toArray()) {
+  if (o.getMeta('dropId')) o.destroy();
+}
+```
+
+На клиенте: `objectStreamIn` / `objectStreamOut` с `(netID, gameID)`. Id переводятся через [`mp.network`](/ru/guides/client/network-and-local).
+
+## Педы (NPC)
+
+```js title="server.js"
+const ped = mp.peds.create({
+  model: mp.hashes.tweakdbid('Character.CivilianFemaleAverage'),
+  appearance: mp.hashes.cname('default'),
+  position: [x, y, z],
+  yaw: heading,
+  health: 5000,
+  dimension: 0,
+});
+
+ped.setMeta('npcId', npcId, true);
+ped.setMeta('npcName', name, true);
+```
+
+Игровые id записывайте в **meta** (`sync = true`), чтобы клиент прочитал их в `pedStreamIn`. Удаление: `ped.destroy()` или `mp.peds.destroy(id)`. На `resourceStop` обойдите `mp.peds.toArray()`, иначе после перезапуска останутся сущности.
+
+## Пикапы
+
+```js
+const pickup = mp.pickups.create({
+  model: mp.hashes.tweakdbid('Items.Preset_Nue_Default'), // запись предмета, не .ent
+  type: 2, // PickupType: Clothes = 1, Weapon = 2, Other = 3
+  position: [x, y, z],
+  yaw: 0,
+  dimension: 0,
+});
+```
+
+Правила стрима те же. Пикап — если движок должен считать предмет подбираемым. Объект — если это проп и взаимодействие своё (дистанция, RPC).
+
+Какой файл или запись TweakDB передавать: [типы ресурсов](/ru/guides/general/resource-types).
+
+## Общие поля сущностей
+
+У любой сущности (`MpPlayer`, `MpVehicle`, `MpObject`, `MpPed`, `MpPickup`) есть `id`, `dimension`, `streamingRadius`, `position`, `yaw`, `exist`, `getMeta` / `setMeta`. Перед `at` проверяйте `exists` — для удалённого id `at` вернёт `undefined`.
+
+Игроки (не пропы мира): `kick(reason)`, `mute()`, `vehicle` / `lastVehicle`, `ping`, `ip`, `nickname`. То же: `mp.players.kick(player, reason)`. `player.emit(event, ...args)` — сокращение для `mp.events.emitClient(player, event, ...args)`.

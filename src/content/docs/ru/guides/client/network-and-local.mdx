@@ -1,0 +1,107 @@
+---
+title: Сеть и локальные сущности
+description: netId и gameId, сущности только на этом клиенте, setTick и localStorage.
+---
+
+Сервер оперирует **сетевыми id**. Нативы требуют **game id** (хэндлы REDengine). Неверный тип даёт `entity not found` на клиенте.
+
+## `mp.network`
+
+| Вызов | Что |
+| --- | --- |
+| `getVehicleGameId(netId)` / `getVehicleId(gameId)` | машина |
+| `getPedGameId(netId)` / `getPedId(gameId)` | пед |
+| `getObjectGameId(netId)` / `getObjectId(gameId)` | объект |
+| `getPlayerGameId(netId)` / `getPlayerId(gameId)` | игрок |
+| `getLocalPlayerId()` | ваш сетевой id, кукла не нужна |
+| `getStreamedPlayers()` | game id чужих игроков рядом |
+| `getStreamedPool('CVehicle' \| 'CPed' \| 'CPickup' \| 'CObject')` | game id в пуле |
+| `getServerAddress()` | адрес сессии, например `127.0.0.1:2077` |
+
+```js title="client.js"
+mp.events.on('vehicleStreamIn', (netID, gameID) => {
+  const locked = mp.meta.getEntityMeta(netID, 'locked');
+  const back = mp.network.getVehicleId(gameID); // пока в стриме совпадает с netID
+  console.log(netID, gameID, locked, back);
+});
+
+const me = mp.network.getLocalPlayerId();
+const nearby = mp.network.getStreamedPlayers();
+```
+
+Это для стрим-событий, не для `resourceStart`. В старых типах те же функции были на `mp` (`getVehicleGameIdByNetworkId`). Используйте `mp.network.*`.
+
+```js title="client.js" del={1-3} ins={5-8}
+mp.events.on('resourceStart', () => {
+  mp.network.getVehicleGameId(1); // ещё нет в стриме
+});
+
+mp.events.on('vehicleStreamIn', (netID, gameID) => {
+  const locked = mp.meta.getEntityMeta(netID, 'locked');
+  console.log(netID, gameID, locked);
+});
+```
+
+`gameID` из `GetEntityID().hash` — нативный хэндл. Передавайте его в `getPlayerId` / `getVehicleId`, если источник — кукла, а не stream-событие.
+
+## Спавн только у себя (`mp.local`)
+
+`spawnPed` / `spawnVehicle` / `spawnObject` создают сущность **только на этом клиенте**. Остальные её не видят. Превью транспорта, декор, чекпоинты.
+
+```js
+const skinHash = BigInt(mp.game.hashes.toTweakdbid('Vehicle.v_standard2_archer_hella'));
+const appHash = BigInt(mp.game.hashes.toCname('default'));
+const handle = mp.local.spawnVehicle(
+  skinHash,
+  appHash,
+  x, y, z,
+  roll, pitch, yaw,
+  true, // streaming
+);
+
+mp.local.despawnVehicle(handle);
+```
+
+Так же `spawnPed` / `despawnPed` и `spawnObject` / `despawnObject`. Модель и внешность — сырые 64-битные хеши: передавайте `bigint` (обычное число точно только до 2^53). [`mp.game.hashes`](/ru/guides/general/hashes) возвращает десятичную строку, оборачивайте её в `BigInt(...)`: строка уходит в нативку как указатель, а не как число. В клиентском JavaScript `mp.hashes` нет. Для стабильного вида в `appHash` передавайте `toCname('default')` — то же правило, что у [внешности](/ru/guides/general/appearances).
+
+Спавн игрока: `mp.local.spawnPlayer(x, y, z, yaw)` — см. [жизненный цикл](/ru/guides/client/lifecycle).
+
+## `setTick`
+
+Вызов каждый кадр отрисовки. Колбэк должен быть лёгким. Обязательно `clearTick` на `resourceStop` или при выключении функции.
+
+```js title="client.js"
+let tickId = null;
+
+const start = () => {
+  if (tickId !== null) return;
+  tickId = mp.setTick(() => {
+    // дистанция, HUD, хелперы анимаций
+  });
+};
+
+const stop = () => {
+  if (tickId === null) return;
+  mp.clearTick(tickId);
+  tickId = null;
+};
+
+mp.events.on('resourceStop', stop);
+```
+
+Не запускайте новый тик на каждый stream-in без снятия предыдущего.
+
+## `mp.localStorage`
+
+Строки ключ–значение на этой машине. Полный API и ограничения: [локальное хранилище](/ru/guides/scripting/local-storage).
+
+```js
+mp.localStorage.set('keybinds', JSON.stringify(bindings));
+mp.localStorage.save();
+```
+
+## Таймер и лаунчер
+
+`mp.getTimer()` — миллисекунды с запуска оболочки движка (в старых типах: `mp.getGameTimer()`).
+
+`mp.getLauncherSettingsJSON()` / `mp.getLauncherSettings()` — настройки лаунчера. Объект не типизирован. Набор полей зависит от сборки. Документация: [настройки лаунчера](/ru/guides/game-client/launcher).

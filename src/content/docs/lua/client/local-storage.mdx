@@ -1,0 +1,32 @@
+---
+title: Local storage (Lua)
+description: mp.localStorage in a Lua client script.
+---
+
+`mp.localStorage` is a string map on the local machine. It persists across reconnects and resource restarts. It is not replicated to the server. There is one store per server address, shared by all resources of that server: prefix your keys, and remember that `deleteAll()` clears it for every resource.
+
+```lua title="client.lua"
+local KEY = 'myresource:keybinds'
+
+mp.localStorage.set(KEY, json.encode(bindings))
+mp.localStorage.save()
+
+local raw = mp.localStorage.get(KEY) -- JSON-encoded: '"<your string>"', or 'null' when missing
+local loaded = {}
+if raw and raw ~= 'null' then
+  loaded = json.decode(json.decode(raw)) -- unwrap, then parse your own JSON
+end
+
+mp.localStorage.delete(KEY)
+mp.localStorage.deleteAll()
+mp.localStorage.save()
+```
+
+| API | Notes |
+| --- | --- |
+| Values | Non-empty strings only. Serialize tables with `json.encode` / `json.decode`. |
+| `get(key)` | Returns the stored value JSON-encoded (`'"abc"'` for `'abc'`, `'null'` for a missing key). Compare with `'null'` before `json.decode`. |
+| `save()` | Writes to disk. Changes stay in memory until `save()`; nothing saves them automatically. |
+| Scope | Client-only (keybinds, UI). Session state: [meta](/lua/shared/meta), [network events](/lua/shared/events). |
+
+Launcher options: [`mp.getLauncherSettings`](/lua/client/network-and-local#timer-and-launcher).

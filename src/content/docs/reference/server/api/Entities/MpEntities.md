@@ -5,7 +5,7 @@ prev: false
 title: "MpEntities"
 ---
 
-Defined in: entities.ts:93
+Defined in: entities.ts:91
 
 Collection wrapper for managing multiple entities.
 
@@ -31,9 +31,9 @@ Specific entity type extending MpEntity
 
 ### at()
 
-> **at**(`entity`): `T`
+> **at**(`entity`): `T` \| `undefined`
 
-Defined in: entities.ts:110
+Defined in: entities.ts:108
 
 Retrieves an entity by instance or ID.
 
@@ -49,11 +49,7 @@ Entity instance or ID
 
 `T`
 
-Entity instance
-
-#### Throws
-
-If entity does not exist
+Entity instance, or `undefined` if the entity does not exist (does not throw)
 
 ***
 
@@ -63,7 +59,7 @@ If entity does not exist
 
 > **exists**(`entity`): `boolean`
 
-Defined in: entities.ts:100
+Defined in: entities.ts:98
 
 Checks if an entity exists.
 

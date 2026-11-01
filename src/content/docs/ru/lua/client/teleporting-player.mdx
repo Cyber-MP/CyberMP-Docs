@@ -1,0 +1,87 @@
+---
+title: Телепорт игрока (Lua)
+description: Перемещение локального игрока из клиентского скрипта Lua. Сначала закройте меню паузы и настроек.
+---
+import { Steps } from '@astrojs/starlight/components';
+
+Перед телепортом закройте меню паузы и настроек. Иначе интерфейс часто остаётся зависшим после перемещения. Ресурсу нужен `use_game_natives = true` ([игровые нативы](/ru/lua/client/game-natives)).
+
+<Steps>
+1. ## Отслеживание меню
+
+   Наблюдатели в `client.lua` запоминают открытые контроллеры меню. Регистрируйте их в стадии `onInit`, когда игровые классы уже доступны:
+
+   ```lua title="client.lua"
+   local pauseMenu, settingsMenu = nil, nil
+
+   mp.registerGameState('onInit', function()
+     -- Track Settings Menu
+     mp.observe('SettingsMainGameController', 'OnMenuChanged', function(self)
+       settingsMenu = self
+     end)
+     mp.observe('SettingsMainGameController', 'RequestClose', function()
+       settingsMenu = nil
+     end)
+
+     -- Track Pause Menu
+     mp.observe('MenuScenario_PauseMenu', 'OnSwitchToSettings', function(self)
+       pauseMenu = self
+     end)
+     mp.observe('MenuScenario_PauseMenu', 'OnEnterScenario', function(self)
+       pauseMenu = self
+     end)
+   end)
+   ```
+
+   Колбэки `mp.observe` выполняются на одном из следующих тиков, а не внутри игрового вызова, поэтому сохранённый контроллер может отставать на тик.
+
+   Помощник, который вызывает закрытие:
+
+   ```lua title="client.lua"
+   local function closeAllMenus()
+     -- Force close standard hub menus
+     Game.GetPlayer():QueueEvent(NewObject('ForceCloseHubMenuEvent'))
+
+     -- Invoke close events on tracked menus
+     if pauseMenu then pauseMenu:OnClosePauseMenu() end
+     if settingsMenu then settingsMenu:RequestClose() end
+   end
+   ```
+
+2. ## Телепорт
+
+   Игрока перемещает игровой `TeleportationFacility`. Методы игровых объектов вызываются через `:`.
+
+   ```lua title="client.lua"
+   local function teleportPlayer(x, y, z, yaw)
+     -- Always close menus before moving the player
+     closeAllMenus()
+
+     Game.GetTeleportationFacility():Teleport(
+       Game.GetPlayer(),
+       Vector4.new(x, y, z, 1),
+       EulerAngles.new(0, 0, yaw or 1) -- roll, pitch, yaw
+     )
+   end
+   ```
+
+3. ## Команды консоли
+
+   Регистрируйте команды через `mp.commands.add`. `afterlife` телепортирует в клуб Afterlife. `close-menu` закрывает отслеживаемые меню.
+
+   ```lua title="client.lua"
+   -- Teleports the player to the Afterlife club coordinates
+   mp.commands.add('afterlife', function()
+     teleportPlayer(-1456.893433, 1038.277222, 16.825035, 1)
+   end)
+
+   -- Utility command to manually close stuck UI menus
+   mp.commands.add('close-menu', function()
+     closeAllMenus()
+   end)
+   ```
+</Steps>
+
+Перезапустите ресурс. Откройте консоль клиента (`F8`) и выполните `afterlife`.
+
+Если точка назначения в другом [измерении](/ru/lua/server/entities#dimensions), сначала задайте игроку `dimension` на сервере и покажите экран загрузки. Телепорт в пределах одного измерения может использовать уже загруженные интерьеры и завершается сразу.

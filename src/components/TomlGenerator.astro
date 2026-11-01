@@ -1,0 +1,368 @@
+---
+interface Props {
+  lang?: 'en' | 'ru';
+}
+
+const lang = Astro.props.lang === 'ru' ? 'ru' : 'en';
+const ru = lang === 'ru';
+
+const t = ru
+  ? {
+      kicker: 'Конфиг',
+      title: 'Генератор server.toml',
+      network: 'Сеть',
+      server: 'Сервер',
+      resources: 'Ресурсы — по одному на строку, порядок загрузки',
+      flags: 'Флаги',
+      coreMain: '[core]',
+      core: '[core.overrides]',
+      bind: 'tcp / udp',
+      addr: 'для клиентов',
+      max: 'слоты',
+      token: 'Master List',
+      voice: 'выключить голос',
+      cef: 'удалённый отладчик',
+      dlc: 'DLC-дополнение',
+      copy: 'Копировать',
+      copied: 'Скопировано',
+      runtime: 'сервер',
+    }
+  : {
+      kicker: 'Config',
+      title: 'Generate server.toml',
+      network: 'Network',
+      server: 'Server',
+      resources: 'Resources — one per line, load order',
+      flags: 'Flags',
+      coreMain: '[core]',
+      core: '[core.overrides]',
+      bind: 'tcp / udp',
+      addr: 'clients connect here',
+      max: 'slots',
+      token: 'Master List',
+      voice: 'disable voice',
+      cef: 'remote debugger',
+      dlc: 'expansion DLC',
+      copy: 'Copy',
+      copied: 'Copied',
+      runtime: 'server',
+    };
+
+/** [core] keys of the built-in cybermp_core resource; the client defaults every one of them to true. */
+const coreKeys: { key: string; en: string; ru: string }[] = [
+  { key: 'nametags', en: 'Built-in nametags.', ru: 'Встроенные неймтеги.' },
+  { key: 'death_autostand', en: 'Stand the puppet up after death.', ru: 'Подъём куклы после смерти.' },
+  { key: 'disable_switch_seats', en: 'Block seat switching in vehicles.', ru: 'Запрет смены мест в транспорте.' },
+  { key: 'delete_map_objects', en: 'Strip selected world props.', ru: 'Удаление выбранных объектов карты.' },
+  { key: 'default_gameplay_restrictions', en: 'Default CyberMP restriction set.', ru: 'Стандартный набор ограничений CyberMP.' },
+  { key: 'disable_drop_points', en: 'Disable vanilla drop points.', ru: 'Отключить ванильные точки дропа.' },
+  { key: 'disable_location_dependent_quests', en: 'Stop location-locked quests.', ru: 'Остановить квесты, привязанные к локации.' },
+  { key: 'disable_garage', en: 'Disable the vanilla garage.', ru: 'Отключить ванильный гараж.' },
+];
+
+/** Exact CoreConfigOverrides keys, same order as @cybermp/server-types and cmp server.toml. */
+const overrides: { key: string; checked: boolean; en: string; ru: string }[] = [
+  {
+    key: 'change_player_on_death_logic',
+    checked: true,
+    en: 'Override PlayerPuppet.OnDeath. Gamemode owns death and respawn.',
+    ru: 'Перехватывает PlayerPuppet.OnDeath. Режим владеет смертью и респауном.',
+  },
+  {
+    key: 'disable_side_quests_notifications',
+    checked: true,
+    en: 'Block tracked-mappin updates on the quest tracker and journal queue.',
+    ru: 'Блокирует обновления tracked-mappin в трекере квестов и очереди журнала.',
+  },
+  {
+    key: 'change_vehicles_logic',
+    checked: true,
+    en: 'Override summon restriction, mounting, visual customization, and hijack exit.',
+    ru: 'Перехватывает вызов, посадку, визуальную кастомизацию и выход при угоне.',
+  },
+  {
+    key: 'disable_player_inventory_encumbrance',
+    checked: true,
+    en: 'PlayerPuppet.EvaluateEncumbrance is a no-op. Carry weight is ignored.',
+    ru: 'PlayerPuppet.EvaluateEncumbrance — no-op. Вес инвентаря не учитывается.',
+  },
+  {
+    key: 'player_extended_customization',
+    checked: true,
+    en: 'Open character customization (CCO mirror) in NewGame edit mode.',
+    ru: 'Открывает кастомизацию персонажа (CCO-зеркало) в режиме NewGame.',
+  },
+  {
+    key: 'disable_time_skip',
+    checked: true,
+    en: 'GameTimeUtils.CanPlayerTimeSkip returns false. Sleep / wait is blocked.',
+    ru: 'GameTimeUtils.CanPlayerTimeSkip возвращает false. Сон / ожидание заблокированы.',
+  },
+  {
+    key: 'disable_turrets',
+    checked: true,
+    en: 'Security turrets cannot rip off or activate. TurnOnDevice applies death.',
+    ru: 'Турели нельзя сорвать или включить. TurnOnDevice применяет смерть.',
+  },
+  {
+    key: 'disable_surveillance_cameras',
+    checked: true,
+    en: 'SurveillanceCamera.TurnOnDevice applies death. Cameras stay off.',
+    ru: 'SurveillanceCamera.TurnOnDevice применяет смерть. Камеры остаются выключенными.',
+  },
+  {
+    key: 'disable_vending_machines',
+    checked: true,
+    en: 'VendingMachine and WeaponVendingMachine stay off.',
+    ru: 'VendingMachine и WeaponVendingMachine остаются выключенными.',
+  },
+  {
+    key: 'disable_generic_devices',
+    checked: true,
+    en: 'NetrunnerControlPanel, NumericDisplay, SecurityGateLock, SecurityLocker stay off.',
+    ru: 'NetrunnerControlPanel, NumericDisplay, SecurityGateLock, SecurityLocker остаются выключенными.',
+  },
+  {
+    key: 'disable_no_combat',
+    checked: true,
+    en: 'Ignore SecurityArea enter. Remove GameplayRestriction.NoCombat.',
+    ru: 'Игнорирует вход в SecurityArea. Снимает GameplayRestriction.NoCombat.',
+  },
+];
+---
+
+<div class="cmp-widget cmp-toml-gen" data-toml-generator data-lang={lang}>
+  <header class="cmp-toml-gen__head">
+    <div>
+      <p class="cmp-toml-gen__kicker">{t.kicker}</p>
+      <p class="cmp-toml-gen__title">{t.title}</p>
+    </div>
+    <span class="cmp-toml-gen__runtime">{t.runtime}</span>
+  </header>
+
+  <div class="cmp-toml-gen__body">
+    <section class="cmp-toml-gen__group">
+      <p class="cmp-toml-gen__label">{t.network}</p>
+      <div class="cmp-toml-gen__grid">
+        <label>
+          <span><code>tcp_host</code> / <code>udp_host</code> <span>{t.bind}</span></span>
+          <input data-field="bind" type="text" spellcheck="false" value="0.0.0.0:2077" />
+        </label>
+        <label>
+          <span><code>connection_host_addr</code> <span>{t.addr}</span></span>
+          <input data-field="addr" type="text" spellcheck="false" value="127.0.0.1:2077" />
+        </label>
+      </div>
+    </section>
+
+    <section class="cmp-toml-gen__group">
+      <p class="cmp-toml-gen__label">{t.server}</p>
+      <div class="cmp-toml-gen__grid">
+        <label>
+          <span><code>max_players</code> <span>{t.max}</span></span>
+          <input data-field="max" type="number" min="1" max="2048" value="20" />
+        </label>
+        <label>
+          <span><code>private_token</code> <span>{t.token}</span></span>
+          <input data-field="token" type="text" spellcheck="false" value="" />
+        </label>
+      </div>
+    </section>
+
+    <section class="cmp-toml-gen__group">
+      <p class="cmp-toml-gen__label">{t.resources}</p>
+      <textarea data-field="resources" rows="3" spellcheck="false">freeroam</textarea>
+    </section>
+
+    <section class="cmp-toml-gen__group">
+      <p class="cmp-toml-gen__label">{t.flags}</p>
+      <div class="cmp-toml-flags">
+        <label class="cmp-toml-flag">
+          <input data-field="voice" type="checkbox" />
+          <span>
+            <code>disable_voice</code>
+            <span>{t.voice}</span>
+          </span>
+        </label>
+        <label class="cmp-toml-flag">
+          <input data-field="cef" type="checkbox" />
+          <span>
+            <code>cef_debug</code>
+            <span>{t.cef}</span>
+          </span>
+        </label>
+        <label class="cmp-toml-flag">
+          <input data-field="dlc" type="checkbox" />
+          <span>
+            <code>ep2_dlc_enabled</code>
+            <span>{t.dlc}</span>
+          </span>
+        </label>
+      </div>
+    </section>
+
+    <details class="cmp-toml-gen__core" open>
+      <summary>{t.coreMain}</summary>
+      <div class="cmp-toml-flags cmp-toml-flags--overrides">
+        {
+          coreKeys.map((item) => (
+            <label class="cmp-toml-flag">
+              <input data-core={item.key} type="checkbox" checked />
+              <span>
+                <code>{item.key}</code>
+                <span>{ru ? item.ru : item.en}</span>
+              </span>
+            </label>
+          ))
+        }
+      </div>
+    </details>
+
+    <details class="cmp-toml-gen__core" open>
+      <summary>{t.core}</summary>
+      <div class="cmp-toml-flags cmp-toml-flags--overrides">
+        {
+          overrides.map((item) => (
+            <label class="cmp-toml-flag">
+              <input
+                data-override={item.key}
+                type="checkbox"
+                checked={item.checked}
+              />
+              <span>
+                <code>{item.key}</code>
+                <span>{ru ? item.ru : item.en}</span>
+              </span>
+            </label>
+          ))
+        }
+      </div>
+    </details>
+  </div>
+
+  <div class="cmp-toml-preview">
+    <header>
+      <code>server.toml</code>
+      <button type="button" data-copy>{t.copy}</button>
+    </header>
+    <pre data-output></pre>
+  </div>
+</div>
+
+<script>
+  const CORE_KEYS = [
+    'nametags',
+    'death_autostand',
+    'disable_switch_seats',
+    'delete_map_objects',
+    'default_gameplay_restrictions',
+    'disable_drop_points',
+    'disable_location_dependent_quests',
+    'disable_garage',
+  ];
+
+  // every optional file of the built-in cybermp_core resource
+  const CORE_FILES = [
+    'final.redscript',
+    'new_gamedef.archive',
+    'basegame_no_intro_videos.archive',
+    'GenderAbuseWorld.archive',
+    'CyberMP_PlayerModel.archive',
+    'flatline2dlods.archive',
+    'ReducedLoot.archive',
+    'ReducedLoot.archive.xl',
+    'ArchiveXL',
+  ];
+
+  const OVERRIDE_KEYS = [
+    'change_player_on_death_logic',
+    'disable_side_quests_notifications',
+    'change_vehicles_logic',
+    'disable_player_inventory_encumbrance',
+    'player_extended_customization',
+    'disable_time_skip',
+    'disable_turrets',
+    'disable_surveillance_cameras',
+    'disable_vending_machines',
+    'disable_generic_devices',
+    'disable_no_combat',
+  ];
+
+  function parseResources(raw: string): string[] {
+    return raw
+      .split(/[\n,]/)
+      .map((s) => s.trim().replace(/^['"]|['"]$/g, ''))
+      .filter(Boolean);
+  }
+
+  function tomlString(value: string): string {
+    return JSON.stringify(value);
+  }
+
+  function build(root: HTMLElement): string {
+    const val = (name: string) =>
+      (root.querySelector(`[data-field="${name}"]`) as HTMLInputElement | HTMLTextAreaElement)
+        ?.value ?? '';
+    const on = (name: string) =>
+      (root.querySelector(`[data-field="${name}"]`) as HTMLInputElement)?.checked ?? false;
+    const overrideOn = (key: string) =>
+      (root.querySelector(`[data-override="${key}"]`) as HTMLInputElement)?.checked ?? false;
+    const coreOn = (key: string) =>
+      (root.querySelector(`[data-core="${key}"]`) as HTMLInputElement)?.checked ?? false;
+
+    const bind = val('bind').trim() || '0.0.0.0:2077';
+    const resources = parseResources(val('resources'));
+    const list = resources.map((r) => tomlString(r)).join(', ');
+
+    const lines = [
+      `tcp_host = ${tomlString(bind)}`,
+      `udp_host = ${tomlString(bind)}`,
+      `connection_host_addr = ${tomlString(val('addr').trim() || '127.0.0.1:2077')}`,
+      '',
+      `max_players = ${Number(val('max')) || 20}`,
+      `private_token = ${tomlString(val('token'))}`,
+      '',
+      `resources = [${list}]`,
+      '',
+      `disable_voice = ${on('voice')}`,
+      `cef_debug = ${on('cef')}`,
+      `ep2_dlc_enabled = ${on('dlc')}`,
+      '',
+      '[core]',
+      ...CORE_KEYS.map((key) => `${key} = ${coreOn(key)}`),
+      `files = [${CORE_FILES.map((f) => tomlString(f)).join(', ')}]`,
+      '',
+      '[core.overrides]',
+      ...OVERRIDE_KEYS.map((key) => `${key} = ${overrideOn(key)}`),
+    ];
+
+    return lines.join('\n') + '\n';
+  }
+
+  function bind(root: HTMLElement) {
+    const output = root.querySelector<HTMLElement>('[data-output]');
+    const copyBtn = root.querySelector<HTMLButtonElement>('[data-copy]');
+    const lang = root.getAttribute('data-lang') === 'ru' ? 'ru' : 'en';
+    if (!output || !copyBtn) return;
+
+    const render = () => {
+      output.textContent = build(root);
+    };
+
+    root.querySelectorAll('input, textarea').forEach((el) => {
+      el.addEventListener('input', render);
+      el.addEventListener('change', render);
+    });
+    copyBtn.addEventListener('click', async () => {
+      await navigator.clipboard.writeText(output.textContent ?? '');
+      const prev = copyBtn.textContent;
+      copyBtn.textContent = lang === 'ru' ? 'Скопировано' : 'Copied';
+      setTimeout(() => {
+        copyBtn.textContent = prev;
+      }, 1200);
+    });
+    render();
+  }
+
+  document.querySelectorAll<HTMLElement>('[data-toml-generator]').forEach(bind);
+</script>

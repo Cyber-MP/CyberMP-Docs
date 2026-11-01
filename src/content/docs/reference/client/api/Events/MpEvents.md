@@ -12,36 +12,6 @@ Handles binding event listeners, deregistering handlers, and dispatching payload
 
 ## Methods
 
-<a id="addcommand"></a>
-
-### addCommand()
-
-> **addCommand**(`commandName`, `callback`): `void`
-
-Defined in: events.d.ts:230
-
-Registers an execution text console command processor linked directly to player chatting or console prompt interactions.
-
-#### Parameters
-
-##### commandName
-
-`string`
-
-The terminal string command literal (e.g., passing `"spawn"` handles requests targeting `/spawn`).
-
-##### callback
-
-(`id`, `args`) => `void`
-
-Callback execution script processing console interactions.
-
-#### Returns
-
-`void`
-
-***
-
 <a id="emit"></a>
 
 ### emit()

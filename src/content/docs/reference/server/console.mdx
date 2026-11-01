@@ -1,0 +1,80 @@
+---
+title: Server console
+description: Built-in server commands and mp.commands.add.
+slug: reference/server/console
+---
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+
+The server console is the text prompt of the running process. From it, start and stop resources and register commands with `mp.commands.add`.
+
+## Built-in commands
+
+| Name | Arguments | Description |
+| --- | --- | --- |
+| cmdlist | — | All registered commands (core + resources) and console variable values. |
+| config | — | Effective `server.toml` values and their source (file or environment). `private_token` is masked. |
+| kick_player | `<playerId>` | Disconnect the player with that id (no reason sent). |
+| max_players | `[integer]` | Print or set the console variable. The enforced slot cap is read from `server.toml` at startup and does not change. |
+| quit | `[reason]` | Shut the server down. |
+| refresh | — | Re-scan the `resources` folder without restarting running ones. |
+| restart | `<resName>` | Restart one resource. |
+| start | `<resName>` | Start one resource. |
+| stop | `<resName>` | Stop one resource. |
+| version | — | Server version. |
+
+The same resource actions exist in scripts: `mp.resources.start`, `stop`, `restart`, `refresh`.
+
+## Custom command
+
+On the **server**, the callback receives the player and the argument list (no `/` in the name):
+
+<Tabs syncKey="lang">
+<TabItem label="JavaScript">
+
+```js title="server.js"
+mp.commands.add('kickme', (player, args) => {
+  player.kick(args[0] || 'bye');
+});
+
+mp.commands.remove('kickme');
+```
+
+</TabItem>
+<TabItem label="Lua">
+
+```lua title="server.lua"
+mp.commands.add('kickme', function(player, args)
+  player:kick(args[1] or 'bye')
+end)
+
+mp.commands.remove('kickme')
+```
+
+</TabItem>
+</Tabs>
+
+On the **client**, the first argument is the local player's numeric network id, not a player object:
+
+<Tabs syncKey="lang">
+<TabItem label="JavaScript">
+
+```js title="client.js"
+mp.commands.add('spawn', (id, args) => {
+  mp.local.spawnPlayer(-1392.637329, 1271.536865, 123.082397, 1);
+});
+```
+
+</TabItem>
+<TabItem label="Lua">
+
+```lua title="client.lua"
+mp.commands.add('spawn', function(playerId, args)
+  mp.client.spawnPlayer(-1392.637329, 1271.536865, 123.082397, 1)
+end)
+```
+
+</TabItem>
+</Tabs>
+
+Client console: [F8](/reference/client/console).

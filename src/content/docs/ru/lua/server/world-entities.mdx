@@ -1,0 +1,84 @@
+---
+title: Объекты, педы и пикапы (Lua)
+description: mp.objects, mp.peds и mp.pickups в Lua.
+---
+
+Сервер также создаёт объекты, педов и пикапы. Ближайшие клиенты в том же `dimension` получают их через стрим.
+
+`model` — [хэш](/ru/lua/shared/hashes), переведённый через `tonumber(str, 10)`: объект `.ent` — через `toResref`, пед TweakDB `Character.*` — через `toTweakdbid`, пикап — запись предмета TweakDB (`Items.*`) через `toTweakdbid`. Педам также нужен [appearance](/ru/lua/shared/hashes#models-and-appearances): `toCname('default')`, если нет конкретного вида.
+
+| Пул | Поля `create` (по умолчанию) |
+| --- | --- |
+| `mp.objects` | `model`, `position`, `yaw` (`0`), `dynamic` (`true`), `dimension` |
+| `mp.peds` | `model`, `appearance`, `position`, `health` (`200`), `yaw` (`0`), `dimension` |
+| `mp.pickups` | `model`, `type`, `position`, `yaw` (`0`), `dimension` |
+
+`position` — `vector3` или таблица с `x`, `y`, `z` (по умолчанию `0, 0, 0`). Если сущность не появляется: [решение проблем](/ru/lua/shared/cheatsheet#troubleshooting).
+
+## Объекты
+
+```lua title="server.lua"
+local function hash(str) return tonumber(str, 10) end
+
+local gate = hash(mp.hashes.toResref(
+  'base\\gameplay\\devices\\doors\\gates\\appearances\\w300_h250_mall_metal.ent'
+))
+
+local object = mp.objects.create({
+  model = gate,
+  position = vector3(x, y + 0.5, z),
+  dynamic = false,
+})
+
+mp.meta.setEntity(object, 'dropId', dropId, true)
+```
+
+```lua title="server.lua"
+if mp.objects.exists(id) then
+  mp.objects.at(id):destroy()
+end
+
+for _, o in ipairs(mp.objects.toArray()) do
+  if o:getMeta('dropId') then o:destroy() end
+end
+```
+
+На клиенте: `objectStreamIn` / `objectStreamOut` с `(netID, gameID)`. Переводите id через [`mp.network`](/ru/lua/client/network-and-local).
+
+## Педы (NPC)
+
+```lua title="server.lua"
+local ped = mp.peds.create({
+  model = hash(mp.hashes.toTweakdbid('Character.CivilianFemaleAverage')),
+  appearance = hash(mp.hashes.toCname('default')),
+  position = vector3(x, y, z),
+  yaw = heading,
+  health = 5000,
+})
+
+mp.meta.setEntity(ped, 'npcId', npcId, true)
+```
+
+Игровые id пишите в синхронизированную мету, чтобы клиент прочитал их на `pedStreamIn`. Удаление — `ped:destroy()` или `mp.peds.destroy(id)`. Удаляйте своих педов в `resourceStop`, чтобы после перезапуска не оставалось лишних:
+
+```lua title="server.lua"
+mp.events.add('resourceStop', function()
+  for _, p in ipairs(mp.peds.toArray()) do
+    if p:getMeta('npcId') then p:destroy() end
+  end
+end)
+```
+
+## Пикапы
+
+```lua title="server.lua"
+local pickup = mp.pickups.create({
+  model = hash(mp.hashes.toTweakdbid('Items.Preset_Nue_Default')), -- item record, not an .ent
+  type = 2, -- 1 clothes, 2 weapon, 3 other
+  position = vector3(x, y, z),
+})
+```
+
+Тип читается обратно через `pickup.pickupType`. Пикапы — когда движок должен считать предмет подбираемым. Объекты — когда это проп, а взаимодействие ваше (проверка дистанции, события).
+
+Какой файл или запись TweakDB передавать: [типы ресурсов](/ru/lua/shared/hashes#models-and-appearances). Поля всех сущностей: [пулы и объекты сущностей](/ru/lua/server/entities).

@@ -1,0 +1,110 @@
+---
+title: Спавн игрока
+description: Спавн локального игрока и установка здоровья.
+---
+import { Steps } from '@astrojs/starlight/components';
+
+После загрузки мира локального игрока нет в сцене. Спавн задаёт здоровье, координаты и команду консоли для восстановления.
+
+<Steps>
+1. ## Здоровье
+
+   Перед спавном задайте текущее и максимальное здоровье. Игра использует id сущности и модификаторы статов.
+
+   ```js title="client.js"
+   // Health stat pool type - https://nativedb.red4ext.com/e/5923428624360168
+   const HEALTH_STAT_POOL_TYPE = 17;
+   // Health stat type - https://nativedb.red4ext.com/e/8958699713058621
+   const HEALTH_STAT_TYPE = 787;
+   // Additive modifier type - https://nativedb.red4ext.com/e/5896876661927857
+   const ADDITIVE_MODIFIER_TYPE = 0;
+
+   const setHealth = (value) => {
+     const player = mp.game.GetPlayer();
+     const playerGameId = player.GetEntityID();
+     const statePoolSystem = mp.game.ScriptGameInstance.GetStatPoolsSystem();
+
+     statePoolSystem.RequestSettingStatPoolValueIgnoreChangeMode(
+       playerGameId,
+       HEALTH_STAT_POOL_TYPE,
+       value,
+       new mp.game.gameObject(),
+       false,
+     );
+   };
+
+   const setMaxHealth = (value) => {
+     const player = mp.game.GetPlayer();
+     const playerGameId = player.GetEntityID();
+
+     mp.game.ScriptGameInstance.GetStatsSystem().RemoveAllModifiers(
+       playerGameId,
+       HEALTH_STAT_TYPE,
+       true,
+     );
+
+     const newStats = new mp.game.gameConstantStatModifierData_Deprecated();
+     newStats.statType = HEALTH_STAT_TYPE;
+     newStats.modifierType = ADDITIVE_MODIFIER_TYPE;
+     newStats.value = value;
+
+     mp.game.ScriptGameInstance.GetStatsSystem().AddModifier(
+       playerGameId,
+       newStats,
+     );
+
+     const statePoolSystem = mp.game.ScriptGameInstance.GetStatPoolsSystem();
+
+     statePoolSystem.RequestSettingStatPoolValueIgnoreChangeMode(
+       playerGameId,
+       HEALTH_STAT_POOL_TYPE,
+       value,
+       new mp.game.gameObject(),
+       true,
+     );
+   };
+   ```
+
+2. ## Спавн
+
+   Вызов — `mp.local.spawnPlayer`. Он задаёт координаты и запускает спавн. Возвращает `true`, если последовательность началась. Это не означает, что персонаж уже в мире.
+
+   ```js title="client.js"
+   const SPAWN_HEALTH = 300;
+   // Квартира Ви
+   const DEFAULT_SPAWN_LOCATION = [-1392.637329, 1271.536865, 123.082397, 1];
+
+   const spawnPlayer = (x, y, z, yaw = 1) => {
+     setMaxHealth(SPAWN_HEALTH);
+     setHealth(SPAWN_HEALTH);
+
+     mp.local.spawnPlayer(x, y, z, yaw);
+   };
+   ```
+
+3. ## Загрузка мира и команды
+
+   Спавн допустим только после `mp.game.onGameLoaded`. Команду консоли регистрируйте сразу. Она выполняется при вводе.
+
+   ```js title="client.js"
+   mp.game.onGameLoaded(() => {
+     spawnPlayer(...DEFAULT_SPAWN_LOCATION);
+   });
+
+   mp.commands.add('spawn', () => {
+     spawnPlayer(...DEFAULT_SPAWN_LOCATION);
+   });
+   ```
+
+   После подключения локальный игрок появляется у квартиры Ви с 300 HP. Сброс: `F8`, команда `spawn`.
+</Steps>
+
+## Ограничения
+
+Полный порядок загрузки: [жизненный цикл клиента](/ru/guides/client/lifecycle).
+
+- Не вызывайте `mp.game` и спавн из `resourceStart`. Мир ещё не готов.
+- Перед спавном закройте меню паузы и настроек. Иначе UI блокирует ввод. Закрытие: [телепорт](/ru/guides/client/teleporting-player).
+- `spawnPlayer` вернул `true` — персонаж может отсутствовать несколько кадров. Дождитесь `mp.game.GetPlayer()`, затем здоровье, внешность, второй телепорт.
+- Сразу после спавна пол персонажа может быть пустым. Дождитесь куклы, затем применяйте внешность.
+- Зеркало кастомизации может сместить персонажа. После внешности выполните телепорт ещё раз.

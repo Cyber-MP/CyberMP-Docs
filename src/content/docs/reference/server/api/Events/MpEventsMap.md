@@ -7,6 +7,8 @@ title: "MpEventsMap"
 
 Defined in: events.ts:553
 
+Handler return values are ignored by the server. To cancel a cancellable event, call [`mp.cancelEvent()`](/reference/server/api/global/mpserver/#cancelevent) inside the handler. For game events sent by a client (`playerId, data` events) cancelling stops the server from relaying the event to other clients.
+
 ## Extends
 
 - [`EntitiesEvents`](/reference/server/api/events/entities/entitiesevents/).[`PedEvents`](/reference/server/api/events/peds/pedevents/).[`PickupsEvents`](/reference/server/api/events/pickups/pickupsevents/).[`VehiclesEvents`](/reference/server/api/events/vehicles/vehiclesevents/).[`WorldEvents`](/reference/server/api/events/world/worldevents/).[`PlayersEvents`](/reference/server/api/events/players/playersevents/).[`ResourcesEvents`](/reference/server/api/events/resources/resourcesevents/)
@@ -215,7 +217,7 @@ The entity type (see [EntityType](/reference/server/api/entities/entitytype/))
 
 ### entityMetaChange()
 
-> **entityMetaChange**(`id`, `key`, `oldValue`, `newValue`): `void`
+> **entityMetaChange**(`id`, `key`, `newValue`, `oldValue`): `void`
 
 Defined in: events.ts:547
 
@@ -225,17 +227,19 @@ Triggered when any entity meta changed
 
 ##### id
 
-`string`
+`number`
+
+Entity ID
 
 ##### key
 
 `string`
 
-##### oldValue
+##### newValue
 
 `any`
 
-##### newValue
+##### oldValue
 
 `any`
 
@@ -399,7 +403,7 @@ Triggered when a game object spawns.
 
 ### globalMetaChange()
 
-> **globalMetaChange**(`id`, `key`, `oldValue`, `newValue`): `void`
+> **globalMetaChange**(`key`, `newValue`, `oldValue`): `void`
 
 Defined in: events.ts:410
 
@@ -407,19 +411,15 @@ Triggered when global meta changed
 
 #### Parameters
 
-##### id
-
-`string`
-
 ##### key
 
 `string`
 
-##### oldValue
+##### newValue
 
 `any`
 
-##### newValue
+##### oldValue
 
 `any`
 
@@ -925,6 +925,10 @@ Defined in: events.ts:349
 
 Triggered when a player enters a vehicle.
 
+:::caution
+The current server never emits an event named `playerEnterVehicle`. Its handler for this game event is named `enterVehicle` and is called as `(playerId, [vehicleId, seat])`.
+:::
+
 #### Parameters
 
 ##### playerId
@@ -958,6 +962,10 @@ Triggered when a player enters a vehicle.
 Defined in: events.ts:345
 
 Triggered when a player exits a vehicle.
+
+:::caution
+The current server never emits an event named `playerExitVehicle`. Its handler for this game event is named `exitVehicle` and is called as `(playerId, [vehicleId])`.
+:::
 
 #### Parameters
 
@@ -1035,7 +1043,7 @@ Triggered when a player's knocked down.
 
 ### playerMetaChange()
 
-> **playerMetaChange**(`id`, `key`, `oldValue`, `newValue`): `void`
+> **playerMetaChange**(`id`, `key`, `newValue`, `oldValue`): `void`
 
 Defined in: events.ts:377
 
@@ -1045,17 +1053,19 @@ Triggered when player meta changed
 
 ##### id
 
-`string`
+`number`
+
+Player ID
 
 ##### key
 
 `string`
 
-##### oldValue
+##### newValue
 
 `any`
 
-##### newValue
+##### oldValue
 
 `any`
 
@@ -1341,6 +1351,8 @@ Defined in: events.ts:455
 
 Triggered when a vehicle is hit by a player.
 
+`id` is the ID of the player who sent the event. `data` is an array: `[vehicleID, componentNameHash, weaponHash, byOwner]`.
+
 #### Parameters
 
 ##### id
@@ -1397,6 +1409,8 @@ Defined in: events.ts:447
 
 Triggered when a vehicle's weapon shoots.
 
+`id` is the ID of the player who sent the event (the vehicle ID is inside `data`).
+
 #### Parameters
 
 ##### id
@@ -1421,11 +1435,13 @@ Triggered when a vehicle's weapon shoots.
 
 ### weaponReload()
 
-> **weaponReload**(`playerId`, `weaponHash`): `boolean` \| `void`
+> **weaponReload**(`playerId`, `data`): `boolean` \| `void`
 
 Defined in: events.ts:369
 
 Triggered when a player reloads their weapon.
+
+The second argument is an array with one element: `[weaponHash]`.
 
 #### Parameters
 
@@ -1433,9 +1449,9 @@ Triggered when a player reloads their weapon.
 
 `number`
 
-##### weaponHash
+##### data
 
-[`GameHash`](/reference/server/api/hashes/gamehash/)
+\[[`GameHash`](/reference/server/api/hashes/gamehash/)\]
 
 #### Returns
 

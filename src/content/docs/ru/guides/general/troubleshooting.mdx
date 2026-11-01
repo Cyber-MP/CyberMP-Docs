@@ -1,0 +1,41 @@
+---
+title: Диагностика
+description: Не заспавнилось, entity not found, белый CEF — сначала этот список.
+---
+import SpawnDoctor from '../../../../../components/SpawnDoctor.astro';
+
+Большинство сообщений о «сломанном API» сводятся к одной из пяти причин. Обычно это первый неотмеченный пункт.
+
+<SpawnDoctor lang="ru" />
+
+## Спавн / стрим
+
+| Симптом | Проверка |
+| --- | --- |
+| `create` вернул id, никто не видит | event loop (`create` после `await` / `mp.wait` — другой ход), hasher, `dimension`, радиус |
+| Вид машины/педа разный у игроков | `appearance` — хеш `cname` от `'default'` — [внешность](/ru/guides/general/appearances) |
+| На клиенте `entity not found` | В натив передан **netId**. Нужен `gameID` из стрима или `mp.network.get*GameId` |
+| `at(id)` бросает ошибку (Lua) или возвращает `undefined` (JavaScript) | Сначала `exists` — сущности уже нет |
+| Локальная машина не видна другим | `mp.local.spawn*` (JavaScript) / `mp.client.spawn*` (Lua) только на этом клиенте |
+
+## Нативы
+
+| Симптом | Проверка |
+| --- | --- |
+| `GetPlayer()` пустой | `onGameLoaded`, затем опрос после `spawnPlayer` |
+| TweakDB без эффекта | `onTweak` |
+| `SetTranslation(x, y)` ничего не делает (JavaScript) | Передайте `{ x, y }` — [JS-мост](/ru/guides/general/js-bridge) |
+| observe/override без эффекта | Опечатка имени REDscript |
+
+## Белый / нерабочий CEF
+
+1. Путь HTML в `resource.toml` в массиве `file`.
+2. `cef_url` / `mp.cef.setUrl` указывает на этот файл.
+3. События: страница `mp.events.emit` → клиент `mp.events.onCef` (JavaScript) или `mp.events.addCef` (Lua). Не вызывайте `emitServer` из HTML без прокси на клиенте.
+4. `cef_debug = true` в `server.toml`, подключите удалённый отладчик Chromium.
+
+RPC из CEF на сервер требует `RpcClient` на игровом клиенте с тем же `name`: [RPC](/ru/guides/general/rpc).
+
+## Дубли после hotreload
+
+`restart` уничтожает скриптовый рантайм ресурса (контекст JavaScript или состояние Lua), поэтому его обработчики событий, тики и команды не копятся. Дубли дают объекты вне рантайма, например сущности из `mp.*.create`: удаляйте их в `resourceStop`. См. [hotreload](/ru/guides/general/hotreload#что-снять-перед-restart).

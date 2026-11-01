@@ -9,6 +9,10 @@ title: "FireEventData"
 
 Defined in: events.ts:224
 
+:::caution
+The current server sends this payload as an **array**, not as an object with named fields. Read the values by index in this order: `[hashObject, posX, posY, posZ, dirX, dirY, dirZ]`.
+:::
+
 ## Type Declaration
 
 | Name | Type | Defined in |

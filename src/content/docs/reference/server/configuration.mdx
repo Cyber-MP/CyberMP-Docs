@@ -1,0 +1,208 @@
+---
+title: Configuration
+description: Full server.toml reference for CyberMP Server.
+slug: reference/server/configuration
+---
+import TomlGenerator from '../../../../components/TomlGenerator.astro';
+
+Scripts read the parsed file as `mp.config` in JavaScript or `json.decode(mp.getServerTomlFile())` in Lua (file values; environment overrides are not applied there).
+
+<TomlGenerator />
+
+To get key autocomplete in editors that support TOML schemas (for example, Even Better TOML), put this line at the top of the file:
+
+```toml title="server.toml"
+#:schema https://schemas.cyber.mp/server/schema.json
+```
+
+## Root keys
+
+| Key | Type | Required | Description |
+| --- | --- | --- | --- |
+| `tcp_host` | string | yes | TCP bind address, `host:port`. |
+| `udp_host` | string | yes | UDP bind address, `host:port`. |
+| `connection_host_addr` | string | yes | Address clients use to reach the server (public IP or `127.0.0.1` for local). Sent to the Master List in the heartbeat. |
+| `max_players` | integer | no | Limit on the number of players. |
+| `resources` | string[] | yes | Resource folder names, in load order. `cybermp_core` is the built-in mandatory resource: the server always starts it first, it is not listed here. |
+| `private_token` | string | no | Master List token. Publishes this process to the public catalog. Empty string skips the list. See [tokens](/guides/server-manager/tokens). |
+| `disable_voice` | boolean | no | When `true`, the voice server does not start. See [voice](/guides/general/voice). |
+| `cef_debug` | boolean | no | Enables debugging of CEF pages with the Chromium remote debugger on port `9222`. |
+| `ep2_dlc_enabled` | boolean | no | `true` keeps the game expansion DLC enabled. Otherwise it is turned off. |
+| `duplicatePlayers` | integer | no | Maximum number of clients from one IP address. Further connections from that address are refused as a DDoS precaution. Default `50`. |
+| `useCdn` | boolean | no | Serve resource files from `cdnUrl`. Requires a Bronze plan or higher. See [CDN](/guides/dedicated-server/cdn). |
+| `cdnUrl` | string | no | Base URL of the uploaded `cdn_upload/` contents. |
+| `hot_reload` | boolean | no | Not read by the server itself. Watcher resources can read it from `mp.config`. Per-resource opt-in remains in `resource.toml`. |
+
+```toml title="server.toml"
+tcp_host = "0.0.0.0:2077"
+udp_host = "0.0.0.0:2077"
+connection_host_addr = "127.0.0.1:2077"
+
+max_players = 20
+private_token = ""
+
+resources = ['hello_world']
+
+disable_voice = false
+cef_debug = false
+ep2_dlc_enabled = false
+```
+
+Unknown keys in the file are preserved on `mp.config`.
+
+## `[core]` — gameplay runtime
+
+The `[core]` table configures the built-in `cybermp_core` resource for every connecting client: on `playerConnected` its server script sends `mp.config.core` to the client. A key that is missing from the table stays `true`.
+
+:::caution
+Keep the `[core]` table in `server.toml`. Without it the client part of `cybermp_core` fails to start: nametags, restrictions and death tracking do not run, and the `[core.overrides]` hooks are not installed.
+:::
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `nametags` | boolean | `true` | Shows `[id] nickname` above other players within 8 m, when the player is visible or sits in a vehicle. |
+| `death_autostand` | boolean | `true` | When health goes back above 0 after death, plays a short animation that stands the character up. |
+| `disable_switch_seats` | boolean | `true` | Blocks seat switching inside vehicles (`DebugData.Vehicle_BlockSwitchSeats`). |
+| `delete_map_objects` | boolean | `true` | No effect in the current version: the code that removes world objects is commented out. |
+| `default_gameplay_restrictions` | boolean | `true` | Every 200 ms applies `GameplayRestriction.NoPhotoMode`, `NoScanning`, `BlockFastTravel` and `NoPhone`. |
+| `disable_drop_points` | boolean | `true` | Turns the drop point system off. |
+| `disable_location_dependent_quests` | boolean | `true` | Every frame marks the quest of the tracked journal entry as completed, without a notification. |
+| `disable_garage` | boolean | `true` | Turns the garage state of vehicle summoning off (`VehicleSummonData.GarageState`). |
+| `files` | string[] | `[]` | Optional files of the built-in `cybermp_core` resource sent to clients (`.archive`, `.xl`, compiled `.redscript`). |
+
+```toml title="server.toml"
+[core]
+nametags = true
+death_autostand = true
+disable_switch_seats = true
+delete_map_objects = true
+default_gameplay_restrictions = true
+disable_drop_points = true
+disable_location_dependent_quests = true
+disable_garage = true
+files = [
+  "final.redscript",
+  "new_gamedef.archive",
+  "basegame_no_intro_videos.archive",
+  "GenderAbuseWorld.archive",
+  "CyberMP_PlayerModel.archive",
+  "flatline2dlods.archive",
+  "ReducedLoot.archive",
+  "ReducedLoot.archive.xl",
+  "ArchiveXL",
+]
+```
+
+Regardless of `[core]`, `cybermp_core` always:
+
+- turns tutorials off and nudity censorship on;
+- removes a melee weapon from the player's hands on a motorcycle;
+- unequips arm cyberware on death and equips it again after revive;
+- sets the synced player meta `nickname` on connect, spawn and respawn;
+- in vehicles, allows switching the passenger camera, starts the engine when the player takes the driver seat and switches to the third-person camera.
+
+Each `core.files` entry `<name>` selects `files/<name>` from the `file` list of the built-in `cybermp_core` resource (shipped in the server `data` folder). Entries that resource does not list are ignored. `"ArchiveXL"` selects every `files/ArchiveXL/*` file; `"final.redscript"` maps to `files/final.redscripts`. Arbitrary paths are not supported. Resource-scoped assets use the [`file`](/guides/resources/adding-resource-files) array in `resource.toml`.
+
+## `[core.overrides]` — engine hooks
+
+| Key | Type | Description |
+| --- | --- | --- |
+| `change_player_on_death_logic` | boolean | Overrides `PlayerPuppet.OnDeath`. Vanilla death / standup does not run. The gamemode owns `playerDeath` and respawn. |
+| `disable_side_quests_notifications` | boolean | Blocks tracked-mappin updates on `QuestTrackerGameController` and `JournalNotificationQueue`. |
+| `change_vehicles_logic` | boolean | Overrides vehicle summon restriction, mounting, visual customization, and hijack passenger-exit. |
+| `disable_player_inventory_encumbrance` | boolean | `PlayerPuppet.EvaluateEncumbrance` is a no-op. Carry weight from the single-player inventory is ignored. |
+| `player_extended_customization` | boolean | Opens character customization (`MenuScenario_CharacterCustomizationMirror`) in NewGame edit mode. |
+| `disable_time_skip` | boolean | `GameTimeUtils.CanPlayerTimeSkip` returns false. Sleep / wait is blocked. |
+| `disable_turrets` | boolean | Security turrets cannot rip off or activate. `TurnOnDevice` applies death. |
+| `disable_surveillance_cameras` | boolean | `SurveillanceCamera.TurnOnDevice` applies death. Cameras stay off. |
+| `disable_vending_machines` | boolean | `VendingMachine` and `WeaponVendingMachine` stay off. |
+| `disable_generic_devices` | boolean | `NetrunnerControlPanel`, `NumericDisplay`, `SecurityGateLock`, and `SecurityLocker` stay off. |
+| `disable_no_combat` | boolean | `SecurityArea` enter is ignored. `GameplayRestriction.NoCombat` is removed. |
+
+```toml title="server.toml"
+[core.overrides]
+change_player_on_death_logic = true
+disable_side_quests_notifications = true
+change_vehicles_logic = true
+disable_player_inventory_encumbrance = true
+player_extended_customization = true
+disable_time_skip = true
+disable_turrets = true
+disable_surveillance_cameras = true
+disable_vending_machines = true
+disable_generic_devices = true
+disable_no_combat = true
+```
+
+With `change_player_on_death_logic = true`, the gamemode implements death and respawn. Otherwise the engine may stand the puppet before `playerDeath` runs.
+
+A key that is missing from `[core.overrides]` is off.
+
+## Change `cybermp_core`
+
+Do not edit the built-in resource. Turn off the part you want to replace in `server.toml` and implement it in your own resource. Server updates replace `data/cybermp_core`, your resource stays as it is.
+
+The built-in resource lives in the server folder, in `data/cybermp_core/`:
+
+| Path | Contents |
+| --- | --- |
+| `dist/main.lua` | Client script with the `[core.overrides]` hooks |
+| `dist/client.js` | Client script with the `[core]` features |
+| `dist/server.js` | Server script that sends `[core]` to every joining client |
+| `files/` | Optional files for `core.files`, including `final.redscripts` |
+| `files/src_scripts/` | Redscript sources of `final.redscripts` |
+
+The scripts are built from the `CyberMP-Core-Resource` repository: `client/lua/main.lua` → `dist/main.lua`, `client/src/` → `dist/client.js`, `server/src/` → `dist/server.js`. Read them to see what a key does before you replace it.
+
+### Hooks
+
+Each `[core.overrides]` key is one `if overrides_config["<key>"] then … end` block in `dist/main.lua`. The block installs game hooks with `mp.override` and `mp.observe`. To replace a hook:
+
+1. Set its key to `false` in `[core.overrides]` or remove the key: a missing key is off.
+2. Install your hook in a client script of your resource with `mp.override` or `mp.observe` ([hooks in Lua](/lua/client/game-natives#observe-and-override)). Lua game hooks need `use_game_natives = true` in the `resource.toml` of that resource.
+3. Restart the server.
+
+### Files
+
+`core.files` selects the files of `cybermp_core` that players download. To replace an archive or the redscript bundle:
+
+1. Remove its entry from `core.files`.
+2. Put your file in your resource and list it in the [`file`](/guides/resources/adding-resource-files) array of its `resource.toml`.
+3. Restart the server.
+
+### Redscript
+
+The game loads one compiled redscript bundle: `final.redscripts`. Clients store downloaded files by file name, so your resource ships a file with exactly this name, and `"final.redscript"` is removed from `core.files`. Otherwise two `final.redscripts` collide. A file with another name is not loaded.
+
+```toml title="resources/my-redscript/resource.toml"
+file = [
+  "./final.redscripts"
+]
+```
+
+Your bundle replaces the built-in one. To keep the built-in redscript, compile its sources together with yours. They are in `data/cybermp_core/files/src_scripts/`: the redscript parts of ArchiveXL, Codeware, TweakXL and CyberMP fixes.
+
+1. Put those sources and your `.reds` files in one folder, for example `src_scripts/`.
+2. Compile them with `redscript-cli` from [redscript](https://github.com/jac3km4/redscript). The base bundle is the unmodified `final.redscripts` of the game version players use (`r6/cache/` in the game folder):
+
+   ```shell
+   redscript-cli compile -s src_scripts -b <unmodified final.redscripts> -o final.redscripts
+   ```
+
+## Resource load order
+
+`resources` is ordered. Shared helpers (Lua utils, hotreload watchers, proxy resources) appear **before** the gamemode that depends on them:
+
+```toml
+resources = ['lua-utils', 'lua-proxy', 'hotreload', 'gamemode']
+```
+
+Change the running set with [`refresh`](/guides/resources/interacting-with-resources) / `start` / `stop` / `restart` from the [console](/reference/server/console).
+
+Resource folders are looked up in the `resources/` folder of the server. Another folder is set with the [`-rdir`](/guides/dedicated-server#command-line-arguments) argument.
+
+## Environment variables
+
+A non-empty environment variable overrides the file value: `CYBERMP_TCP_HOST`, `CYBERMP_UDP_HOST`, `CYBERMP_CONNECTION_HOST_ADDR`, `CYBERMP_MAX_PLAYERS`, `CYBERMP_RESOURCES`, `CYBERMP_PRIVATE_TOKEN`, `CYBERMP_DISABLE_VOICE`, `CYBERMP_CEF_DEBUG`, `CYBERMP_EP2_DLC_ENABLED`, `CYBERMP_DUPLICATE_PLAYERS`, `CYBERMP_USE_CDN`, `CYBERMP_CDN_URL`. `CYBERMP_RESOURCES` is a list separated by commas, spaces, or semicolons.
+
+There is no command to re-read the file at runtime: restart the process. The `config` console command prints the effective values and their source.

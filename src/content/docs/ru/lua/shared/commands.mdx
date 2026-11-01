@@ -1,0 +1,42 @@
+---
+title: Команды (Lua)
+description: Консольные команды через mp.commands на сервере и клиенте в Lua.
+---
+
+## Сервер
+
+| Вызов | Описание |
+| --- | --- |
+| `mp.commands.add(name, fn)` | `fn(player, args, raw)`: объект игрока (число `0` для консоли сервера), аргументы таблицей строк, текст команды. |
+| `mp.commands.addRaw(name, fn)` | То же, первый аргумент — числовой id. |
+| `mp.commands.remove(name)` | Удаляет команду. |
+| `mp.commands.execute(line)` | Выполняет консольную команду. |
+| `mp.commands.getAll()` | Таблица имён зарегистрированных команд. |
+
+```lua title="server.lua"
+mp.commands.add('pos', function(player, args, raw)
+  if player == 0 then return end
+  local p = player.position
+  print(('%s: %.1f %.1f %.1f'):format(player.nickname, p.x, p.y, p.z))
+end)
+```
+
+Команды также вызываются из [консоли сервера](/ru/lua/server/resources#console).
+
+<a id="client"></a>
+## Клиент
+
+| Вызов | Описание |
+| --- | --- |
+| `mp.commands.add(name, fn)` | Консольная команда. `fn(playerId, args, raw)`: сетевой id локального игрока, аргументы таблицей строк, текст команды. |
+| `mp.commands.remove(name)` / `mp.commands.execute(line)` / `mp.commands.getAll()` | Удалить, выполнить, список. |
+
+```lua title="client.lua"
+mp.commands.add('say', function(playerId, args, raw)
+  mp.events.triggerServer('chat:say', table.concat(args, ' '))
+end)
+```
+
+Игроки открывают консоль клиента клавишей `F8`. [Консоль клиента](/ru/lua/shared/commands#client).
+
+Обработчики команд — корутины, поэтому `mp.wait` в них работает ([планировщик](/ru/lua/shared/scheduler)). На обеих сторонах команды ресурса удаляются при его остановке.

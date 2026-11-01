@@ -1,0 +1,47 @@
+---
+title: Scheduler (Lua)
+description: Tasks, mp.wait, timeouts, and per-tick callbacks in Lua.
+---
+
+| Function | What it does |
+| --- | --- |
+| `mp.spawnTask(fn)` | Runs `fn` as a coroutine on the next scheduler pass. |
+| `mp.spawnTaskImmediatly(fn)` | Runs `fn` as a coroutine right now, up to its first `mp.wait`. The name is spelled this way in the API. |
+| `mp.setTimeout(fn, ms)` | Runs `fn` as a coroutine after `ms` milliseconds. Returns nothing and cannot be cancelled. |
+| `mp.wait(ms)` | Suspends the current coroutine for `ms` milliseconds. `mp.wait(0)` or `mp.wait()` resumes on the next pass. |
+| `mp.onUpdateLoop(fn)` | Calls `fn` on every script tick. There is no way to remove it. An error inside `fn` is dropped without a message. |
+| `mp.getTimer()` | Millisecond counter for measuring intervals. |
+| `mp.setImmediate(fn, ...)` | Client only. Calls `fn(...)` on the next tick, up to 256 calls per tick. |
+
+`mp.wait` works only inside a coroutine. Tasks, timeouts, event handlers and command handlers are coroutines; the main body of a file is not. An error inside a coroutine is printed with a stack trace and stops only that coroutine.
+
+```lua
+mp.spawnTask(function()
+  while true do
+    mp.wait(1000)
+    print('uptime', mp.getTimer())
+  end
+end)
+```
+
+## Repeating and cancelling
+
+There is no `setInterval` and no way to cancel a timeout. Use a task with a flag:
+
+```lua
+local running = true
+
+mp.spawnTask(function()
+  while running do
+    -- periodic work
+    mp.wait(5000)
+  end
+end)
+
+-- later
+running = false
+```
+
+## Resource stop
+
+When the resource stops, its Lua state is closed: tasks, timeouts and `mp.onUpdateLoop` callbacks end with it. Code after an `mp.wait` that has not resumed yet never runs, so keep `resourceStop` handlers free of `mp.wait`.

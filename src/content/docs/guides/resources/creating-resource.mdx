@@ -1,43 +1,43 @@
 ---
 title: Creating resources
-description: .
+description: Hello World resource — folder, resource.toml, and two scripts.
 slug: guides/resources/creating-resource
 ---
 import { FileTree } from '@astrojs/starlight/components';
 import { Steps } from '@astrojs/starlight/components';
 
-This tutorial will guide you through creating a simple "Hello World" resource to learn the basic structure of CyberMP resource scripting.
-
-By the end of this guide, you will have a resource that prints a message to the both client and server console when it starts.
+A minimal resource that writes Hello World to the server and client consoles on start.
 
 <Steps>
 
-1. ## Create the Resource Folder
+1. ## Resource folder
 
-    CyberMP identifies resources by their folder names within the resources directory.
+    The server loads directories from `resources`. The folder name is the resource name.
 
-    - Navigate to your server's resources folder.
-    - Create a new folder named `hello_world`. This is your resource directory.
-    ---
+    - Open `resources`.
+    - Create a folder named `hello_world`.
 
-2. ## Configure the Resource
+2. ## `resource.toml`
 
-    Every resource requires a `resource.toml` file to define its entry points and behavior.
-
-    - Inside the `hello_world` folder, create a file named `resource.toml`.
-    - Paste the following configuration into the file:
+    Declares which scripts to run.
 
     ```toml title="resource.toml"
     client_script = './client.js'
     server_script = './server.js'
     ```
 
-3. ## Write the Script
+    Additional fields: [`resource.toml`](/guides/resources/resource-toml).
 
-    Now, create the actual logic for your resource.
+    | Field | Description |
+    | --- | --- |
+    | `file` | Client files: UI, archives, mods. [Custom assets](/guides/resources/adding-resource-files). |
+    | `cef_url` | CEF HTML entry. [CEF UI](/guides/client/first-cef-ui). |
+    | `use_game_natives` | `true` when the client calls `mp.game`. |
+    | `hot_reload` | Not read by the platform; opt-in flag for the [hotreload](/guides/general/hotreload) watcher example. |
 
-    - In the same folder, create a two files `client.js` and `server.js`
-    - Add the following code:
+3. ## Scripts
+
+    Next to `resource.toml`:
 
     ```js title="server.js" ins={1}
     console.log('Hello World from CyberMP Server!');
@@ -47,12 +47,9 @@ By the end of this guide, you will have a resource that prints a message to the 
     console.log('Hello World from CyberMP Client!');
     ```
 
-4. ## Load the Resource
+4. ## Enable on the server
 
-    To see your resource in action, you need to tell the server to load it.
-
-    - Open your `server.toml` (located in the server root directory).
-    - Locate the resources array and add your folder name:
+    Add the folder name to root `server.toml`:
 
     ```toml title="server.toml" ins={7}
     tcp_host = "0.0.0.0:2077"
@@ -63,14 +60,13 @@ By the end of this guide, you will have a resource that prints a message to the 
 
     resources = ['hello_world']
 
-    disable_VoIP_server = false
-
-    steam_api_key = "none"
+    disable_voice = false
     ```
 
-5. ## Verify the Result
+5. ## Verify
 
-    Your final structure should look something like this:
+    Layout:
+
     <FileTree>
         - resources
             - hello_world
@@ -80,15 +76,15 @@ By the end of this guide, you will have a resource that prints a message to the 
         - server.toml
     </FileTree>
 
-    Start your server. If everything is configured correctly, you will see your message in the console logs during the initialization phase:
+    Start the server. Expected log:
 
     ```ansi {3}
-    [38;2;179;133;0m[00:00:00] [Server][0m CyberMP server starting...
-    [38;2;179;133;0m[00:00:00] [Server][0m Resources initializing...
-    [38;2;179;133;0m[00:00:00] [script:hello_world][0m Hello World from CyberMP!
-    [38;2;179;133;0m[00:00:00] [Resources][0m Loaded resource hello_world
+    [38;2;179;133;0m[00:00:00] [server][0m CyberMP server starting...
+    [38;2;179;133;0m[00:00:00] [server][0m Resources initializing...
+    [38;2;179;133;0m[00:00:00] [hello_world][0m Hello World from CyberMP Server!
+    [38;2;179;133;0m[00:00:00] [resources][0m Loaded resource hello_world
     ```
 
-    If you connect to the server, and press `F8` to open client console, you should see client log.
+    Join and press `F8`. The [client console](/reference/client/console) shows `Hello World from CyberMP Client!`.
 
 </Steps>

@@ -1,87 +1,87 @@
 ---
-title: Working with Events
-description: Learn how to manage local, server, and UI events on the client side.
+title: Client events
+description: Local, server, and CEF events on the client.
 ---
-import { Steps } from '@astrojs/starlight/components';
+import { Tabs, TabItem } from '@astrojs/starlight/components';
 
-The [`mp.events`](/reference/client/api/events/mpevents) API is the primary communication bridge for your client side code. It allows you to track engine lifecycles, communicate with the server, interact with your browser UI (CEF), and manage console commands.
+On the client, `mp.events` addresses three targets: the local script, the server, and the HTML UI.
 
-In this guide, we will break down the different ways you can route and handle events on the client.
+<Tabs syncKey="client-events-side">
+<TabItem label="Local">
 
-## Custom & Platform Events
-
-You can use [`mp.events.on`](/reference/client/api/events/mpevents#on) to listen to both built-in platform events (like resource lifecycle changes and entity streaming) and custom events that you define. Use [`mp.events.emit`](/reference/client/api/events/mpevents#emit) to trigger your own local events.
+[`on`](/reference/client/api/events/mpevents#on) / [`emit`](/reference/client/api/events/mpevents#emit) stay on this client.
 
 ```js title="client.js"
-// 1. Platform Event: Triggers when this resource fully loads
 mp.events.on('resourceStart', () => {
-    console.log('The client resource has successfully started.');
+  console.log('The client resource has successfully started.');
 });
 
-// 2. Platform Event: Triggers when a vehicle enters the local player's radius
 mp.events.on('vehicleStreamIn', (netID, gameID) => {
-    console.log(`Vehicle streamed in - NetID: ${netID}, GameID: ${gameID}`);
+  console.log(`Vehicle streamed in - NetID: ${netID}, GameID: ${gameID}`);
 });
 
-// 3. Custom Local Event: Listening for a user-defined event
 mp.events.on('myCustomLocalEvent', (data) => {
-    console.log('Received local data:', data);
+  console.log('Received local data:', data);
 });
 
-// Triggering the custom local event across your client script
 mp.events.emit('myCustomLocalEvent', 'Hello local script!');
 ```
 
-## Communicating with the Server
+</TabItem>
+<TabItem label="Server">
 
-You can send payloads to your server scripts using [`emitServer`](/reference/client/api/events/mpevents#emitserver) and listen to incoming network packets using [`onServer`](/reference/client/api/events/mpevents#onserver).
+[`emitServer`](/reference/client/api/events/mpevents#emitserver) / [`onServer`](/reference/client/api/events/mpevents#onserver). Return value: [RPC](/guides/general/rpc).
+
 ```js title="client.js"
-// Sending an event to the server with arbitrary arguments
-mp.events.emitServer('requestVehicleSpawn', 'v_sport', -1392.6, 1271.5, 123.0);
+mp.events.emitServer(
+  'requestVehicleSpawn',
+  'Vehicle.v_standard2_archer_hella',
+);
 
-// Listening for an event dispatched from the server
 mp.events.onServer('serverNotification', (message) => {
-    console.log(`[Server]: ${message}`);
+  console.log(`[Server]: ${message}`);
 });
-
 ```
 
-## Interacting with the UI (CEF)
+</TabItem>
+<TabItem label="CEF">
 
-If you are building custom user interfaces using web technologies, you will use the Chromium Embedded Framework (CEF) bridge. `mp.events` handles tracking browser frame lifecycles and passing data back and forth.
+[`onCef`](/reference/client/api/events/mpevents#oncef) / [`emitCef`](/reference/client/api/events/mpevents#emitcef). UI page: [CEF UI](/guides/client/first-cef-ui).
+
+Besides what the page sends with `mp.events.emit`, the CEF process (`CEFSubProcess.exe`) emits two built-in events into every frame: `domReady` on `DOMContentLoaded` (argument: the frame's `window.name`) and `loadingFailed` on any uncaught JS error or unhandled promise rejection in the page ([`CefLoadingFailedError`](/reference/client/api/events/cefloadingfailederror)). `loadingFailed` is not a network/HTTP load error.
+
 ```js title="client.js"
-// Built-in CEF Event: Fires when the browser finishes parsing the document
 mp.events.onCef('domReady', (frameName) => {
-    console.log(`Browser frame '${frameName}' is ready to receive data.`);
-
-    // Send data straight into the web application execution loop
-    mp.events.emitCef('initializeDashboard', { playerName: 'V', initialHealth: 300 });
+  mp.events.emitCef('initializeDashboard', { playerName: 'V', initialHealth: 300 });
 });
 
-// Built-in CEF Event: Catch loading errors
 mp.events.onCef('loadingFailed', (error) => {
-    console.error(`CEF Load Failed in ${error.frameName}: ${error.message} at line ${error.line}`);
+  console.error(`CEF Load Failed in ${error.frameName}: ${error.message}`);
 });
 
-// Custom CEF Event: Listen for notifications dispatched from your web app UI
 mp.events.onCef('uiButtonPressed', (buttonId) => {
-    console.log(`Player clicked UI button: ${buttonId}`);
+  console.log(`Player clicked UI button: ${buttonId}`);
 });
-
 ```
+
+</TabItem>
+</Tabs>
 
 ## Cleanup
-Memory management is important in client scripts. If you no longer need an event listener, you can remove it using [`mp.events.off`](/reference/client/api/events/mpevents#off), this also works for [`mp.events.onServer`](/reference/client/api/events/mpevents#onserver) and [`mp.events.onCef`](/reference/client/api/events/mpevents#oncef).
+
+Named handlers, then [`off`](/reference/client/api/events/mpevents#off). `off` removes handlers registered with `on` only. `onServer` and `onCef` store the handler under an internal prefixed name (and `onCef` wraps it), so `off(name, fn)` does not find them; `offCef` does not remove `onCef` handlers either. Guard such handlers with a flag; they are dropped when the resource stops.
+
 ```js title="client.js"
-// Defining a named callback function
 const handlePlayerStream = (netID, gameID) => {
-    console.log(`Player ${netID} streamed in.`);
+  console.log(`Player ${netID} streamed in.`);
 };
 
-// Binding the event
 mp.events.on('remotePlayerStreamIn', handlePlayerStream);
-
-// Later, unbinding the event when it is no longer needed
 mp.events.off('remotePlayerStreamIn', handlePlayerStream);
-
 ```
+
+Stream events: `vehicleStreamIn` / `Out`, `remotePlayerStreamIn` / `Out`, `pedStreamIn` / `Out`, `objectStreamIn` / `Out` — `(netID, gameID)`. Convert ids with [`mp.network`](/guides/client/network-and-local).
+
+Resource events: `resourceStart`, `resourceStop` (this resource), `anyResourceStart`, `anyResourceStop`, `anyClientResourceStart`, `anyClientResourceStop` (resource name as the argument). `resourcesRefresh` and `anyServerResourceStart` / `anyServerResourceStop` are server-only.
+
+Discord status: [`mp.discord`](/guides/client/discord).

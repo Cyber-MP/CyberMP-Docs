@@ -1,0 +1,32 @@
+---
+title: Server list
+description: How a server gets into the public CyberMP server list in the launcher and on the website.
+---
+
+The server list is the public list of CyberMP servers. Players see it in the **Servers** section of the [launcher](/guides/game-client/launcher) and on [cyber.mp/servers](https://cyber.mp/servers), pick a server and join it.
+
+## How a server gets into the list
+
+1. Create the server in [Server Manager](/guides/server-manager/create-server) on the CyberMP website. You get a [token](/guides/server-manager/tokens).
+2. Put the token into `private_token` in `server.toml`. Set `connection_host_addr` to the address players connect to.
+3. Start the server. It sends its address to the list at startup and then every 2 minutes.
+
+On each heartbeat the backend requests `http://<connection_host_addr>/info`, that is, over HTTP on the server's TCP port. From the answer it takes the number of players online and the slot count (`max_players`). A server that stops sending heartbeats drops out of the list after about 2 minutes.
+
+The name, description, avatar, banner and other listing fields are set in Server Manager, not in `server.toml`.
+
+The list is sorted by the server owner's [plan](/guides/server-manager/subscriptions): Diamond first, then Gold, then all others. Within a level, servers with more players come first.
+
+**Public Visibility** off in Server Manager hides the server from the list. Its [fast connect](/guides/game-client/fast-connect) link still works.
+
+## The server is not in the list
+
+- `private_token` is empty, belongs to another server, or was reset in Server Manager.
+- The server owner is banned.
+- The address is on the CyberMP blocklist.
+- `http://<connection_host_addr>/info` cannot be reached from the internet: `0.0.0.0`, `127.0.0.1`, or a closed TCP port. When the key is empty, the server sends `127.0.0.1`.
+- `/info` reports more players than `max_players`.
+- **Public Visibility** is off.
+- The server is not running.
+
+A server that is not in the list can still be joined by address: [direct connect](/guides/game-client/direct-connect).

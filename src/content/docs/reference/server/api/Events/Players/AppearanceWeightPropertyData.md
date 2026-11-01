@@ -9,6 +9,10 @@ title: "AppearanceWeightPropertyData"
 
 Defined in: events.ts:136
 
+:::caution
+The current server sends this payload as an **array**, not as an object with named fields. Read the values by index in this order: `[targetHash, regionHash, weight]`.
+:::
+
 ## Properties
 
 <a id="regionhash"></a>

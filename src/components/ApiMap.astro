@@ -1,0 +1,162 @@
+---
+interface Props {
+  lang?: 'en' | 'ru';
+}
+
+const lang = Astro.props.lang === 'ru' ? 'ru' : 'en';
+const ru = lang === 'ru';
+const prefix = ru ? '/ru' : '';
+
+type Item = { code: string; note?: string };
+type Group = { label: string; items: Item[] };
+type Card = {
+  side: 'server' | 'client' | 'cef';
+  title: string;
+  typeName: string;
+  groups: Group[];
+  links: { href: string; label: string }[];
+};
+
+const cards: Card[] = [
+  {
+    side: 'server',
+    title: ru ? 'Сервер' : 'Server',
+    typeName: 'MpServer',
+    groups: [
+      {
+        label: ru ? 'Сущности' : 'Entities',
+        items: [
+          { code: 'mp.players' },
+          { code: 'mp.vehicles' },
+          { code: 'mp.objects' },
+          { code: 'mp.peds' },
+          { code: 'mp.pickups' },
+        ],
+      },
+      {
+        label: ru ? 'Скрипт' : 'Script',
+        items: [{ code: 'mp.events' }, { code: 'mp.commands' }, { code: 'exports' }],
+      },
+      {
+        label: ru ? 'Данные' : 'Data',
+        items: [
+          { code: 'mp.hashes' },
+          { code: 'mp.meta' },
+          { code: 'mp.resources' },
+          { code: 'mp.config' },
+        ],
+      },
+    ],
+    links: [
+      { href: `${prefix}/reference/server/api/readme/`, label: ru ? 'Справочник' : 'Reference' },
+      { href: `${prefix}/guides/server/vehicles`, label: ru ? 'Машины' : 'Vehicles' },
+      { href: `${prefix}/guides/general/hashes`, label: ru ? 'Хеши' : 'Hashes' },
+    ],
+  },
+  {
+    side: 'client',
+    title: ru ? 'Клиент' : 'Client',
+    typeName: 'MpClient',
+    groups: [
+      {
+        label: ru ? 'Игра' : 'Game',
+        items: [
+          {
+            code: 'mp.game',
+            note: ru ? 'нативы, TweakDB, hashes, observe' : 'natives, TweakDB, hashes, observe',
+          },
+          {
+            code: 'mp.local',
+            note: ru ? 'спавн игрока и локальных сущностей' : 'player spawn and local entities',
+          },
+          { code: 'mp.network', note: 'netId ↔ gameId' },
+        ],
+      },
+      {
+        label: ru ? 'События и UI' : 'Events & UI',
+        items: [
+          { code: 'mp.events' },
+          { code: 'mp.cef' },
+          { code: 'mp.discord' },
+          { code: 'mp.localStorage' },
+        ],
+      },
+    ],
+    links: [
+      { href: `${prefix}/reference/client/api/readme/`, label: ru ? 'Справочник' : 'Reference' },
+      { href: `${prefix}/guides/client/lifecycle`, label: ru ? 'Жизненный цикл' : 'Lifecycle' },
+      { href: `${prefix}/reference/client/working-with-game-natives`, label: ru ? 'Нативы' : 'Natives' },
+    ],
+  },
+  {
+    side: 'cef',
+    title: 'CEF',
+    typeName: 'MpBrowser',
+    groups: [
+      {
+        label: ru ? 'Мост' : 'Bridge',
+        items: [
+          { code: 'mp.events', note: ru ? 'UI ↔ клиент' : 'UI ↔ client' },
+          {
+            code: '@cybermp/rpc-react',
+            note: ru ? 'RPC из React' : 'RPC from React',
+          },
+        ],
+      },
+    ],
+    links: [
+      { href: `${prefix}/reference/browser/api/readme/`, label: ru ? 'Справочник' : 'Reference' },
+      { href: `${prefix}/guides/client/first-cef-ui`, label: 'CEF' },
+      { href: `${prefix}/guides/general/rpc`, label: 'RPC' },
+    ],
+  },
+];
+---
+
+<div class="cmp-api-map">
+  {
+    cards.map((card) => (
+      <article class="cmp-api-card" data-side={card.side}>
+        <header class="cmp-api-card__head">
+          <p class="cmp-api-card__title">{card.title}</p>
+          <code class="cmp-api-card__type">{card.typeName}</code>
+        </header>
+        <div class="cmp-api-card__body">
+          {
+            card.groups.map((group) => {
+              const withNote = group.items.some((item) => item.note);
+              return (
+                <section class="cmp-api-card__group">
+                  <p class="cmp-api-card__label">{group.label}</p>
+                  {withNote ? (
+                    <ul class="cmp-api-card__rows">
+                      {group.items.map((item) => (
+                        <li>
+                          <code>{item.code}</code>
+                          {item.note ? <span>{item.note}</span> : null}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <ul class="cmp-api-card__chips">
+                      {group.items.map((item) => (
+                        <li>
+                          <code>{item.code}</code>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </section>
+              );
+            })
+          }
+        </div>
+        <footer class="cmp-api-card__links">
+          {card.links.map((link) => (
+            <a href={link.href}>{link.label}</a>
+          ))}
+        </footer>
+      </article>
+    ))
+  }
+</div>

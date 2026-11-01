@@ -1,0 +1,41 @@
+---
+---
+
+<script>
+  const SIDES = ['server', 'client', 'cef'] as const;
+
+  function sideFromTitle(title: string) {
+    const t = title.toLowerCase().trim();
+    if (t.includes('server')) return 'server';
+    if (t.includes('client')) return 'client';
+    if (/\b(html|cef|ui\/|browser)\b/.test(t) || t.endsWith('.html')) return 'cef';
+    return '';
+  }
+
+  function tagFrames() {
+    document.querySelectorAll('.expressive-code .frame.has-title').forEach((frame) => {
+      const el = frame as HTMLElement;
+      const header = el.querySelector('figcaption.header');
+      const title = header?.querySelector('.title')?.textContent ?? '';
+      const side = sideFromTitle(title);
+
+      header?.querySelector('.cmp-side')?.remove();
+      SIDES.forEach((name) => el.removeAttribute(`data-side-${name}`));
+
+      if (!side || !header) {
+        delete el.dataset.side;
+        return;
+      }
+
+      el.dataset.side = side;
+      const badge = document.createElement('span');
+      badge.className = 'cmp-side';
+      badge.dataset.side = side;
+      badge.textContent = side;
+      header.appendChild(badge);
+    });
+  }
+
+  tagFrames();
+  document.addEventListener('astro:page-load', tagFrames);
+</script>

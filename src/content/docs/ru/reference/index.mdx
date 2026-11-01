@@ -1,0 +1,25 @@
+---
+title: Справка
+description: Карта деревьев TypeDoc API.
+---
+import ApiMap from '../../../../components/ApiMap.astro';
+
+TypeDoc перечисляет все типы из `@cybermp/server-types`, `client-types` и `browser-types`. С этой страницы выбирается дерево. Порядок вызовов описан в гайдах.
+
+<ApiMap lang="ru" />
+
+## `create()` и хеши
+
+| TypeDoc | Гайд |
+| --- | --- |
+| [`MpVehicles.create`](/ru/reference/server/api/entities/vehicles/mpvehicles/#create) | [Транспорт](/ru/guides/server/vehicles) |
+| [`MpObjects`](/ru/reference/server/api/entities/objects/mpobjects/) / [`MpPeds`](/ru/reference/server/api/entities/peds/mppeds/) / [`MpPickups`](/ru/reference/server/api/entities/pickups/mppickups/) | [Мировые сущности](/ru/guides/server/world-entities) |
+| [`MpHashes`](/ru/reference/server/api/global/mphashes/) | [Хеши](/ru/guides/general/hashes), [внешность](/ru/guides/general/appearances) |
+| [`MpGame`](/ru/reference/client/api/global/mpgame/) | [Нативы](/ru/reference/client/working-with-game-natives), [lifecycle](/ru/guides/client/lifecycle) |
+| Конфиг / консоль | [server.toml](/ru/reference/server/configuration), [консоль сервера](/ru/reference/server/console), [консоль клиента](/ru/reference/client/console) |
+| Локальное хранилище | [гайд](/ru/guides/scripting/local-storage), [`MpLocalStorage`](/ru/reference/client/api/global/mplocalstorage/) |
+| Измерения | [гайд](/ru/guides/scripting/dimensions) |
+
+Если в дереве ещё указан `spawnLocalPlayer`, установка документации использует старый `client-types`. Актуальные гайды используют `mp.local` / `mp.network`.
+
+Ошибки спавна: [диагностика](/ru/guides/general/troubleshooting).

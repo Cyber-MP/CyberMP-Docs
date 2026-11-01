@@ -1,0 +1,19 @@
+---
+title: Скрипты сервера (Lua)
+description: Lua-скрипты на CyberMP Server.
+---
+
+import { LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+`.lua`-файл из `server_script` (или `shared_script`) выполняется в среде Lua на CyberMP Server. Глобальная таблица `mp` предоставляет серверный API. Игрового слоя на сервере нет.
+
+Структура ресурса: [создание ресурса](/ru/lua/shared#create-resource). Основы среды (библиотеки, `require`, векторы): [общий скриптинг Lua](/ru/lua/shared).
+
+<CardGrid>
+  <LinkCard title="События" href="/ru/lua/server/events" description="mp.events.add, addClient, triggerClient, отмена через return false" />
+  <LinkCard title="Пулы и объекты сущностей" href="/ru/lua/server/entities" description="mp.players, поля, методы" />
+  <LinkCard title="Транспорт" href="/ru/lua/server/vehicles" description="mp.vehicles.create, места, мета" />
+  <LinkCard title="Объекты, педы, пикапы" href="/ru/lua/server/world-entities" description="mp.objects, mp.peds, mp.pickups" />
+  <LinkCard title="Ресурсы" href="/ru/lua/server/resources" description="start, stop, restart, getState" />
+  <LinkCard title="HTTP и утилиты" href="/ru/lua/server/http" description="sendHttpRequest, bcrypt, консольные переменные" />
+</CardGrid>

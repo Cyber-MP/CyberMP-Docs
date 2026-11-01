@@ -1,0 +1,19 @@
+---
+title: Recipes
+description: Ready-to-run example resources.
+slug: guides/recipes
+---
+
+Complete resource folders. Place them in `resources`, add the name to `server.toml`, join, and run the command in F8.
+
+First run: [Introduction](/guides/getting-started).
+
+| Recipe | Command | Demonstrates |
+| --- | --- | --- |
+| [Vehicle](/guides/recipes/spawn-vehicle) | `car` | `tweakdbid`, `cname('default')` |
+| [Drop](/guides/recipes/drop) | `drop` | `.ent` via `resref` |
+| [NPC](/guides/recipes/npc) | — (spawns on start) | Ped + synced meta |
+| [RPC hello](/guides/recipes/rpc-hello) | `ping` | `callServer` / `register`, same `name` |
+| [CEF button](/guides/recipes/cef-button) | `ui` (focus) | HTML `emit` → client `onCef` |
+
+Failures: [troubleshooting](/guides/general/troubleshooting). Map of `mp`: [API map](/guides/general/api-map).

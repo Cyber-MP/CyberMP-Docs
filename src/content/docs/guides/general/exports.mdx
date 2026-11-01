@@ -1,0 +1,59 @@
+---
+title: Resource exports
+description: Call functions in another resource with mp.exports.
+slug: guides/general/exports
+---
+
+`mp.exports` lets one resource call a function registered by another. Use it for shared helpers (Lua proxy, noclip, notifications) without copying code.
+
+On the **client** this is `mp.exports`. Server scripts have the same mechanism as the global `exports` (no `mp.` prefix); exports do not cross between server and client. An export is looked up when you access it, so the exporting resource must already be started at that moment: list it **before** the consumer in `server.toml` `resources` if the consumer calls it during startup.
+
+## Register
+
+Call `mp.exports` as a function in the resource that owns the logic:
+
+```js title="resources/notify/client.js"
+mp.exports('show', (message) => {
+  console.log('notify', message);
+});
+```
+
+The export name is local to **this** resource.
+
+## Call from another resource
+
+Index by **folder name**, then the export name:
+
+```js title="resources/gamemode/client.js"
+mp.exports.notify.show('Welcome');
+```
+
+Accessing an export that is not registered (or whose resource is not running) throws `Can't find <export> in <resource>`. Optional chaining does not help: `mp.exports.<resource>` is always an object. Wrap the access if the helper resource might be missing:
+
+```js
+try {
+  mp.exports['lua-proxy'].override(className, methodSignature, behavior, payload);
+} catch (e) {
+  // lua-proxy is not running or has no `override` export
+}
+```
+
+Arguments and return values are serialized between resources (MessagePack). Pass plain data; functions are passed as references, and a returned Promise stays a Promise. This is not a security boundary. Any resource on the client can call a public export.
+
+## Load order
+
+```toml title="server.toml"
+resources = ['lua-utils', 'lua-proxy', 'gamemode']
+```
+
+If `gamemode` calls `mp.exports['lua-proxy'].…` before `lua-proxy` has started, the call throws. Put shared resources first. After a live `stop` / `start`, re-check that the provider is started: `mp.resources.getState('lua-proxy') === 2`.
+
+## Files inside a resource
+
+Read a bundled file (on the client it must be listed in that resource's `file` array):
+
+```js
+const name = mp.resources.getCurrentName();
+const toml = JSON.parse(mp.resources.getTOML(name)); // resource.toml as JSON
+const raw = mp.resources.loadFile('gamemode', 'data/catalog.json'); // string
+```

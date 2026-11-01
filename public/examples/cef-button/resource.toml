@@ -1,0 +1,3 @@
+client_script = './client.js'
+cef_url = './ui/index.html'
+file = ['./ui/index.html']

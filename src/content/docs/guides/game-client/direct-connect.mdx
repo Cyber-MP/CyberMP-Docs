@@ -1,0 +1,16 @@
+---
+title: Direct connect
+description: Connect to a CyberMP server by IP address or domain name.
+---
+
+Direct connect opens a session to a server by its address, without the [Master List](/guides/server-manager/server-list). In the launcher, press **Direct connect** at the bottom of the menu and enter the address.
+
+The address is an IP address or a domain name with the port: `203.0.113.10:2077` or `play.example.com:2077`. A domain name is resolved through DNS.
+
+The address is the client-facing endpoint (`connection_host_addr` in [`server.toml`](/reference/server/configuration)). `tcp_host` / `udp_host` are bind addresses (`0.0.0.0:2077` is typical). Publish TCP and UDP on the same port.
+
+Local default: `127.0.0.1:2077`.
+
+After join, client scripts get the session address with `mp.network.getServerAddress()` in JavaScript or `mp.getServerAddress()` in Lua.
+
+Joining from a browser link through the launcher is a different feature: [fast connect](/guides/game-client/fast-connect).

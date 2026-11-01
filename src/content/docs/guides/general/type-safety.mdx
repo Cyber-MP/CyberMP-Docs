@@ -1,0 +1,108 @@
+---
+title: Type safety
+description: Official CyberMP TypeScript types for server, client, and CEF scripts.
+slug: guides/general/type-safety
+---
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+TypeScript is optional. Official packages type `mp`: events, players, vehicles, CEF, natives.
+
+The [API reference](/reference/server/api/readme/) on this site is generated from the same packages (`@cybermp/server-types`, `client-types`, `browser-types`). Keep the packages current so names such as `mp.local` and `mp.network` match the guides. Map of `mp` by runtime: [API map](/guides/general/api-map).
+
+## Packages
+
+| Package | Runtime | Global |
+| --- | --- | --- |
+| [`@cybermp/server-types`](https://www.npmjs.com/package/@cybermp/server-types) | Server resource | `mp: MpServer` |
+| [`@cybermp/client-types`](https://www.npmjs.com/package/@cybermp/client-types) | Game client resource | `mp: MpClient` |
+| [`@cybermp/browser-types`](https://www.npmjs.com/package/@cybermp/browser-types) | CEF page | `mp: MpBrowser` |
+
+```shell
+npm install -D @cybermp/server-types @cybermp/client-types @cybermp/browser-types @types/node
+```
+
+## Declare the global
+
+CyberMP injects `mp` at runtime. Declare it for TypeScript with one declaration file per runtime. Each tsconfig includes only its own file.
+
+<Tabs>
+  <TabItem label="Server">
+    ```ts title="src/types/server-global.d.ts"
+    import type { MpServer } from '@cybermp/server-types';
+
+    declare global {
+      const mp: MpServer;
+    }
+
+    export {};
+    ```
+  </TabItem>
+  <TabItem label="Client">
+    ```ts title="src/types/client-global.d.ts"
+    import type { MpClient } from '@cybermp/client-types';
+
+    declare global {
+      const mp: MpClient;
+    }
+
+    export {};
+    ```
+  </TabItem>
+  <TabItem label="Browser (CEF)">
+    ```ts title="src/types/browser-global.d.ts"
+    import type { MpBrowser } from '@cybermp/browser-types';
+
+    declare global {
+      const mp: MpBrowser;
+    }
+
+    export {};
+    ```
+  </TabItem>
+</Tabs>
+
+Keep **three** tsconfigs (or three packages). Server types include `mp.vehicles.create`. Client types include `mp.game` and `mp.cef`. A shared file that imports both fails to typecheck or silently selects the wrong `mp`.
+
+## tsconfig
+
+```json title="tsconfig.server.json"
+{
+  "compilerOptions": {
+    "strict": true,
+    "noImplicitAny": true,
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "target": "ESNext",
+    "types": ["node"],
+    "lib": ["ESNext"]
+  },
+  "include": ["src/server/**/*.ts", "src/types/server-global.d.ts"]
+}
+```
+
+The server runs on Node.js, so `@types/node` gives it `console`, timers and `require`. For `tsconfig.client.json`, take the same options with `"types": []`, `"lib": ["ESNext", "DOM"]` for `console` and timers, and `"skipLibCheck": true`: the generated game typings in `@cybermp/client-types` do not pass the library check.
+
+Client scripts import REDengine classes from the `/game` subpath of the same package:
+
+```ts title="client.ts"
+import type {
+  PlayerPuppet,
+  SettingsMainGameController,
+} from '@cybermp/client-types/game';
+
+mp.game.onGameLoaded(() => {
+  const player: PlayerPuppet = mp.game.GetPlayer();
+  console.log(player.GetEntityID());
+});
+```
+
+## Typing rules
+
+- Use `MpPlayer`, `MpVehicle`, `MpEntity`, `GameHash`, `Vector3` from the packages.
+- Prefer `unknown` over `any` at RPC boundaries, then narrow. For end-to-end types, use [`@cybermp/rpc-router`](/guides/general/rpc#type-safe-router).
+- Meta values are untyped at the platform layer (`getMeta<T>(key)`). Wrap keys in project helpers when compile-time guarantees are required.
+- Natives come from `@cybermp/client-types`. If a method is absent from the `.d.ts`, treat that as a types gap. Do not invent a signature. See [game natives](/reference/client/working-with-game-natives).
+
+## Build output
+
+The server loads `.js` from `client_script` / `server_script`. Bundle or compile TypeScript into those files (esbuild, Bun, tsc). Point `resource.toml` at the compiled output, not the `.ts` sources.

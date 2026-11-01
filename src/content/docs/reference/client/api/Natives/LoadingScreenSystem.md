@@ -5,7 +5,7 @@ prev: false
 title: "LoadingScreenSystem"
 ---
 
-Defined in: game.d.ts:179
+Defined in: game.d.ts:228
 
 System providing status and progression access for the game's loading screen interface.
 Accessible through `mp.game.ScriptGameInstance.GetLoadingScreenSystem()`
@@ -30,7 +30,7 @@ Accessible through `mp.game.ScriptGameInstance.GetLoadingScreenSystem()`
 
 > **GetLoadingScreenProgress**(): `number`
 
-Defined in: game.d.ts:190
+Defined in: game.d.ts:239
 
 Gets the numeric loading progression factor.
 
@@ -48,7 +48,7 @@ A value representing loading progress (from 0 to 100).
 
 > **GetLoadingScreenState**(): [`ELoadingScreenState`](/reference/client/api/enums/eloadingscreenstate/)
 
-Defined in: game.d.ts:184
+Defined in: game.d.ts:233
 
 Retrieves the current explicit state of the loading screen lifecycle.
 
@@ -66,7 +66,7 @@ The state enum value.
 
 > **OnLoadingScreenStateChange**(`newState`): `void`
 
-Defined in: game.d.ts:196
+Defined in: game.d.ts:245
 
 Callback fired or invoked when the loading screen switches states.
 

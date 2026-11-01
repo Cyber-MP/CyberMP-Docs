@@ -1,0 +1,74 @@
+---
+title: Game natives (Lua)
+description: Call REDengine systems from Lua client scripts through the Cyber Engine Tweaks layer.
+---
+
+Lua client scripts reach Cyberpunk systems through a game layer: the player, stats, teleport, TweakDB, method hooks.
+
+:::tip[NativeDB]
+All game classes, functions and enums are listed on [NativeDB](https://nativedb.red4ext.com/). Names there match the names you call from scripts.
+:::
+
+Set `use_game_natives = true` in `resource.toml`. The resource's Lua state then gets the game layer. It is a fork of Cyber Engine Tweaks (CET), and the names match CET: `Game`, `GetSingleton`, `NewObject`, `TweakDB` and others. Without this key the calls below are missing or raise an error. With it, `print` is replaced by the game layer's logger, which does not add the resource name.
+
+| Name | Available | Description |
+| --- | --- | --- |
+| `mp.registerGameState(stage, fn)` | At once | Calls `fn` when the game reaches `stage`. |
+| `mp.isOnTweakCalled()`, `mp.isOnInitCalled()`, `mp.isOnGameLoadedCalled()` | At once | `true` once the game has passed that stage. |
+| `mp.hashes.toCname` / `toTweakdbid` / `toResref` | At once | Name to hash, as a decimal string. |
+| `mp.hashes.fromCname` / `fromTweakdbid` / `fromResref` | At once | Hash (decimal string) to name. |
+| `Game`, `GetSingleton(name)`, `NewObject(name)`, `NewProxy`, `IsDefined`, `EnumInt`, `ToCName`, `ToTweakDBID`, `ToItemID`, `ToEulerAngles`, `ToQuaternion`, `Vector4.new`, `EulerAngles.new` | After `onInit` | Game classes and functions. |
+| `mp.observe` / `mp.observeBefore` / `mp.observeAfter`, `mp.observeRaw` / `mp.observeBeforeRaw` / `mp.observeAfterRaw`, `mp.override` | After `onInit` | [Method hooks](/lua/client/observes). |
+| `TweakDB` | After `onTweak` | TweakDB records and flats. |
+
+## Stages
+
+| Stage | When | Arguments |
+| --- | --- | --- |
+| `onTweak` | TweakDB is ready. | — |
+| `onInit` | Game runtime initialized. Game classes and functions are available. | — |
+| `onGameLoaded` | World loaded; runs on every load. | — |
+| `onceGameLoaded` | First world load only. | — |
+| `onUpdate` | Every tick after `onInit`. | `dt` |
+| `onInputKeyEvent` | A key event. | `action, key` |
+
+Handlers run on the next script tick after the stage. If the stage was already reached when the resource started, they run on the first tick. Register events and commands at resource start; wait for the appropriate game stage before calling game systems.
+
+Call natives only after the world is loaded: `resourceStart` only means the script started.
+
+## Systems and player
+
+`Game.X` resolves a game instance method or a global game function, so `Game.GetPlayer()` and `Game.GetTeleportationFacility()` work. Methods of game objects are called with `:`.
+
+```lua title="client.lua"
+mp.registerGameState('onGameLoaded', function()
+  local player = Game.GetPlayer()
+  local stats = Game.GetStatsSystem()
+  local pools = Game.GetStatPoolsSystem()
+  local teleport = Game.GetTeleportationFacility()
+
+  print('player ready', player ~= nil)
+end)
+```
+
+`Game.GetPlayer()` can still return `nil` right after `mp.client.spawnPlayer`. Poll until the puppet exists before health, appearance, or teleport.
+
+`NewObject(name)` creates a game object by class name, `Vector4.new(x, y, z, w)` and `EulerAngles.new(roll, pitch, yaw)` create the structs. Example: [teleport](/lua/client/teleporting-player).
+
+## Observe and override
+
+[Observe](/lua/client/observes) covers observers, arguments, and deferred/Raw execution. [Override](/lua/client/overrides) covers method replacement, chain continuation, and return values.
+
+## Hashes
+
+The client `mp.hashes` helpers come from this layer: without `use_game_natives = true` calling them raises an error. They return decimal strings; convert with `tonumber(str, 10)` before passing a hash to `mp.client.spawn*` ([numbers and hashes](/lua/shared/hashes)).
+
+```lua title="client.lua"
+local item = mp.hashes.toTweakdbid('Items.Preset_Nue_Default')
+local name = mp.hashes.fromTweakdbid(item)
+local look = mp.hashes.toCname('default')
+```
+
+## Finding a native
+
+Look up the class or method in [NativeDB](https://nativedb.red4ext.com/). Access game classes through `Game.X` and call object methods with `:`.

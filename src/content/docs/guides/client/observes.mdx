@@ -1,0 +1,78 @@
+---
+title: Observe
+description: Observe game methods, execution timing, and Raw variants.
+---
+
+`mp.game.observe(className, methodName, callback)` subscribes a client script to game-method calls. An observer does not replace the method or cancel it by returning a value.
+
+## Setup
+
+Client only. Set `use_game_natives = true` in `resource.toml`. Register hooks once after game classes initialize; see [initialization stages](/reference/client/working-with-game-natives).
+
+```toml title="resource.toml"
+client_script = 'client.js'
+use_game_natives = true
+```
+
+## Registration
+
+```js title="client.js"
+let settingsMenu = null;
+
+mp.game.onInit(() => {
+  mp.game.observe('SettingsMainGameController', 'OnMenuChanged', (self) => {
+    settingsMenu = self;
+  });
+
+  mp.game.observe('SettingsMainGameController', 'RequestClose', () => {
+    settingsMenu = null;
+  });
+});
+```
+
+## Arguments
+
+Use the exact class name and REDscript method name from [NativeDB](https://nativedb.red4ext.com/). Select an overloaded method with its full signature, including the suffix after `;`. The parameter name `self` is arbitrary.
+
+- Instance method: `callback(self, arg1, ...)`.
+- Static method: `callback(arg1, ...)`, without `self`.
+- Observers receive method arguments, not a continuation function or the method result.
+- `self` is a weak reference to a game object. A saved controller may no longer be valid after it closes or unloads.
+
+## Execution order
+
+| Call | Capture point | User callback |
+| --- | --- | --- |
+| `mp.game.observe` | Before the method | Queued with `setImmediate`, on a later tick |
+| `mp.game.observeBefore` | Before the method | Queued with `setImmediate`, on a later tick |
+| `mp.game.observeAfter` | After the method | Queued with `setImmediate`, on a later tick |
+| `mp.game.observeRaw` | Before the method | Without the `setImmediate` queue |
+| `mp.game.observeBeforeRaw` | Before the method | Without the `setImmediate` queue |
+| `mp.game.observeAfterRaw` | After the method | Without the `setImmediate` queue |
+
+`observe` is the `observeBefore` variant; `observeRaw` is the `observeBeforeRaw` variant. An ordinary `observeBefore` callback can execute after the game method has finished: “before” describes the capture point, not the deferred user code. Observer return values are ignored. Use [Override](/guides/client/overrides) to replace the result.
+
+For a method called from another thread, the bridge first transfers callback execution to the script thread. Even `Raw` therefore does not guarantee synchronous execution relative to every game call. Use it only when the call context is known.
+
+## Examples
+
+A small synchronous counter: keep network calls, waiting, and expensive work out of a Raw callback.
+
+```js title="client.js"
+let actionCount = 0;
+mp.game.onInit(() => {
+  mp.game.observeBeforeRaw('PlayerPuppet', 'OnAction', (self, action) => {
+    actionCount += 1;
+  });
+});
+```
+
+In Freeroam, `menus.service.ts` tracks controllers through `SettingsMainGameController.OnMenuChanged` / `RequestClose`; `loading-screen.service.ts` observes `LoadingScreenSystem.OnLoadingScreenStateChange`; `appearance-menu.service.ts` combines `observeRaw` and `observeAfter`. These observers track state without replacing methods.
+
+## Cleanup
+
+Registration does not return a public removal id. Hooks are removed automatically when the resource stops or restarts. For temporary disabling, check a flag inside the callback; a disabled override should call its continuation. Register once per resource instance, not on every command or repeated world load.
+
+## Troubleshooting
+
+Check `use_game_natives`, registration stage, class name, full signature, and whether the game calls the method. Start with an observer and a short log message. If replacement behavior differs, check continuation arguments, omit `self` from the continuation call, and return the expected type.

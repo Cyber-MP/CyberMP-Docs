@@ -1,0 +1,85 @@
+---
+title: Shared scripting (Lua)
+description: The Lua runtime, libraries, and the mp API on server and client.
+---
+
+import { LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+CyberMP runs `.lua` files listed in `server_script`, `client_script`, or `shared_script` in the Lua runtime. Each resource has its own Lua state and global variables.
+
+The Lua runtime includes built-in vector types. The global `mp` table provides the API for events, entities, resources, and other CyberMP features.
+
+## API map
+
+| Area | Server | Client |
+| --- | --- | --- |
+| Events | `add`, `addClient`, `trigger`, `triggerClient`, cancel with `return false`: [server events](/lua/server/events) | `add`, `addServer`, `trigger`, `triggerServer`, `addCef`, `triggerCef`: [client events](/lua/client/events) |
+| Entities | Pools and entity objects: [entities](/lua/server/entities) | Numeric ids, `mp.network`, `mp.client.spawn*`: [network ids](/lua/client/network-and-local) |
+| Game | — | `Game`, `mp.observe`, `mp.registerGameState` with `use_game_natives = true`: [game natives](/lua/client/game-natives) |
+| Hashes | `mp.hashes.to*` | `mp.hashes.to*` / `from*` (needs the game layer): [numbers and hashes](/lua/shared/hashes) |
+| Meta, commands, exports | [Meta](/lua/shared/meta), [commands](/lua/shared/commands), [exports](/lua/shared/exports) | Same pages |
+| Resources | Start, stop, restart: [resources](/lua/server/resources) | Read only: `getCurrentName`, `getState`, `getTomlFile`, `loadFile` |
+| Other | [HTTP, bcrypt, console variables](/lua/server/http) | [Local storage](/lua/client/local-storage), [CEF](/lua/client/cef), [Discord](/lua/client/discord) |
+| Scheduling | [Scheduler](/lua/shared/scheduler) | Same, plus `mp.setImmediate` |
+
+`mp.isServer()` returns `true` on the server and `false` on the client. One-page summary: [cheatsheet](/lua/shared/cheatsheet).
+
+## resource.toml
+
+```toml title="resource.toml"
+server_script = 'server.lua'
+client_script = ['utils.lua', 'client.lua']
+shared_script = 'shared.lua'
+```
+
+- Files run in order: `shared_script` first, then `server_script` on the server or `client_script` on the client. All Lua files of one resource share one Lua state and its globals.
+- `shared_script` runs on the server and on every client.
+- Only files listed in `client_script` / `shared_script` are delivered to players as scripts. The server encrypts them for transfer and the client decrypts them before loading.
+- Client game natives need `use_game_natives = true`. See [game natives](/lua/client/game-natives).
+
+All [`resource.toml`](/lua/shared#manifest) fields apply. Lua also reads `export` (and `server_export` on the server): see [exports](/lua/shared/exports).
+
+## Libraries
+
+| Library | Server | Client |
+| --- | --- | --- |
+| `base`, `table`, `string`, `math`, `utf8`, `coroutine`, `debug` | Yes | Yes |
+| `json` (`json.encode`, `json.decode`), `msgpack` (`msgpack.pack`, `msgpack.unpack`) | Yes | Yes |
+| `io`, `os` | Yes | No. With `use_game_natives = true` the client also gets `io`, `package` and an `os` limited to `clock`, `date`, `difftime`, `time`. |
+| `dofile`, `loadfile` | Removed | Removed |
+
+`print(...)` writes to the console with the resource name. `mp.log(text)` writes `text` without adding a line break.
+
+### require
+
+- **Server:** `require('lib/util')` runs `lib/util.lua` from the resource folder once and returns its result on later calls. Dots in the name are not turned into slashes. The file must exist: a missing file is not reported as a normal Lua error.
+- **Client:** `require` does not load files from the resource. List each file in `client_script` instead; they share globals.
+
+## Vectors
+
+`vector2(x, y)`, `vector3(x, y, z)` and `vector4(x, y, z, w)` are built in and read with `.x`, `.y`, `.z`, `.w`. Components are 32-bit floats. Positions, rotations and velocities returned by the server API are `vector3`.
+
+<CardGrid>
+  <LinkCard title="Server scripting" href="/lua/server" description="Events, entities, resources, HTTP" />
+  <LinkCard title="Client scripting" href="/lua/client" description="Events, game natives, CEF, local spawn" />
+</CardGrid>
+
+<a id="create-resource"></a>
+## Create a resource
+
+Create `resources/hello_world/` with `resource.toml`, `server.lua`, and `client.lua`. Use the manifest example above and add `resources = ['hello_world']` to `server.toml`. The folder name is the resource name. Omit either script field when that side has no script. Start the resource from the server console with `refresh`, then `start hello_world`.
+
+<a id="manifest"></a>
+## Manifest fields
+
+| Field | Purpose |
+| --- | --- |
+| `server_script`, `client_script`, `shared_script` | Lua script paths for the server, client, or both sides. |
+| `file` | Local UI files, archives, and other assets delivered to clients. |
+| `cef_url` | HTML entry page for the resource's CEF interface. |
+| `use_game_natives` | Set to `true` for `Game`, TweakDB, hooks, and client hash helpers. |
+| `export`, `server_export` | Names of exported functions; see [exports](/lua/shared/exports). |
+| `author`, `description`, `version` | Optional resource metadata. |
+| `hot_reload` | Optional convention read by a separate file watcher, not the platform. |
+
+`mp.resources.getTomlFile(name)` returns the manifest as a JSON string. Read it with `json.decode`. Script changes need a resource restart; manifest changes need `refresh` before the restart.

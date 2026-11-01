@@ -5,7 +5,7 @@ prev: false
 title: "extended__vehicleBaseObject"
 ---
 
-Defined in: game.d.ts:420
+Defined in: game.d.ts:473
 
 Extended by CyberMP `vehicleBaseObject` class
 
@@ -17,7 +17,7 @@ Extended by CyberMP `vehicleBaseObject` class
 
 > **AddLinelyVelocity**(`velocity`, `angularVelocity`): `boolean`
 
-Defined in: game.d.ts:440
+Defined in: game.d.ts:493
 
 Imparts instantaneous raw linear velocity vector impulses into the structural entity coordinates frame.
 
@@ -49,7 +49,7 @@ Angular momentum spinning forces vector.
 
 > **ChangeLinelyVelocity**(`velocity`, `angularVelocity`, `switchIndex`): `boolean`
 
-Defined in: game.d.ts:449
+Defined in: game.d.ts:502
 
 Explicitly sets or resets the exact speed vectors tracking ongoing object momentum.
 
@@ -71,7 +71,7 @@ Target rotational angular values coordinates.
 
 `number`
 
-Index configuration selection identifier flag.
+`1` sets only `velocity`, `2` sets only `angularVelocity`, any other value sets both.
 
 #### Returns
 
@@ -87,7 +87,7 @@ Index configuration selection identifier flag.
 
 > **EnableGravity**(`enable`): `boolean`
 
-Defined in: game.d.ts:432
+Defined in: game.d.ts:485
 
 Enables or disables physics engine gravity forces on this vehicle.
 
@@ -113,7 +113,7 @@ Enables or disables physics engine gravity forces on this vehicle.
 
 > **GetAngularVelocity**(): `Vector3`
 
-Defined in: game.d.ts:465
+Defined in: game.d.ts:518
 
 Retrieves the current rotation speed vector parameters tracking operational values.
 
@@ -131,7 +131,7 @@ Rotational velocity tracking data vector.
 
 > **GetBoundaryBox**(): `Box`
 
-Defined in: game.d.ts:483
+Defined in: game.d.ts:536
 
 Retrieves structural bounding box spatial calculation variables for collision tracking.
 
@@ -149,7 +149,7 @@ Object bounding structural frame dimensional properties limits.
 
 > **GetPhysicsState**(): `number`
 
-Defined in: game.d.ts:471
+Defined in: game.d.ts:524
 
 Retrieves the physics engine simulation state mask flags from the object tracking loop.
 
@@ -167,7 +167,7 @@ Numeric evaluation bitmask tracking active states.
 
 > **GetVelocity**(): `Vector3`
 
-Defined in: game.d.ts:459
+Defined in: game.d.ts:512
 
 Retrieves the ongoing linear velocity vectors representing forward/lateral speed momentum.
 
@@ -185,7 +185,7 @@ Directional speed coordinate matrix vector tracking values.
 
 > **HasGravity**(): `boolean`
 
-Defined in: game.d.ts:425
+Defined in: game.d.ts:478
 
 Confirms whether gravity properties are currently influencing the physical vehicle entity.
 
@@ -203,7 +203,7 @@ Confirms whether gravity properties are currently influencing the physical vehic
 
 > **IsOnGround**(): `boolean`
 
-Defined in: game.d.ts:477
+Defined in: game.d.ts:530
 
 Checks whether the vehicle tires or frame base are actively making physical contact with terrain/surfaces.
 
@@ -221,9 +221,9 @@ Checks whether the vehicle tires or frame base are actively making physical cont
 
 > **VehicleOwnerWasChanged**(): `void`
 
-Defined in: game.d.ts:488
+Defined in: game.d.ts:541
 
-Callback fired or called manually when the driving authority or network owner ID of this vehicle shifts.
+Call it after the vehicle owner changed: sends a `VehicleFinishedMountingEvent` (local player, seat `seat_front_left`) to the vehicle component so the driver mount state is restored.
 
 #### Returns
 

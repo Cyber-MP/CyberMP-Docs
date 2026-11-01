@@ -1,0 +1,41 @@
+---
+title: CDN
+description: Deliver resource files over HTTP.
+---
+
+Clients download every path listed in the resource [`file`](/guides/resources/adding-resource-files) array: CEF UI, `.archive` / `.xl`, tweak files.
+
+[Server Manager plans](/guides/server-manager/subscriptions) from Bronze allow a resource CDN. You host the files and enable it in `server.toml`. The `file` array in `resource.toml` remains required.
+
+## Server process
+
+The dedicated server retains:
+
+- `server.toml` and `server_script`
+- entity stream, events, RPC
+- the `file` allow-list
+
+## CDN contents
+
+The packed client files of every started resource that is not `server_only`: `resource.toml`, `client_script`, `shared_script`, and `file` entries, for example:
+
+- `.archive` packs (vehicles, clothing, weapons)
+- REDmod / ArchiveXL extras
+- images and bundled UI
+
+Keep frequently edited HTML/JS in the resource when using [hot reload](/guides/general/hotreload).
+
+## Configuration
+
+1. Start the server with `--justpack` (optionally `--host=<ip> --port=<port>`). It loads `server.toml`, starts the resources, writes the packed client files and `connect.json` to `cdn_upload/`, and exits.
+2. Upload everything in `cdn_upload/` to the root of your CDN domain.
+3. Set the keys in `server.toml` and start the server normally:
+
+```toml title="server.toml"
+useCdn = true
+cdnUrl = "https://cdn.example.com"
+```
+
+The keys are not in [`ServerConfig`](/reference/server/api/global/config/serverconfig/) (on `mp.config` they fall under its index signature). If the listing plan is below Bronze, the server logs a warning and serves files from its built-in file server.
+
+`core.files` selects optional files of the built-in `cybermp_core` resource. See [`[core]`](/reference/server/configuration).

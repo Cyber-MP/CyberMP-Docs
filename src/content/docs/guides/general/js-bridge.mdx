@@ -1,0 +1,64 @@
+---
+title: JavaScript bridge
+description: Vector overloads and other CyberMP JavaScript bridge limitations.
+slug: guides/general/js-bridge
+---
+import VectorConverter from '../../../../components/VectorConverter.astro';
+
+Client JavaScript talks to the engine through a bridge. The types often list both `(x, y)` and `{ x, y }`. The bridge currently accepts the **object**. Two numbers are ignored: no error, no effect.
+
+## Vectors: always pass an object
+
+If a native is typed as both `(x, y)` and `({ x, y })`, pass the object.
+
+| Method | Does not work | Works |
+| --- | --- | --- |
+| `SetAnchorPoint` | `widget.SetAnchorPoint(0.5, 0.5)` | `widget.SetAnchorPoint({ x: 0.5, y: 0.5 })` |
+| `SetRenderTransformPivot` | `widget.SetRenderTransformPivot(0.5, 0.5)` | `widget.SetRenderTransformPivot({ x: 0.5, y: 0.5 })` |
+| `SetTranslation` | `widget.SetTranslation(100, 200)` | `widget.SetTranslation({ x: 100, y: 200 })` |
+| `SetScale` | `widget.SetScale(2, 2)` | `widget.SetScale({ x: 2, y: 2 })` |
+| `SetSize` | `widget.SetSize(100, 100)` | `widget.SetSize({ x: 100, y: 100 })` |
+
+This applies to most `inkWidget` (and other UI / transform) methods. If a call has no effect, wrap the coordinates before further investigation.
+
+:::caution
+`(x, y)` is a silent no-op. Pass `{ x, y }`.
+:::
+
+```js del={1} ins={2}
+widget.SetAnchorPoint(0.5, 0.5);
+widget.SetAnchorPoint({ x: 0.5, y: 0.5 });
+```
+
+Three-component values follow the same pattern: `{ x, y, z }` rather than `(x, y, z)` when both overloads exist.
+
+<VectorConverter />
+
+## Server tuples vs client objects
+
+Do not unify the shapes:
+
+- Server [`Vector3`](/reference/server/api/global/vector3/) is `[x, y, z]`.
+- Server [`Rotation`](/reference/server/api/global/rotation/) is `[roll, pitch, yaw]`.
+- Many client natives use `{ x, y, z }` or engine `Vector4` / `EulerAngles` instances (see [teleport](/guides/client/teleporting-player)).
+
+```js
+// server
+player.position; // [x, y, z]
+
+// client teleport native
+teleportFacility.Teleport(
+  playerObj,
+  Object.assign(new mp.game.Vector4(), { x, y, z, w: 1 }),
+  Object.assign(new mp.game.EulerAngles(), { roll: 0, pitch: 0, yaw }),
+);
+```
+
+## Other bridge rules
+
+- `override` / `observe` names are REDscript identifiers. A typo fails silently.
+- `observe*Raw` callbacks must stay on the `mp.game` surface — no `fetch`, no `mp.events.emitServer` inside the raw hook.
+- Server `mp.*.create` is synchronous and runs on the event loop. After `await` you are on another turn. See [Creating vehicles](/guides/server/vehicles).
+- Bigints show up as `GameHash`. Prefer [`mp.hashes`](/guides/general/hashes) (`cname` / `tweakdbid` / `resref`) over hand-rolled literals. Vehicle and ped `appearance`: [`cname('default')`](/guides/general/appearances), not `0`.
+
+When a typed overload lists both forms, treat the object form as the source of truth. That is the form production resources use.

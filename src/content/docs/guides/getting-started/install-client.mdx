@@ -1,0 +1,31 @@
+---
+title: Install the client
+description: Install Cyberpunk 2077 and the CyberMP client.
+---
+
+import { Steps } from '@astrojs/starlight/components';
+
+Required: Cyberpunk 2077 and the CyberMP client. The dedicated server is a separate process.
+
+<Steps>
+
+1. ## Cyberpunk 2077
+
+   Steam, GOG, or Epic. The game build must match the CyberMP client build.
+
+2. ## CyberMP client
+
+   Open [cyber.mp/download](https://cyber.mp/download) and press **Download**. The browser downloads the web installer `cybermp-launcher-setup.exe`. Run it: it downloads and installs the CyberMP launcher.
+
+   Start **CyberMP**. Do not start the session from the vanilla game launcher. If the launcher does not find the game, set the path to `Cyberpunk2077.exe` in **Settings** → **Game location** → **Browse**. See [launcher](/guides/game-client/launcher).
+
+   The launcher updates itself.
+
+3. ## Connect
+
+   - **Servers** in the launcher: the public [server list](/guides/server-manager/server-list)
+   - **Play** on [cyber.mp/servers](https://cyber.mp/servers)
+   - [Fast connect](/guides/game-client/fast-connect) link `https://c.cyber.mp/<id>`
+   - [Direct connect](/guides/game-client/direct-connect) to `host:port` (local default `127.0.0.1:2077`)
+
+</Steps>

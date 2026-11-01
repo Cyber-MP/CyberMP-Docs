@@ -1,0 +1,106 @@
+---
+interface Props {
+  lang?: 'en' | 'ru';
+}
+
+const lang = Astro.props.lang === 'ru' ? 'ru' : 'en';
+const ru = lang === 'ru';
+
+const steps = ru
+  ? [
+      {
+        id: 'resourceStart',
+        title: 'resourceStart',
+        ok: 'on / onServer / onCef, commands, RPC register, localStorage',
+        no: 'mp.game.*, GetPlayer, spawn, TweakDB, observe',
+      },
+      {
+        id: 'onTweak',
+        title: 'onTweak',
+        ok: 'mp.game.TweakDB, getRecord / setFlat',
+        no: 'GetPlayer, spawn, телепорт',
+      },
+      {
+        id: 'onInit',
+        title: 'onInit',
+        ok: 'ранний рантайм контейнера',
+        no: 'запросы к миру и игроку',
+      },
+      {
+        id: 'onGameLoaded',
+        title: 'onGameLoaded',
+        ok: 'GetPlayer, системы, observe/override, spawnPlayer',
+        no: 'не считать, что кукла уже в мире: true от spawn означает только старт последовательности',
+      },
+      {
+        id: 'spawned',
+        title: 'onLocalPlayerSpawned',
+        jsOnly: true,
+        ok: 'здоровье, внешность, телепорт, GetGender',
+        no: 'вызывать это, пока GetPlayer() пустой',
+      },
+    ]
+  : [
+      {
+        id: 'resourceStart',
+        title: 'resourceStart',
+        ok: 'on / onServer / onCef, commands, RPC register, localStorage',
+        no: 'mp.game.*, GetPlayer, spawn, TweakDB, observe',
+      },
+      {
+        id: 'onTweak',
+        title: 'onTweak',
+        ok: 'mp.game.TweakDB, getRecord / setFlat',
+        no: 'GetPlayer, spawn, teleport',
+      },
+      {
+        id: 'onInit',
+        title: 'onInit',
+        ok: 'early runtime container setup',
+        no: 'world or player queries',
+      },
+      {
+        id: 'onGameLoaded',
+        title: 'onGameLoaded',
+        ok: 'GetPlayer, systems, observe/override, spawnPlayer',
+        no: 'do not assume the puppet is in the world; spawn true means the sequence started',
+      },
+      {
+        id: 'spawned',
+        title: 'onLocalPlayerSpawned',
+        jsOnly: true,
+        ok: 'health, appearance, teleport, GetGender',
+        no: 'doing any of that while GetPlayer() is empty',
+      },
+    ];
+
+const okLabel = ru ? 'Можно' : 'Safe';
+const noLabel = ru ? 'Нельзя' : 'Unsafe';
+const jsOnlyLabel = ru ? 'только JavaScript' : 'JavaScript only';
+---
+
+<ol class="cmp-timeline" data-lang={lang}>
+  {
+    steps.map((step, i) => (
+      <li class="cmp-timeline__item" id={`lifecycle-${step.id}`}>
+        <span class="cmp-timeline__n" aria-hidden="true">
+          {i + 1}
+        </span>
+        <div class="cmp-timeline__body">
+          <p class="cmp-timeline__title">
+            <code>{step.title}</code>
+            {'jsOnly' in step && step.jsOnly && <span class="cmp-timeline__lang">{jsOnlyLabel}</span>}
+          </p>
+          <p class="cmp-timeline__row">
+            <span class="cmp-timeline__tag cmp-timeline__tag--ok">{okLabel}</span>
+            {step.ok}
+          </p>
+          <p class="cmp-timeline__row">
+            <span class="cmp-timeline__tag cmp-timeline__tag--no">{noLabel}</span>
+            {step.no}
+          </p>
+        </div>
+      </li>
+    ))
+  }
+</ol>

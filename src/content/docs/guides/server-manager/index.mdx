@@ -1,0 +1,33 @@
+---
+title: Server Manager overview
+description: Listings, Master List token, plans.
+---
+
+import { LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+**Server Manager** at [manager.cyber.mp](https://manager.cyber.mp) registers a running dedicated process on the Master List. You sign in with Discord.
+
+| Section | What is there |
+| --- | --- |
+| **Servers** | Your servers and servers you manage. **Create new...** → **Server** creates a listing. |
+| **Benefits** | [Plans](/guides/server-manager/subscriptions) and your current level. |
+| **Settings** | Interface language and account deletion. |
+
+The server page has three tabs:
+
+| Tab | What is there |
+| --- | --- |
+| **Settings** | **Display**: name, description, avatar, banner. **Metadata**: game mode, language, tags, website. **Control**: public visibility, [fast connect](/guides/game-client/fast-connect), connection banner. |
+| **Statistics** | Online history and the 24-hour peak. Gold and higher. |
+| **Manage** | Managers (Silver and higher, the owner adds them), the [private token](/guides/server-manager/tokens), server deletion. |
+
+The listing appears in the [server list](/guides/server-manager/server-list) of the launcher and on [cyber.mp/servers](https://cyber.mp/servers).
+
+Local `127.0.0.1` does not require Server Manager.
+
+<CardGrid>
+  <LinkCard title="Create a server" href="/guides/server-manager/create-server" description="Listing and token" />
+  <LinkCard title="Tokens" href="/guides/server-manager/tokens" description="private_token / Master List" />
+  <LinkCard title="Plans" href="/guides/server-manager/subscriptions" description="Bronze / Silver / Gold / Diamond" />
+  <LinkCard title="Server list" href="/guides/server-manager/server-list" description="Master List in the launcher and on the website" />
+</CardGrid>

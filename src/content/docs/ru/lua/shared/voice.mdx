@@ -1,0 +1,36 @@
+---
+title: Голос (Lua)
+description: Встроенный голосовой чат и мьют из скриптов Lua.
+---
+
+CyberMP может запускать внутриигровой голосовой сервер рядом с игровым. Настраивается в `server.toml`. Глушить игроков можно из серверных скриптов.
+
+## Выключить
+
+```toml title="server.toml"
+disable_voice = true
+```
+
+При `true` голосовой сервер не запускается.
+
+## Заглушить игрока
+
+```lua title="server.lua"
+player:mute(true)  -- mute
+player:mute(false) -- unmute
+
+print(mp.voiceChat.isPlayerMuted(player.id))
+```
+
+| Вызов | Описание |
+| --- | --- |
+| `player:mute(enable)` | Глушит (`true`) или включает (`false`) игрока. |
+| `mp.voiceChat.mutePlayer(playerId, toggle)` | То же по числовому id. |
+| `mp.voiceChat.isPlayerMuted(playerId)` | `true`, если игрок заглушён. |
+| `mp.voiceChat.createChannel(id)` | Создаёт голосовой канал. |
+
+В `mp.voiceChat` передавайте числовые id: объект игрока не преобразуется. Аргумент `enable` позволяет как глушить, так и включать звук.
+
+## Клиентский `voiceChat`
+
+Клиентская среда Lua определяет обёртки `mp.voiceChat.*` (`setActive`, `isPlayerTalking`, `setInputDistance`, `setPlayerVolume`, `bindPushToTalkKey`, `getInputDevices` и другие), но нативы за ними в клиентской сборке закомментированы, поэтому вызовы не работают. Считайте голос по близости встроенным в движок, плюс серверный мьют и флаг в toml.

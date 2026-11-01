@@ -1,0 +1,68 @@
+---
+title: Override (Lua)
+description: Replace game methods and call the next method in the chain.
+---
+
+`mp.override(className, methodName, callback)` replaces a game-method call. The callback decides whether to continue the chain and what result the game receives.
+
+## Setup
+
+Client only. Set `use_game_natives = true` in `resource.toml`. Register hooks once after game classes initialize; see [initialization stages](/lua/client/game-natives).
+
+```toml title="resource.toml"
+client_script = 'client.lua'
+use_game_natives = true
+```
+
+## Registration
+
+```lua title="client.lua"
+mp.registerGameState('onInit', function()
+  mp.override('PlayerPuppet', 'OnDeath', function(self, evt, wrappedMethod)
+    print('Player death callback')
+    return wrappedMethod(evt)
+  end)
+end)
+```
+
+## Arguments
+
+Use the exact class name and REDscript method name from [NativeDB](https://nativedb.red4ext.com/). Select an overloaded method with its full signature, including the suffix after `;`. The parameter name `self` is arbitrary.
+
+- Instance method: `callback(self, arg1, ..., wrappedMethod)`.
+- Static method: `callback(arg1, ..., wrappedMethod)`, without `self`.
+- `wrappedMethod(arg1, ...)` calls the next link in the chain. Do not pass `self`: the instance context is already retained.
+- The continuation is valid only during this call. Do not store it for a timer or another callback.
+
+## Execution order
+
+The callback runs synchronously. `wrappedMethod(...)` continues the chain; with no further replacements, it calls the original method. Multiple replacements run in registration order, and each decides whether to continue. Omitting `wrappedMethod` skips the rest of the chain and the original method.
+
+Return the value expected by the game method. `return false` is a method result here, not a special event-cancellation command. Preserve behavior with `return wrappedMethod(...)`. Calling the same method through `self` can re-enter your override.
+
+Do not use `mp.wait` or defer the continuation. 
+
+## Examples
+
+Static method: this pattern from `cybermp_core` blocks vehicle summoning by returning `true` without continuing. The first argument is `GameInstance`, not `self`.
+
+```lua title="client.lua"
+mp.registerGameState('onInit', function()
+  mp.override('VehicleSystem', 'IsSummoningVehiclesRestricted;GameInstance',
+    function(game, wrappedMethod)
+      return true
+    end)
+end)
+```
+
+`cybermp_core/client/lua/main.lua` also replaces `PlayerPuppet.OnDeath`, `VehicleObject.OnMountingEvent`, and other methods according to `[core.overrides]` flags. Account for active replacements: a continuation can call another hook rather than the vanilla method directly. The examples above illustrate separate patterns; do not register the same replacement repeatedly.
+
+For methods with out parameters, return the main result followed by out values in declaration order. Use multiple return values; `return wrappedMethod(...)` forwards them all.
+
+## Cleanup
+
+Registration does not return a public removal id. Hooks are removed automatically when the resource stops or restarts. For temporary disabling, check a flag inside the callback; a disabled override should call its continuation. Register once per resource instance, not on every command or repeated world load.
+
+## Troubleshooting
+
+Check `use_game_natives`, registration stage, class name, full signature, and whether the game calls the method. Start with an observer and a short log message. If replacement behavior differs, check continuation arguments, omit `self` from the continuation call, and return the expected type.

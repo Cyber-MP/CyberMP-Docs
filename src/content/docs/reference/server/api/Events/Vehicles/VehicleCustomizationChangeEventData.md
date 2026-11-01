@@ -9,6 +9,10 @@ title: "VehicleCustomizationChangeEventData"
 
 Defined in: events.ts:162
 
+:::caution
+The current server sends this payload as an **array**, not as an object with named fields. Read the values by index in this order: `[vehicleID, hashAppearance, isEnabledVehCustomization, lightsColorDefined, lightsColorHue, primaryColorB, primaryColorDefined, primaryColorG, primaryColorR, secondaryColorB, secondaryColorDefined, secondaryColorG, secondaryColorR, isVehicleWasCustomized, isDisabledVehCustomizationByDamage]`.
+:::
+
 ## Properties
 
 <a id="hashappearance"></a>

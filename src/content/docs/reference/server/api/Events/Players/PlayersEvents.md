@@ -229,6 +229,10 @@ Defined in: events.ts:349
 
 Triggered when a player enters a vehicle.
 
+:::caution
+The current server never emits an event named `playerEnterVehicle`. Its handler for this game event is named `enterVehicle` and is called as `(playerId, [vehicleId, seat])`.
+:::
+
 #### Parameters
 
 ##### playerId
@@ -258,6 +262,10 @@ Triggered when a player enters a vehicle.
 Defined in: events.ts:345
 
 Triggered when a player exits a vehicle.
+
+:::caution
+The current server never emits an event named `playerExitVehicle`. Its handler for this game event is named `exitVehicle` and is called as `(playerId, [vehicleId])`.
+:::
 
 #### Parameters
 
@@ -323,7 +331,7 @@ Triggered when a player's knocked down.
 
 ### playerMetaChange()
 
-> **playerMetaChange**(`id`, `key`, `oldValue`, `newValue`): `void`
+> **playerMetaChange**(`id`, `key`, `newValue`, `oldValue`): `void`
 
 Defined in: events.ts:377
 
@@ -333,17 +341,19 @@ Triggered when player meta changed
 
 ##### id
 
-`string`
+`number`
+
+Player ID
 
 ##### key
 
 `string`
 
-##### oldValue
+##### newValue
 
 `any`
 
-##### newValue
+##### oldValue
 
 `any`
 
@@ -457,11 +467,13 @@ Triggered when a player throws a grenade.
 
 ### weaponReload()
 
-> **weaponReload**(`playerId`, `weaponHash`): `boolean` \| `void`
+> **weaponReload**(`playerId`, `data`): `boolean` \| `void`
 
 Defined in: events.ts:369
 
 Triggered when a player reloads their weapon.
+
+The second argument is an array with one element: `[weaponHash]`.
 
 #### Parameters
 
@@ -469,9 +481,9 @@ Triggered when a player reloads their weapon.
 
 `number`
 
-##### weaponHash
+##### data
 
-[`GameHash`](/reference/server/api/hashes/gamehash/)
+\[[`GameHash`](/reference/server/api/hashes/gamehash/)\]
 
 #### Returns
 

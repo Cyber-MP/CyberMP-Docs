@@ -17,7 +17,8 @@ Defined in: index.d.ts:1
 
 Defined in: index.d.ts:21
 
-Triggers an event on client-side.
+Triggers an event on client-side (received there with `mp.events.onCef`).
+Arguments are sent as JSON: they must be JSON-serializable, and a single array argument arrives on the client spread into separate arguments.
 
 #### Parameters
 

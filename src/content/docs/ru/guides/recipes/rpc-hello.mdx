@@ -1,0 +1,77 @@
+---
+title: RPC hello
+description: Полный ресурс, демонстрирующий callServer / register с одним именем RPC.
+---
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import ExampleDownload from '../../../../../components/ExampleDownload.astro';
+
+Полный ресурс, демонстрирующий `callServer` / `register` с одним `name` на сервере и клиенте. `server.js` и `client.js` используют `import`, поэтому ресурс запускает их сборки из `dist/`: клиентские скрипты не резолвят `node_modules`, а серверный `.js` выполняется как обычный скрипт.
+
+<ExampleDownload href="/examples/rpc-hello.zip" lang="ru" />
+
+CEF не вызывает сервер напрямую: [RPC](/ru/guides/general/rpc).
+
+<Tabs syncKey="recipe-rpc">
+<TabItem label="resource.toml">
+
+```toml title="resource.toml"
+client_script = './dist/client.js'
+server_script = './dist/server.js'
+```
+
+</TabItem>
+<TabItem label="package.json">
+
+```json title="package.json"
+{
+  "private": true,
+  "scripts": {
+    "build": "esbuild server.js --bundle --platform=node --format=cjs --outfile=dist/server.js && esbuild client.js --bundle --format=iife --outfile=dist/client.js"
+  },
+  "dependencies": {
+    "@cybermp/rpc-client": "0.2.1",
+    "@cybermp/rpc-server": "0.2.1"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2"
+  }
+}
+```
+
+</TabItem>
+<TabItem label="server.js">
+
+```js title="server.js"
+import { RpcServer } from '@cybermp/rpc-server';
+
+const rpc = new RpcServer({ name: 'hello' });
+
+rpc.register('ping-call', (ctx) => ctx.data);
+
+mp.events.on('playerConnected', (playerId) => {
+  rpc.triggerClient(playerId, 'welcome', { id: playerId });
+});
+```
+
+</TabItem>
+<TabItem label="client.js">
+
+```js title="client.js"
+import { RpcClient } from '@cybermp/rpc-client';
+
+const rpc = new RpcClient({ name: 'hello' });
+
+rpc.on('welcome', (ctx) => {
+  console.log('welcome', ctx.data);
+});
+
+mp.commands.add('ping', async () => {
+  const result = await rpc.callServer('ping-call', { testData: 5 });
+  console.log(result);
+});
+```
+
+</TabItem>
+</Tabs>
+
+`npm install` и `npm run build` создают `dist/server.js` и `dist/client.js`. В архиве они уже есть.

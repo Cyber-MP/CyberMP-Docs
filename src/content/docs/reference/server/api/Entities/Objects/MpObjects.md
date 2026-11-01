@@ -19,7 +19,7 @@ Defined in: objects.ts:27
 
 > **at**(`entity`): [`MpObject`](/reference/server/api/entities/objects/mpobject/)
 
-Defined in: entities.ts:110
+Defined in: entities.ts:108
 
 Retrieves an entity by instance or ID.
 
@@ -35,11 +35,7 @@ Entity instance or ID
 
 [`MpObject`](/reference/server/api/entities/objects/mpobject/)
 
-Entity instance
-
-#### Throws
-
-If entity does not exist
+Entity instance, or `undefined` if the entity does not exist (does not throw)
 
 #### Inherited from
 
@@ -93,7 +89,7 @@ Defined in: objects.ts:29
 
 > **exists**(`entity`): `boolean`
 
-Defined in: entities.ts:100
+Defined in: entities.ts:98
 
 Checks if an entity exists.
 

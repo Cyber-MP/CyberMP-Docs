@@ -1,0 +1,59 @@
+---
+title: Кнопка CEF
+description: Полный ресурс, демонстрирующий HTML emit в обработчик onCef клиента.
+---
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import ExampleDownload from '../../../../../components/ExampleDownload.astro';
+
+Полный ресурс, демонстрирующий HTML-кнопку, которая испускает событие на клиент. Страница с сервером не связывается. `emit` из HTML приходит на клиент (`onCef`). HTML должен быть в `file`. Мышь доходит до страницы только при фокусе CEF: перед нажатием выполните `ui` в F8.
+
+<ExampleDownload href="/examples/cef-button.zip" lang="ru" />
+
+Обзор CEF: [первый CEF](/ru/guides/client/first-cef-ui). Белый экран: [диагностика](/ru/guides/general/troubleshooting).
+
+<Tabs syncKey="recipe-cef">
+<TabItem label="resource.toml">
+
+```toml title="resource.toml"
+client_script = './client.js'
+cef_url = './ui/index.html'
+file = ['./ui/index.html']
+```
+
+</TabItem>
+<TabItem label="client.js">
+
+```js title="client.js"
+let focused = false;
+
+// F8: `ui` включает и выключает фокус клавиатуры и курсор для страницы
+mp.commands.add('ui', () => {
+  focused = !focused;
+  mp.cef.setFocus(focused, focused);
+});
+
+mp.events.onCef('ui:hello', (text) => {
+  console.log('from UI', text);
+  mp.events.emitCef('ui:ack', `got: ${text}`);
+});
+```
+
+</TabItem>
+<TabItem label="ui/index.html">
+
+```html title="ui/index.html"
+<!doctype html>
+<button id="hi">hello</button>
+<pre id="out"></pre>
+<script>
+  document.getElementById('hi').onclick = () => {
+    mp.events.emit('ui:hello', 'from cef');
+  };
+  mp.events.on('ui:ack', (msg) => {
+    document.getElementById('out').textContent = msg;
+  });
+</script>
+```
+
+</TabItem>
+</Tabs>

@@ -1,0 +1,22 @@
+---
+title: Скрипты клиента (Lua)
+description: Lua-скрипты в игровом клиенте CyberMP.
+---
+
+import { LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+`.lua`-файл из `client_script` (или `shared_script`) выполняется в процессе игры после входа, в среде Lua. Глобальная таблица `mp` предоставляет клиентский API.
+
+- В клиентском Lua API нет объектов сущностей: всё принимает числовые id. События стрима передают `(netID, gameID)`; нативам нужны игровые id ([сетевые id](/ru/lua/client/network-and-local)).
+- Игровым классам и хукам (`Game`, `mp.observe`, `mp.registerGameState`) нужен `use_game_natives = true` в `resource.toml` ([игровые нативы](/ru/lua/client/game-natives)).
+- Игровые нативы и спавн вызывайте только после стадии `onGameLoaded`.
+
+<CardGrid>
+  <LinkCard title="События" href="/ru/lua/client/events" description="Стрим, triggerServer, addCef" />
+  <LinkCard title="Игровые нативы" href="/ru/lua/client/game-natives" description="Game, registerGameState, observe, override" />
+  <LinkCard title="Спавн игрока" href="/ru/lua/client/spawning-player" description="mp.client.spawnPlayer" />
+  <LinkCard title="Телепорт" href="/ru/lua/client/teleporting-player" description="TeleportationFacility, меню" />
+  <LinkCard title="Локальное хранилище" href="/ru/lua/client/local-storage" description="mp.localStorage" />
+  <LinkCard title="CEF" href="/ru/lua/client/cef" description="HTML-интерфейс" />
+  <LinkCard title="Discord" href="/ru/lua/client/discord" description="Статус, OAuth" />
+</CardGrid>

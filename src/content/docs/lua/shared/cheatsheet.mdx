@@ -1,0 +1,83 @@
+---
+title: Cheatsheet (Lua)
+description: Required spawn, client, event, and configuration rules for Lua scripts.
+---
+
+Summary of the Lua pages. Spawn and stream failures: [troubleshooting](/lua/shared/cheatsheet#troubleshooting).
+
+## Spawn
+
+```lua
+local function hash(str) return tonumber(str, 10) end
+
+mp.vehicles.create({
+  model = hash(mp.hashes.toTweakdbid('Vehicle.v_standard2_archer_hella')),
+  appearance = hash(mp.hashes.toCname('default')),
+  position = player.position, -- vector3
+  yaw = player.yaw,
+  dimension = player.dimension,
+})
+```
+
+| Field | Helper |
+| --- | --- |
+| Ped / vehicle `model` | `toTweakdbid` (`Character.*`, `Vehicle.*`) |
+| Object `model` | `toResref` (`…\\.ent`) |
+| Pickup `model` | `toTweakdbid` (`Items.*`) |
+| `appearance` | `toCname('default')` unless a specific `.app` name is known |
+
+- Convert every hash with `tonumber(str, 10)`. Never pass the string or `tonumber(str)`.
+- Entity `position` cannot be assigned in Lua.
+- `pool.at(id)` raises for a missing entity: check `pool.exists(id)` first.
+
+## Client
+
+```lua
+mp.registerGameState('onGameLoaded', function() -- needs use_game_natives = true
+  mp.client.spawnPlayer(x, y, z, yaw)
+end)
+
+mp.events.add('vehicleStreamIn', function(netID, gameID)
+  mp.network.getVehicleGameId(netID) -- natives want gameID
+end)
+```
+
+- `use_game_natives = true` is a TOML boolean.
+- Client `require` does not load files: list them in `client_script`.
+- Game methods are called with `:`.
+
+## Events
+
+- Server `addClient` first argument is the sender's player object.
+- Need a return value → a [reply event](/lua/shared/events#request-and-response).
+- Cancel the default action with `return false` (server only), before any `mp.wait`.
+- `mp.events.remove` takes the id returned by `add`, not the function.
+- Exports are called with `:`: `mp.exports.notify:show('hi')`.
+
+## Meta
+
+- `sync` defaults to `false` in Lua. `entity:setMeta` never syncs: use `mp.meta.setEntity(entity, key, value, true)`.
+
+## Lifetime
+
+- On `restart` the Lua state is recreated; in `resourceStop` release only state outside it (e.g. spawned entities), without `mp.wait`.
+- `mp.onUpdateLoop` and `mp.setTimeout` cannot be cancelled: guard them with a flag.
+
+## Config names
+
+`server.toml`: `private_token` (Master List), `disable_voice`. `resource.toml`: `use_game_natives`, `export`, `hot_reload` (read by the watcher only).
+
+<a id="troubleshooting"></a>
+## Troubleshooting
+
+| Symptom | Check |
+| --- | --- |
+| Vehicle or ped is invisible | TweakDB model record, integer hash conversion, nonzero appearance, dimension, streaming radius. |
+| Object does not spawn | `.ent` path, `toResref`, and `tonumber(hash, 10)`. |
+| Game call is missing | `use_game_natives = true` and the initialization stage. |
+| Player is missing after spawn | `spawnPlayer` starts a sequence; wait for `Game.GetPlayer()` in a task with a timeout. |
+| Input freezes after teleport | Close pause and settings menus before moving the player. |
+| Meta does not arrive | Pass `sync = true`; verify the entity's network id and ownership. |
+| Hook does not run | Exact class and method signature, registration stage, and whether that method is actually called. |
+| Duplicate hooks after loading | Register once per resource instance; guard repeated world-load callbacks. |
+| UI file is missing | List the HTML page and every local asset in the manifest's `file` field. |

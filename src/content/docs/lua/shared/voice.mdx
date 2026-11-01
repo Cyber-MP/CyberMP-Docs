@@ -1,0 +1,36 @@
+---
+title: Voice (Lua)
+description: Built-in voice chat and mute from Lua scripts.
+---
+
+CyberMP can run an in-game voice server next to the game server. Configure it in `server.toml`. Mute players from server scripts.
+
+## Turn it off
+
+```toml title="server.toml"
+disable_voice = true
+```
+
+When `true`, the voice server does not start.
+
+## Mute a player
+
+```lua title="server.lua"
+player:mute(true)  -- mute
+player:mute(false) -- unmute
+
+print(mp.voiceChat.isPlayerMuted(player.id))
+```
+
+| Call | Description |
+| --- | --- |
+| `player:mute(enable)` | Mutes (`true`) or unmutes (`false`) the player. |
+| `mp.voiceChat.mutePlayer(playerId, toggle)` | Same by numeric id. |
+| `mp.voiceChat.isPlayerMuted(playerId)` | `true` when the player is muted. |
+| `mp.voiceChat.createChannel(id)` | Creates a voice channel. |
+
+Pass numeric ids to `mp.voiceChat`: a player object is not converted. The `enable` argument controls whether to mute or unmute.
+
+## Client `voiceChat`
+
+The client Lua runtime defines `mp.voiceChat.*` wrappers (`setActive`, `isPlayerTalking`, `setInputDistance`, `setPlayerVolume`, `bindPushToTalkKey`, `getInputDevices` and others), but the natives behind them are commented out in the client build, so the calls do not work. Treat proximity voice as engine-built-in plus server mute and the toml flag.

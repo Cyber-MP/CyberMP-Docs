@@ -1,0 +1,117 @@
+---
+title: Appearances
+description: "Set appearance to the 'default' CName unless a specific look is required. Otherwise clients disagree."
+slug: guides/general/appearances
+---
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+`appearance` is required on `mp.vehicles.create` and `mp.peds.create` ([JavaScript](/guides/server/vehicles), [Lua](/lua/server/vehicles)). It is a **CName**, not a TweakDB record and not an `.ent`.
+
+On the server build it with `mp.hashes.cname` (JavaScript) or `mp.hashes.toCname` (Lua). For a client-only spawn: `mp.game.hashes.toCname` (JavaScript) or `mp.hashes.toCname` (Lua). See [hashes](/guides/general/hashes).
+
+## Default: `'default'`
+
+If you pass `0`, skip the field, or leave it empty, the engine picks an appearance from the entity’s `.app`. That pick is **not stable across clients**: one player can see jacket A, another jacket B, another a different paint.
+
+Set an explicit CName so every client resolves the same look:
+
+:::caution
+`appearance: 0` (or skipping the field) is not “default”. Clients can disagree on the look. Pass the hash of `'default'`.
+:::
+
+`default` is the usual first appearance on character and vehicle `.app` files. Use it unless a specific name exists on **this** entity.
+
+<Tabs syncKey="lang">
+<TabItem label="JavaScript">
+
+```js title="server.js"
+mp.vehicles.create({
+  model: mp.hashes.tweakdbid('Vehicle.v_standard2_archer_hella'),
+  appearance: mp.hashes.cname('default'),
+  position: player.position,
+  yaw: player.yaw,
+  dimension: player.dimension,
+});
+
+mp.peds.create({
+  model: mp.hashes.tweakdbid('Character.CivilianFemaleAverage'),
+  appearance: mp.hashes.cname('default'),
+  position: [x, y, z],
+  yaw: heading,
+});
+```
+
+</TabItem>
+<TabItem label="Lua">
+
+```lua title="server.lua"
+local function hash(str) return tonumber(str, 10) end
+
+mp.vehicles.create({
+  model = hash(mp.hashes.toTweakdbid('Vehicle.v_standard2_archer_hella')),
+  appearance = hash(mp.hashes.toCname('default')),
+  position = player.position,
+  yaw = player.yaw,
+  dimension = player.dimension,
+})
+
+mp.peds.create({
+  model = hash(mp.hashes.toTweakdbid('Character.CivilianFemaleAverage')),
+  appearance = hash(mp.hashes.toCname('default')),
+  position = vector3(x, y, z),
+  yaw = heading,
+})
+```
+
+</TabItem>
+</Tabs>
+
+## A specific look
+
+Names live inside the entity’s `.app` (colors, body variants, NPC outfits). Hash the name, not the `.app` path:
+
+<Tabs syncKey="lang">
+<TabItem label="JavaScript">
+
+```js title="server.js"
+const appearance = mp.hashes.cname('player_01');
+```
+
+</TabItem>
+<TabItem label="Lua">
+
+```lua title="server.lua"
+local appearance = tonumber(mp.hashes.toCname('player_01'), 10)
+```
+
+</TabItem>
+</Tabs>
+
+A name that is not on that `.app` fails the same way as `0`: missing or desynced look. Confirm the string in WolvenKit before shipping it.
+
+## What does not take appearance
+
+`mp.objects.create` and `mp.pickups.create` have no `appearance` field. An object's look is baked into its `.ent`; a pickup is spawned from its TweakDB item record.
+
+A live vehicle or ped has no appearance setter. To change look, destroy and create again with a new CName.
+
+## Client-only spawn
+
+`spawnVehicle` / `spawnPed` (`mp.local` in JavaScript, `mp.client` in Lua) take the appearance as a raw CName hash. Same rule. The client helpers return a string, so convert it:
+
+<Tabs syncKey="lang">
+<TabItem label="JavaScript">
+
+```js title="client.js"
+const appHash = BigInt(mp.game.hashes.toCname('default'));
+```
+
+</TabItem>
+<TabItem label="Lua">
+
+```lua title="client.lua"
+local appHash = tonumber(mp.hashes.toCname('default'), 10)
+```
+
+</TabItem>
+</Tabs>

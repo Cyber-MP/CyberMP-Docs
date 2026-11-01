@@ -9,7 +9,7 @@ title: "CefLoadingFailedError"
 
 Defined in: events.d.ts:107
 
-Payload structure capturing diagnostic crash or layout execution data when a CEF frame fails to load.
+Payload of `loadingFailed`. For an unhandled promise rejection only `type: 'promise_rejection'`, `frameName` and `message` are set.
 
 ## Properties
 
@@ -17,7 +17,7 @@ Payload structure capturing diagnostic crash or layout execution data when a CEF
 
 ### column
 
-> **column**: `string`
+> **column**: `number`
 
 Defined in: events.d.ts:117
 
@@ -41,7 +41,7 @@ The name identifier of the target frame window container.
 
 ### line
 
-> **line**: `string`
+> **line**: `number`
 
 Defined in: events.d.ts:115
 

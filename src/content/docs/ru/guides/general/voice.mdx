@@ -1,0 +1,34 @@
+---
+title: Голос
+description: Встроенный голосовой сервер, mute и отключение голоса.
+---
+
+CyberMP может запустить голосовой сервер рядом с игровым. Настройка — в `server.toml`. Игроков отключают от голоса из скрипта.
+
+## Выключить
+
+```toml title="server.toml"
+disable_voice = true
+```
+
+`true` — голосовой сервер не стартует. Так делают, если голос только в Discord или его нет. См. [конфигурацию](/ru/reference/server/configuration).
+
+## Заглушить игрока
+
+```js title="server.js"
+player.mute();
+```
+
+Это типизированный mute у [`MpPlayer`](/ru/reference/server/api/entities/players/mpplayer/). `unmute` в текущих серверных типах нет. Чтобы вернуть голос, проверьте свою сборку или переподключение.
+
+:::caution
+В текущем серверном рантайме `player.mute()` вызывает натив `mutePlayer` без второго аргумента (`toggle`). Отсутствующий аргумент читается как `false`, поэтому вызов делает игрока **не заглушённым**. Нетипизированный `mp.voiceChat.mutePlayer(player)` ведёт себя так же. Проверяйте результат через `mp.voiceChat.isPlayerMuted(player)`.
+:::
+
+В рантайме есть и нетипизированный `mp.voiceChat`: `mutePlayer(player)`, `isPlayerMuted(player)`, `createChannel(id)`.
+
+## Клиентский `voiceChat`
+
+В текущем `@cybermp/client-types` у `MpClient` поле `voiceChat` **закомментировано**, модуль `voice-chat` в публичный экспорт не входит. Сниппеты в стиле RageMP `mp.voiceChat` на эту поверхность не переносятся. Клиентский рантайм всё ещё объявляет обёртки `mp.voiceChat.*`, но нативы за ними в клиентской сборке закомментированы, поэтому вызовы не работают.
+
+Если типы снова его откроют, он появится в [клиентском API](/ru/reference/client/api/readme/). Пока голос — встроенный движок плюс `mute()` и флаг в toml.

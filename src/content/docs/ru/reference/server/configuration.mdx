@@ -1,0 +1,207 @@
+---
+title: Конфигурация
+description: "Поля server.toml: сеть, слоты, ресурсы и блок [core]."
+---
+import TomlGenerator from '../../../../../components/TomlGenerator.astro';
+
+Скрипты читают разобранный файл как `mp.config` в JavaScript или `json.decode(mp.getServerTomlFile())` в Lua (значения из файла; переопределения из окружения там не учитываются).
+
+<TomlGenerator lang="ru" />
+
+Чтобы получить автодополнение ключей в редакторах с поддержкой схем TOML (например, Even Better TOML), добавьте первой строкой файла:
+
+```toml title="server.toml"
+#:schema https://schemas.cyber.mp/server/schema.json
+```
+
+## Корневые ключи
+
+| Ключ | Тип | Обязательно | Описание |
+| --- | --- | --- | --- |
+| `tcp_host` | строка | да | Адрес привязки TCP, `хост:порт`. |
+| `udp_host` | строка | да | Адрес привязки UDP, `хост:порт`. |
+| `connection_host_addr` | строка | да | Адрес, по которому клиенты достигают сервер (публичный IP или `127.0.0.1` локально). Отправляется в Master List в heartbeat. |
+| `max_players` | целое | нет | Ограничение числа игроков. |
+| `resources` | строка[] | да | Имена каталогов ресурсов, в порядке загрузки. `cybermp_core` — встроенный обязательный ресурс: сервер всегда запускает его первым, в списке его не указывают. |
+| `private_token` | строка | нет | Токен Master List. Публикует процесс в каталог. Пустая строка — без списка. См. [токены](/ru/guides/server-manager/tokens). |
+| `disable_voice` | логический | нет | `true` — голосовой сервер не запускается. См. [голос](/ru/guides/general/voice). |
+| `cef_debug` | логический | нет | Включает отладку страниц CEF удалённым отладчиком Chromium на порту `9222`. |
+| `ep2_dlc_enabled` | логический | нет | `true` оставляет DLC-дополнение игры включённым. Иначе оно отключается. |
+| `duplicatePlayers` | целое | нет | Максимум клиентов с одного IP-адреса. Следующие подключения с этого адреса отклоняются как защита от DDoS. По умолчанию `50`. |
+| `useCdn` | логический | нет | Раздавать файлы ресурсов с `cdnUrl`. Нужен план Bronze или выше. См. [CDN](/ru/guides/dedicated-server/cdn). |
+| `cdnUrl` | строка | нет | Базовый URL загруженного содержимого `cdn_upload/`. |
+| `hot_reload` | логический | нет | Самим сервером не читается. Watcher-ресурсы могут прочитать его из `mp.config`. Opt-in ресурса остаётся в `resource.toml`. |
+
+```toml title="server.toml"
+tcp_host = "0.0.0.0:2077"
+udp_host = "0.0.0.0:2077"
+connection_host_addr = "127.0.0.1:2077"
+
+max_players = 20
+private_token = ""
+
+resources = ['hello_world']
+
+disable_voice = false
+cef_debug = false
+ep2_dlc_enabled = false
+```
+
+Неизвестные ключи файла сохраняются в `mp.config`.
+
+## `[core]` — игровой рантайм
+
+Таблица `[core]` настраивает встроенный ресурс `cybermp_core` для каждого подключающегося клиента: на `playerConnected` его серверный скрипт отправляет клиенту `mp.config.core`. Ключ, которого нет в таблице, остаётся `true`.
+
+:::caution
+Не удаляйте таблицу `[core]` из `server.toml`. Без неё клиентская часть `cybermp_core` не запускается: никнеймы над игроками, ограничения и отслеживание смерти не работают, хуки `[core.overrides]` не ставятся.
+:::
+
+| Ключ | Тип | По умолчанию | Описание |
+| --- | --- | --- | --- |
+| `nametags` | логический | `true` | Показывает `[id] никнейм` над другими игроками в пределах 8 м, если игрок виден или сидит в транспорте. |
+| `death_autostand` | логический | `true` | Когда здоровье после смерти снова больше 0, проигрывает короткую анимацию, которая поднимает персонажа. |
+| `disable_switch_seats` | логический | `true` | Запрет смены мест в транспорте (`DebugData.Vehicle_BlockSwitchSeats`). |
+| `delete_map_objects` | логический | `true` | В текущей версии ни на что не влияет: код удаления объектов мира закомментирован. |
+| `default_gameplay_restrictions` | логический | `true` | Каждые 200 мс накладывает `GameplayRestriction.NoPhotoMode`, `NoScanning`, `BlockFastTravel` и `NoPhone`. |
+| `disable_drop_points` | логический | `true` | Отключает систему точек дропа. |
+| `disable_location_dependent_quests` | логический | `true` | Каждый кадр отмечает квест отслеживаемой записи журнала выполненным, без уведомления. |
+| `disable_garage` | логический | `true` | Выключает состояние гаража при вызове транспорта (`VehicleSummonData.GarageState`). |
+| `files` | строка[] | `[]` | Опциональные файлы встроенного ресурса `cybermp_core`, отправляемые клиентам (`.archive`, `.xl`, скомпилированный `.redscript`). |
+
+```toml title="server.toml"
+[core]
+nametags = true
+death_autostand = true
+disable_switch_seats = true
+delete_map_objects = true
+default_gameplay_restrictions = true
+disable_drop_points = true
+disable_location_dependent_quests = true
+disable_garage = true
+files = [
+  "final.redscript",
+  "new_gamedef.archive",
+  "basegame_no_intro_videos.archive",
+  "GenderAbuseWorld.archive",
+  "CyberMP_PlayerModel.archive",
+  "flatline2dlods.archive",
+  "ReducedLoot.archive",
+  "ReducedLoot.archive.xl",
+  "ArchiveXL",
+]
+```
+
+Независимо от `[core]` `cybermp_core` всегда:
+
+- выключает обучение и включает цензуру наготы;
+- убирает из рук оружие ближнего боя на мотоцикле;
+- снимает кибер-руки при смерти и надевает их снова после возрождения;
+- задаёт синхронизируемую мету игрока `nickname` при подключении, спавне и респавне;
+- в транспорте разрешает переключать камеру пассажира, заводит двигатель, когда игрок садится на место водителя, и включает камеру от третьего лица.
+
+Каждая запись `<name>` в `core.files` выбирает `files/<name>` из списка `file` встроенного ресурса `cybermp_core` (поставляется в папке `data` сервера). Записи, которых нет в этом списке, игнорируются. `"ArchiveXL"` выбирает все файлы `files/ArchiveXL/*`; `"final.redscript"` соответствует `files/final.redscripts`. Произвольные пути не поддерживаются. Файлы ресурса — массив [`file`](/ru/guides/resources/adding-resource-files) в `resource.toml`.
+
+## `[core.overrides]` — хуки движка
+
+| Ключ | Тип | Описание |
+| --- | --- | --- |
+| `change_player_on_death_logic` | логический | Перехватывает `PlayerPuppet.OnDeath`. Ванильная смерть / подъём не выполняются. Режим владеет `playerDeath` и респауном. |
+| `disable_side_quests_notifications` | логический | Блокирует обновления tracked-mappin у `QuestTrackerGameController` и `JournalNotificationQueue`. |
+| `change_vehicles_logic` | логический | Перехватывает ограничение вызова, посадку, визуальную кастомизацию и выход пассажиров при угоне. |
+| `disable_player_inventory_encumbrance` | логический | `PlayerPuppet.EvaluateEncumbrance` — no-op. Вес инвентаря одиночной игры не учитывается. |
+| `player_extended_customization` | логический | Открывает кастомизацию персонажа (`MenuScenario_CharacterCustomizationMirror`) в режиме NewGame. |
+| `disable_time_skip` | логический | `GameTimeUtils.CanPlayerTimeSkip` возвращает false. Сон / ожидание заблокированы. |
+| `disable_turrets` | логический | Турели нельзя сорвать или включить. `TurnOnDevice` применяет смерть. |
+| `disable_surveillance_cameras` | логический | `SurveillanceCamera.TurnOnDevice` применяет смерть. Камеры остаются выключенными. |
+| `disable_vending_machines` | логический | `VendingMachine` и `WeaponVendingMachine` остаются выключенными. |
+| `disable_generic_devices` | логический | `NetrunnerControlPanel`, `NumericDisplay`, `SecurityGateLock` и `SecurityLocker` остаются выключенными. |
+| `disable_no_combat` | логический | Вход в `SecurityArea` игнорируется. `GameplayRestriction.NoCombat` снимается. |
+
+```toml title="server.toml"
+[core.overrides]
+change_player_on_death_logic = true
+disable_side_quests_notifications = true
+change_vehicles_logic = true
+disable_player_inventory_encumbrance = true
+player_extended_customization = true
+disable_time_skip = true
+disable_turrets = true
+disable_surveillance_cameras = true
+disable_vending_machines = true
+disable_generic_devices = true
+disable_no_combat = true
+```
+
+При `change_player_on_death_logic = true` режим реализует смерть и респаун. Иначе движок может поднять куклу до `playerDeath`.
+
+Ключ, которого нет в `[core.overrides]`, выключен.
+
+## Изменение `cybermp_core`
+
+Встроенный ресурс не меняйте. Отключите в `server.toml` ту часть, которую хотите заменить, и реализуйте её в своём ресурсе. Обновление сервера заменяет `data/cybermp_core`, а ваш ресурс остаётся как есть.
+
+Встроенный ресурс лежит в папке сервера, в `data/cybermp_core/`:
+
+| Путь | Содержимое |
+| --- | --- |
+| `dist/main.lua` | Клиентский скрипт с хуками `[core.overrides]` |
+| `dist/client.js` | Клиентский скрипт с функциями `[core]` |
+| `dist/server.js` | Серверный скрипт, который отправляет `[core]` каждому подключившемуся клиенту |
+| `files/` | Опциональные файлы для `core.files`, в том числе `final.redscripts` |
+| `files/src_scripts/` | Исходники redscript для `final.redscripts` |
+
+Скрипты собираются из репозитория `CyberMP-Core-Resource`: `client/lua/main.lua` → `dist/main.lua`, `client/src/` → `dist/client.js`, `server/src/` → `dist/server.js`. Прежде чем заменять ключ, посмотрите там, что он делает.
+
+### Хуки
+
+Каждый ключ `[core.overrides]` — один блок `if overrides_config["<ключ>"] then … end` в `dist/main.lua`. Блок ставит хуки игры через `mp.override` и `mp.observe`. Чтобы заменить хук:
+
+1. Задайте его ключу `false` в `[core.overrides]` или удалите ключ: отсутствующий ключ выключен.
+2. Поставьте свой хук в клиентском скрипте своего ресурса через `mp.override` или `mp.observe` ([хуки в Lua](/ru/lua/client/game-natives#наблюдение-и-подмена)). Хукам игры в Lua нужен `use_game_natives = true` в `resource.toml` этого ресурса.
+3. Перезапустите сервер.
+
+### Файлы
+
+`core.files` выбирает файлы `cybermp_core`, которые скачивают игроки. Чтобы заменить архив или бандл redscript:
+
+1. Уберите его запись из `core.files`.
+2. Положите свой файл в свой ресурс и укажите его в массиве [`file`](/ru/guides/resources/adding-resource-files) его `resource.toml`.
+3. Перезапустите сервер.
+
+### Redscript
+
+Игра загружает один скомпилированный бандл redscript: `final.redscripts`. Клиент хранит скачанные файлы по имени файла, поэтому ваш ресурс отдаёт файл именно с этим именем, а `"final.redscript"` убирается из `core.files`. Иначе два `final.redscripts` столкнутся. Файл с другим именем не загрузится.
+
+```toml title="resources/my-redscript/resource.toml"
+file = [
+  "./final.redscripts"
+]
+```
+
+Ваш бандл заменяет встроенный. Чтобы сохранить встроенный redscript, скомпилируйте его исходники вместе со своими. Они лежат в `data/cybermp_core/files/src_scripts/`: redscript-части ArchiveXL, Codeware, TweakXL и исправления CyberMP.
+
+1. Сложите эти исходники и свои файлы `.reds` в одну папку, например `src_scripts/`.
+2. Скомпилируйте их через `redscript-cli` из [redscript](https://github.com/jac3km4/redscript). Базовый бандл — немодифицированный `final.redscripts` той версии игры, что у игроков (`r6/cache/` в папке игры):
+
+   ```shell
+   redscript-cli compile -s src_scripts -b <немодифицированный final.redscripts> -o final.redscripts
+   ```
+
+## Порядок загрузки ресурсов
+
+Массив `resources` упорядочен. Общие хелперы (Lua utils, hotreload-вотчеры, proxy-ресурсы) указываются **перед** зависящим от них режимом:
+
+```toml
+resources = ['lua-utils', 'lua-proxy', 'hotreload', 'gamemode']
+```
+
+Изменение набора без перезапуска процесса: [`refresh`](/ru/guides/resources/interacting-with-resources) / `start` / `stop` / `restart` в [консоли](/ru/reference/server/console).
+
+Папки ресурсов ищутся в папке `resources/` сервера. Другая папка задаётся аргументом [`-rdir`](/ru/guides/dedicated-server#аргументы-командной-строки).
+
+## Переменные окружения
+
+Непустая переменная окружения переопределяет значение из файла: `CYBERMP_TCP_HOST`, `CYBERMP_UDP_HOST`, `CYBERMP_CONNECTION_HOST_ADDR`, `CYBERMP_MAX_PLAYERS`, `CYBERMP_RESOURCES`, `CYBERMP_PRIVATE_TOKEN`, `CYBERMP_DISABLE_VOICE`, `CYBERMP_CEF_DEBUG`, `CYBERMP_EP2_DLC_ENABLED`, `CYBERMP_DUPLICATE_PLAYERS`, `CYBERMP_USE_CDN`, `CYBERMP_CDN_URL`. `CYBERMP_RESOURCES` — список через запятую, пробел или точку с запятой.
+
+Команды для повторного чтения файла в рантайме нет: перезапустите процесс. Команда консоли `config` выводит действующие значения и их источник.

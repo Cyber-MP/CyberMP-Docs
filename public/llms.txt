@@ -1,0 +1,82 @@
+# CyberMP docs (llms.txt)
+
+Site: https://docs.cyber.mp
+Guides are the source of truth for how to call the API. TypeDoc under /reference/*/api/ is generated from @cybermp/server-types, client-types, browser-types and may lag a build.
+
+## Runtimes
+
+- Server scripts: global `mp` is MpServer. Types: @cybermp/server-types
+- Game client scripts: MpClient. Types: @cybermp/client-types. Natives on mp.game.
+- CEF browser: MpBrowser. Types: @cybermp/browser-types
+Do not mix type packages in one file. English docs are unprefixed; Russian is under /ru/.
+
+## Hashes (critical)
+
+mp.hashes on the server returns GameHash (number/bigint). mp.game.hashes on the client returns strings (toCname / toTweakdbid / toResref).
+
+Two algorithms: tweakdbid (CRC32 + length) and FNV-1a 64 (cname and resref hash the raw string the same way). Use the hasher that matches the field:
+
+- tweakdbid("Character.X" | "Vehicle.X" | "Items.X") → ped/vehicle model
+- resref("base\\\\path\\\\file.ent") → object/pickup model (backslash paths, exact string)
+- cname("default" | appearance name) → appearance
+
+Never hash a Vehicle.* record with cname. Never hash an .ent path with tweakdbid.
+
+## Appearances (critical)
+
+mp.vehicles.create and mp.peds.create require appearance: CName.
+Always set appearance: mp.hashes.cname("default") unless you have a specific name from that entity's .app.
+appearance: 0 / omitted / empty → each client may pick a random look.
+Objects and pickups have no appearance field.
+
+## Server create()
+
+mp.vehicles.create / mp.objects.create / mp.peds.create / mp.pickups.create are synchronous: when the call returns, the entity already exists on the server. There is no Promise. The platform does not spawn it later.
+
+Server scripts run on the Node.js event loop. Platform handlers (on, onClient, resourceStart) are callbacks in a turn of that loop. Until the callback returns, create participates in that same interaction with the platform.
+
+await ends the turn. Code after await (database, Redis, fetch, timers, setImmediate) runs in a later turn — a new entry into the platform, not a continuation of the original event. If spawn follows async work, that later turn is what you have to account for. The platform does not pause its own work across the Promise.
+
+setImmediate is Node's check-phase callback, not a CyberMP API and not a special spawn mode.
+
+Server Vector3 is [x, y, z]. Rotation is [roll, pitch, yaw].
+
+## Client
+
+- Do not call mp.game / spawn before mp.game.onGameLoaded. TweakDB after onTweak.
+- mp.game natives exist only if the resource.toml has use_game_natives = true.
+- Player spawn: mp.local.spawnPlayer(x, y, z, yaw). true means sequence started; poll GetPlayer().
+- Local-only entities: mp.local.spawnPed/Vehicle/Object — other players do not see them.
+- Stream events (vehicleStreamIn, …) give (netID, gameID). Natives want game ids. Convert with mp.network.getVehicleGameId etc.
+- inkWidget / many natives: pass { x, y } or { x, y, z }, not (x, y). Separate numbers are ignored.
+
+## Events / RPC
+
+- Server onClient first argument is the MpPlayer.
+- Return values: @cybermp/rpc-server, rpc-client, rpc-browser (same name on all sides). Browser→server needs RpcClient on the game client to forward.
+- Cancellable platform events (typed void | boolean): return false from a synchronous server handler (Lua: before any mp.wait). mp.cancelEvent() and mp.events.cancel() were removed.
+- Meta: setMeta(key, value, true) to sync to clients. Read on the client with mp.meta.getEntityMeta(netID, key) after stream-in.
+
+## Config (server.toml)
+
+Required: tcp_host, udp_host, connection_host_addr, max_players, resources[].
+private_token (Master List), disable_voice, cef_debug.
+Custom death/vehicles: [core.overrides] change_player_on_death_logic, change_vehicles_logic.
+
+## Official RPC packages
+
+rpc-server, rpc-client, rpc-browser, rpc-router, rpc-superjson, rpc-react, rpc-router-react, rpc-router-tanstack-query, rpc-otel.
+Bundle client code into the files listed in resource.toml (clients get only those files). Server scripts can require() from node_modules inside the resource; the server does not run npm install.
+
+## Cheatsheet
+
+https://docs.cyber.mp/guides/getting-started
+https://docs.cyber.mp/guides/general/cheatsheet
+https://docs.cyber.mp/guides/general/api-map
+https://docs.cyber.mp/guides/general/hashes
+https://docs.cyber.mp/guides/scripting/dimensions
+https://docs.cyber.mp/guides/scripting/local-storage
+https://docs.cyber.mp/guides/resources/adding-resource-files
+https://docs.cyber.mp/guides/general/troubleshooting
+https://docs.cyber.mp/reference
+https://docs.cyber.mp/guides/recipes

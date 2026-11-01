@@ -1,0 +1,73 @@
+---
+title: Pools and entity objects (Lua)
+description: mp.players, mp.vehicles, mp.objects, mp.peds, mp.pickups and entity fields in Lua.
+---
+
+## Pools
+
+`mp.players`, `mp.vehicles`, `mp.objects`, `mp.peds`, `mp.pickups`.
+
+| Call | Description |
+| --- | --- |
+| `pool.exists(entityOrId)` | `true` when the entity exists. |
+| `pool.at(entityOrId)` | Entity object for the id. Raises `Entity does not exist` when it does not, so call `exists` first. |
+| `pool.toArray()` | All entities of the pool as entity objects. |
+| `pool.create(options)` | Creates a synced entity and returns its object. Not on `mp.players`. See [vehicles](/lua/server/vehicles) and [objects, peds, pickups](/lua/server/world-entities). |
+| `pool.destroy(entityOrId)` | Removes the entity. Not on `mp.players`. |
+| `mp.players.kick(playerOrId, reason)` | Kicks the player. |
+
+```lua title="server.lua"
+for _, player in ipairs(mp.players.toArray()) do
+  player:trigger('announce', 'Round starting')
+end
+
+if mp.vehicles.exists(id) then
+  mp.vehicles.at(id).dimension = 0
+end
+```
+
+## Entity objects
+
+An entity object is a table `{ id = <network id> }` with a metatable. Every field read asks the server for the current value. Two objects for the same entity are different tables: compare `id`, not the objects.
+
+**All entities**
+
+| Field | Description |
+| --- | --- |
+| `id` | Network id. |
+| `type` | `1` player, `2` vehicle, `3` object, `4` ped, `5` pickup, `6` door, `0` not found. |
+| `exist` | `true` while the entity exists. |
+| `position` | `vector3`. Read only. |
+| `rotation` | `vector3`: `x` roll, `y` pitch, `z` yaw. Read only. |
+| `yaw` | Heading. Read only. |
+| `dimension` | Read and write. [Dimensions](/lua/server/entities#dimensions). |
+| `streamingRadius` | Read and write. |
+| `owner` | Player object of the client that owns the entity, or `-1` when no client owns it. Writable for non-players: assign a player object or id. |
+| `firstOwner` | The first owner, or `-1`. |
+| `entity:getMeta(key)` | Same as `mp.meta.getPlayer` / `mp.meta.getEntity`. |
+| `entity:setMeta(key, value)` | Sets meta **without** syncing it to clients. To sync, use [`mp.meta`](/lua/shared/meta) with `sync = true`. |
+
+Only `dimension`, `streamingRadius` and `owner` can be assigned. Assigning any other field, `position` included, only stores it on that Lua table. It does not move or change the entity.
+
+**Players:** `nickname`, `ping`, `ip`, `health`, `velocity`, `vehicle` and `lastVehicle` (vehicle object or `nil`), methods `player:kick(reason)`, `player:trigger(eventName, ...)` (sends a client event), `player:mute(enable)` ([voice](/lua/shared/voice)).
+
+**Vehicles:** `model`, `appearance`, `health`, `velocity`, `angularVelocity`, `seats`, `lastSeats`, `getPlayerInSeat`, `getLastPlayerInSeat`, `destroy`: see [vehicles](/lua/server/vehicles#seats-and-lifetime).
+
+**Peds:** `model`, `appearance`, `health`, `ped:destroy()`. **Objects:** `model`, `object:destroy()`. **Pickups:** `model`, `pickupType`, `pickup:destroy()`.
+
+## `mp.v1`
+
+Low-level calls used by the pools and entity objects, by numeric id. Prefer the pools. A few have no wrapper: `mp.v1.getPlayersCount()` returns the number of players, `mp.v1.getEntityMaxHealth(id)` the entity's maximum health.
+
+<a id="dimensions"></a>
+## Dimensions
+
+Every synchronized entity has a `dimension`, with `0` for the shared world. Clients stream entities only in the same dimension and within the streaming radius. Negative dimensions are ignored. Moving to another dimension keeps the network id.
+
+```lua title="server.lua"
+player.dimension = houseId + 1000000
+vehicle.dimension = player.dimension
+mp.meta.setPlayer(player, 'dimension', player.dimension, true)
+```
+
+The client has no direct local-player dimension property; send the value through synced player meta when needed. Local entities created with `mp.client.spawn*` have no dimension: remove them yourself when changing worlds. A cross-dimension teleport usually needs a loading overlay.

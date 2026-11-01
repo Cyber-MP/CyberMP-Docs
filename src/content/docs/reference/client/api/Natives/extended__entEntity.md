@@ -5,21 +5,22 @@ prev: false
 title: "extended__entEntity"
 ---
 
-Defined in: game.d.ts:349
+Defined in: game.d.ts:402
 
 Extended by CyberMP `entEntity` class
 
 ## Methods
 
-<a id="getmorphweights"></a>
+<a id="getmorphtargets"></a>
 
-### GetMorphWeights()
+### GetMorphTargets()
 
-> **GetMorphWeights**(): `entMorphTargetWeightEntry`[]
+> **GetMorphTargets**(): `entMorphTargetWeightEntry`[]
 
-Defined in: game.d.ts:354
+Defined in: game.d.ts:407
 
 Obtains lists specifying explicit weight indexes controlling facial custom blendshapes or structural targets.
+The method is registered in the engine as `GetMorphTargets` (the types call it `GetMorphWeights`, which does not exist). It always returns the morph weights of the local player, whatever entity it is called on.
 
 #### Returns
 
@@ -35,7 +36,7 @@ Array listing mesh blend weights structures.
 
 > **ReassembleWithComponents**(`arr`): `void`
 
-Defined in: game.d.ts:360
+Defined in: game.d.ts:413
 
 Forces the entity container model frame structural layers to assemble and update via selected visual components arrays.
 
@@ -59,7 +60,7 @@ List containing components structures to attach.
 
 > **TeleportPed**(`position`, `rotation?`): `void`
 
-Defined in: game.d.ts:367
+Defined in: game.d.ts:420
 
 Teleports a physical game object / Pedestrian directly to specific vector coordinates.
 

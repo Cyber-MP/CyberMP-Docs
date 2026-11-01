@@ -1,0 +1,101 @@
+---
+title: События (Lua)
+description: Платформенные события, addClient, triggerClient и отмена стандартного действия в Lua.
+---
+import EventFilter from '../../../../../components/EventFilter.astro';
+
+Серверные скрипты получают платформенный и сетевой трафик через `mp.events`. Сюда приходят подключения, смерти, взаимодействие с транспортом и пакеты клиентов.
+
+## Платформенные и свои события
+
+`mp.events.add(name, fn)` регистрирует обработчик платформенных событий и своих событий внутри процесса сервера. Возвращает id обработчика. `mp.events.trigger(name, ...)` отправляет локальное событие.
+
+```lua title="server.lua"
+mp.events.add('playerConnected', function(playerId, tempId)
+  print('Player connected - network id', playerId)
+end)
+
+mp.events.add('logServerActivity', function(action, details)
+  print(('[Activity Log] %s | %s'):format(action, details))
+end)
+
+mp.events.trigger('logServerActivity', 'Database', 'Initial connection established.')
+```
+
+Массивы данных приходят таблицами Lua с индексами от `1`:
+
+```lua title="server.lua"
+mp.events.add('enterVehicle', function(playerId, data)
+  local vehicleId, seat = data[1], data[2]
+  print('enter', playerId, vehicleId, seat)
+end)
+```
+
+## Пакеты с клиента
+
+Клиентский скрипт отправляет пакет через `mp.events.triggerServer`. Сервер принимает его через `mp.events.addClient`.
+
+| Вызов | Обработчик |
+| --- | --- |
+| `mp.events.addClient(name, fn)` | `fn(player, ...)`: объект игрока-отправителя или id, если игрока уже нет. |
+| `mp.events.addClientRaw(name, fn)` | `fn(playerId, ...)` с числовым id. |
+
+Не берите id игрока из данных события: клиент может его подделать. Используйте первый аргумент.
+
+```lua title="server.lua"
+mp.events.addClient('requestVehicleSpawn', function(player, modelName)
+  print(('%s (%d) requested %s'):format(player.nickname, player.id, modelName))
+end)
+```
+
+Чтобы вернуть значение, нужно ответное событие: [сетевые события](/ru/lua/shared/events#запрос-и-ответ).
+
+## События на клиент
+
+| Вызов | Описание |
+| --- | --- |
+| `mp.events.triggerClient(playerOrId, name, ...)` | Событие одному клиенту (там `mp.events.addServer`). `-1` отправляет всем игрокам. Возвращает `false` и печатает сообщение, если объекта игрока уже нет. |
+| `player:trigger(name, ...)` | То же, на объекте игрока. |
+| `mp.events.triggerClientRaw(playerId, name, ...)` | То же с числовым id. |
+| `mp.events.triggerUnreliable(playerOrId, name, bps, ...)` | По ненадёжному каналу; `bps` — частота отправки, передаётся сетевому слою. `triggerUnreliableRaw` принимает числовой id. |
+
+```lua title="server.lua"
+mp.events.add('playerSpawn', function(playerId)
+  mp.events.triggerClient(playerId, 'serverNotification', 'Welcome back to Night City.')
+end)
+```
+
+## Снятие обработчиков
+
+`mp.events.remove(name, id)` принимает id, который вернули `add` или `addClient`. Передача функции ничего не делает.
+
+- Сначала ищутся обработчики `add` с этим именем, и только если их нет — обработчики `addClient`. Если одно имя используется в обоих, обработчик `addClient` снять нельзя.
+- Для имени, которое ни разу не регистрировалось, вызов падает с ошибкой.
+
+При остановке ресурса снимаются все обработчики.
+
+## Отмена стандартного действия
+
+Верните `false` из обработчика платформенного события, чтобы движок пропустил своё действие (обычное лечение, нокдаун, дверь, взрыв). Любое другое значение или его отсутствие действие не отменяет.
+
+```lua title="server.lua"
+mp.events.add('playerHealing', function(playerId)
+  return false
+end)
+```
+
+Обработчик выполняется корутиной, которая стартует сразу. Возвращайте `false` до любого `mp.wait`: после него событие уже завершено и возвращаемое значение игнорируется. Если обработчиков несколько, достаточно одного `false`.
+
+`mp.events.cancel()` удалён. Замените его на `return false`.
+
+`mp.events.isCanceled()` после `mp.events.trigger` возвращает `true`, если обработчик отменил это событие.
+
+Отмена без согласованного состояния на клиенте рассинхронизирует игрока (дверь выглядит открытой, а состояние ещё закрыто). Сначала проверьте на одном случае.
+
+## Каталог событий
+
+Ниже приведён полный каталог платформенных событий. Подписывайтесь через `mp.events.add(name, fn)`; используйте поиск по имени и отметки отменяемых событий.
+
+Например, `playerConnected` передаёт `(playerId, tempId)`. Обработчики `addClient` получают объект игрока-отправителя, а массивы в Lua становятся таблицами с индексами от `1`. Правила передачи данных: [данные событий](/ru/lua/shared/events#payloads).
+
+<EventFilter lang="ru" />

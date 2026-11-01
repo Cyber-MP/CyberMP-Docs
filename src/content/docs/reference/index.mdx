@@ -1,0 +1,26 @@
+---
+title: Reference
+description: Map of the TypeDoc API trees.
+slug: reference
+---
+import ApiMap from '../../../components/ApiMap.astro';
+
+TypeDoc lists every type from `@cybermp/server-types`, `client-types`, and `browser-types`. Use this page to select a tree. Call patterns are documented in the guides.
+
+<ApiMap />
+
+## `create()` and hashes
+
+| TypeDoc | Guide |
+| --- | --- |
+| [`MpVehicles.create`](/reference/server/api/entities/vehicles/mpvehicles/#create) | [Vehicles](/guides/server/vehicles) |
+| [`MpObjects`](/reference/server/api/entities/objects/mpobjects/) / [`MpPeds`](/reference/server/api/entities/peds/mppeds/) / [`MpPickups`](/reference/server/api/entities/pickups/mppickups/) | [World entities](/guides/server/world-entities) |
+| [`MpHashes`](/reference/server/api/global/mphashes/) | [Hashes](/guides/general/hashes), [appearances](/guides/general/appearances) |
+| [`MpGame`](/reference/client/api/global/mpgame/) | [Natives](/reference/client/working-with-game-natives), [lifecycle](/guides/client/lifecycle) |
+| Config / console | [server.toml](/reference/server/configuration), [server console](/reference/server/console), [client console](/reference/client/console) |
+| Local storage | [guide](/guides/scripting/local-storage), [`MpLocalStorage`](/reference/client/api/global/mplocalstorage/) |
+| Dimensions | [guide](/guides/scripting/dimensions) |
+
+If the tree still lists `spawnLocalPlayer`, the docs install uses an older `client-types`. Current guides use `mp.local` / `mp.network`.
+
+Spawn failures: [troubleshooting](/guides/general/troubleshooting).

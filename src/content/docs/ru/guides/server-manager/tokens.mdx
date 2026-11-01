@@ -1,0 +1,20 @@
+---
+title: Токены
+description: Токен Master List в private_token.
+---
+
+Server Manager выдаёт токен **Master List** при [создании карточки](/ru/guides/server-manager/create-server). Его видит только владелец сервера: **Manage** → **Private token**. Менеджерам он не показывается.
+
+С токеном выделенный процесс примерно раз в 2 минуты отправляет на `https://api.cyber.mp/servers` heartbeat со своим `connection_host_addr`.
+
+Поле: [`private_token`](/ru/reference/server/configuration) или переменная окружения `CYBERMP_PRIVATE_TOKEN`. Пустая строка: процесс не публикуется.
+
+```toml title="server.toml"
+private_token = "your-master-list-token"
+```
+
+Храните значение на хосте. Не включайте его в клиентский ресурс.
+
+Срока действия у токена нет. **Reset** выдаёт новый, не чаще раза в час. Старый токен сразу перестаёт работать, поэтому обновите `server.toml` и перезапустите процесс.
+
+Если карточка остаётся offline: токен отсутствует, сброшен в Server Manager или выдан на другую карточку. Публикация также отклоняется, пока владелец сервера забанен. См. [список серверов](/ru/guides/server-manager/server-list#сервера-нет-в-списке).

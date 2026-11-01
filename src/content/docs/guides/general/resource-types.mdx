@@ -1,0 +1,115 @@
+---
+title: Resource types
+description: ".ent paths, TweakDB records, and values that create() does not accept."
+slug: guides/general/resource-types
+---
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+`model` on a spawn is a **TweakDB record** or an **entity template** (`.ent`). Hash it with the matching [hasher](/guides/general/hashes).
+
+## `.ent`
+
+An entity template in the game archives: a prop, a container, sometimes a character mesh setup. `mp.objects.create` requires this form. `mp.pickups.create` does not: a pickup's `model` is a TweakDB item record (`Items.*`, hashed with `tweakdbid`).
+
+The path uses backslashes. In a JavaScript or Lua string literal each one is written as `\\`. The example spawns a metal gate, the model the CyberMP test resources use:
+
+<Tabs syncKey="lang">
+<TabItem label="JavaScript">
+
+```js title="server.js"
+const gate = mp.hashes.resref(
+  'base\\gameplay\\devices\\doors\\gates\\appearances\\w300_h250_mall_metal.ent',
+);
+
+mp.objects.create({
+  model: gate,
+  position: [x, y, z],
+});
+```
+
+</TabItem>
+<TabItem label="Lua">
+
+```lua title="server.lua"
+local gate = tonumber(mp.hashes.toResref(
+  'base\\gameplay\\devices\\doors\\gates\\appearances\\w300_h250_mall_metal.ent'
+), 10)
+
+mp.objects.create({
+  model = gate,
+  position = vector3(x, y, z),
+})
+```
+
+</TabItem>
+</Tabs>
+
+Forward slashes, a filename without the archive folder, or `resref` of a `.mesh` do not spawn.
+
+## TweakDB records
+
+Named data in TweakDB, not a file path. Typical prefixes:
+
+| Prefix | Use |
+| --- | --- |
+| `Character.*` | Ped / NPC `model` |
+| `Vehicle.*` | Vehicle `model` |
+| `Items.*` | Items (natives, inventory, not `mp.objects`) |
+
+<Tabs syncKey="lang">
+<TabItem label="JavaScript">
+
+```js title="server.js"
+mp.peds.create({
+  model: mp.hashes.tweakdbid('Character.CivilianFemaleAverage'),
+  appearance: mp.hashes.cname('default'),
+  position: [x, y, z],
+});
+
+mp.vehicles.create({
+  model: mp.hashes.tweakdbid('Vehicle.v_standard2_archer_hella'),
+  appearance: mp.hashes.cname('default'),
+  position: [x, y, z],
+});
+```
+
+</TabItem>
+<TabItem label="Lua">
+
+```lua title="server.lua"
+local function hash(str) return tonumber(str, 10) end
+
+mp.peds.create({
+  model = hash(mp.hashes.toTweakdbid('Character.CivilianFemaleAverage')),
+  appearance = hash(mp.hashes.toCname('default')),
+  position = vector3(x, y, z),
+})
+
+mp.vehicles.create({
+  model = hash(mp.hashes.toTweakdbid('Vehicle.v_standard2_archer_hella')),
+  appearance = hash(mp.hashes.toCname('default')),
+  position = vector3(x, y, z),
+})
+```
+
+</TabItem>
+</Tabs>
+
+The record already points at an `.ent` and an `.app`. Do not pass those files into `create`.
+
+## `.app` and the rest
+
+| Type | Role |
+| --- | --- |
+| `.app` | Appearance resource. Names inside it (`default`, colors, variants) go through `cname` as [appearance](/guides/general/appearances). |
+| `.mesh`, `.mi`, `.rig`, `.anims` | Mesh, material, skeleton, anims. The `.ent` / TweakDB record already references them. |
+
+`create` has no field for those files. If only a `.mesh` path is available, locate the `.ent` or the TweakDB record that uses it.
+
+## Where to look them up
+
+- Archive paths (`.ent`, `.app`): the asset browser of [WolvenKit](https://wiki.redmodding.org/wolvenkit).
+- TweakDB record names: the [Tweak Browser](https://wiki.redmodding.org/wolvenkit/wolvenkit-app/editor/tweak-browser) of WolvenKit, or in the game through `mp.game.TweakDB` (JavaScript) / `TweakDB` (Lua) after the `onTweak` stage.
+- Game classes and functions (natives): [NativeDB](https://nativedb.red4ext.com/). It does not list TweakDB records.
+
+Copy the path or record exactly. A typo hashes to a valid-looking number that points at nothing.

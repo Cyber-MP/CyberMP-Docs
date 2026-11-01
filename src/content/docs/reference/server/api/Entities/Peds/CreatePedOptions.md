@@ -39,6 +39,8 @@ Defined in: peds.ts:24
 
 Defined in: peds.ts:22
 
+Default: `200`
+
 ***
 
 <a id="model"></a>
@@ -68,3 +70,5 @@ Defined in: peds.ts:21
 > `optional` **yaw?**: `number`
 
 Defined in: peds.ts:23
+
+Default: `0`

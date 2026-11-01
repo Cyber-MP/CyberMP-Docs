@@ -1,0 +1,39 @@
+---
+title: Discord
+description: Rich presence and OAuth on the game client via mp.discord.
+slug: guides/client/discord
+---
+
+The client communicates with the Discord overlay / desktop app through `mp.discord`. Client-only. No server Discord object exists in the types.
+
+## Rich presence
+
+```js title="client.js"
+mp.discord.updateRichPresence('Night City', 'Walking the Glen');
+mp.discord.updateRichPresence(); // empty state and details
+```
+
+`state` and `details` are optional strings; a missing value becomes an empty string. The call without arguments does not remove the presence: the CyberMP logo and timer stay, only the two text lines are emptied. Keep them short. Call again when the activity changes (job, interior, death).
+
+## OAuth code
+
+```js title="client.js"
+let code = '';
+const timer = mp.setInterval(() => {
+  code = mp.discord.getCodeAuthorization('YOUR_APP_ID', '["identify"]');
+  if (code) {
+    mp.clearInterval(timer);
+    mp.events.emitServer('discordCode', code);
+  }
+}, 1000);
+```
+
+`getCodeAuthorization(appId, scopes)` returns an **authorization code**, not an access token. Send it to **your server** and exchange it with Discord's token endpoint. Do not embed a Discord client secret in the client resource.
+
+The request is asynchronous: the first call starts it and returns `''`. Call again until the code arrives (a new request is sent at most every 5 seconds). The code is returned once, then the next call returns `''` again.
+
+`scopes` is a **JSON array** in a string, e.g. `'["identify","guilds"]'` — not a space-separated list. Register the application on the Discord developer portal and use that app id.
+
+`getOAuth2Token(appId)` takes only the app id and returns an **access token** from the Discord Game SDK. It is also asynchronous (empty string until the token arrives), and the SDK is initialized once with the first app id passed.
+
+If Discord is not running, both calls keep returning an empty string. Validate the value before use.

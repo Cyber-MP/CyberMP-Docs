@@ -1,0 +1,47 @@
+---
+title: HTTP and utilities (Lua)
+description: mp.sendHttpRequest, bcrypt, console variables, and server.toml in Lua.
+---
+
+## HTTP
+
+```lua title="server.lua"
+mp.sendHttpRequest('https://example.com/api', function(status, body, headers, err)
+  if err then
+    print('request failed', err)
+    return
+  end
+  local data = json.decode(body)
+end, 'POST', json.encode({ hello = 'world' }), { ['Content-Type'] = 'application/json' })
+```
+
+`mp.sendHttpRequest(url, callback, method, data, headers, options)`. `method` defaults to `'GET'`, `data` is a string, `headers` a table. `options.followLocation` (default `true`) follows redirects. The callback gets `status, body, headers, err`: on failure `body` is `nil` and `err` holds the error text. A request without a response for 5 seconds fails.
+
+## Passwords
+
+```lua title="server.lua"
+local stored = mp.generateBcryptHash('secret')
+print(mp.verifyBcryptHash('secret', stored)) -- true
+```
+
+`mp.generateBcryptHash(password)` returns the hash as a string. `mp.verifyBcryptHash(password, hash)` returns `true` when the password matches.
+
+## Console variables
+
+| Call | Description |
+| --- | --- |
+| `mp.getVar(name)` | Value as a string. Raises an error for a variable that does not exist. |
+| `mp.getVarInt(name)` | Value as an integer (`'true'` reads as `1`), `0` for a variable that does not exist. |
+| `mp.addVar(name, value)` | Sets a variable, like the console command `add_var`. Pass `value` as a string: the number `0` is sent as `nil` and the call fails. |
+
+## Configuration
+
+`mp.getServerTomlFile()` returns `server.toml` as a JSON string, `mp.resources.getTomlFile(name)` a resource's `resource.toml`. Parse them with `json.decode`.
+
+## Other
+
+| Call | Description |
+| --- | --- |
+| `mp.hashes.toCname(name)` / `toTweakdbid(name)` / `toResref(name)` | Hash as a decimal string. `mp.getHashFromName(name, type)` with `'cname'`, `'tweakdbid'` or `'resref'` does the same. [Numbers and hashes](/lua/shared/hashes). |
+| `mp.isServer()` | `true`. |
+| `mp.getTimer()` | Millisecond counter. [Scheduler](/lua/shared/scheduler). |

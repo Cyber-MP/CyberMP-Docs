@@ -7,4 +7,4 @@ title: "ServerVector4"
 
 > **ServerVector4** = \[`number`, `number`, `number`, `number`\]
 
-Defined in: mp.d.ts:11
+Defined in: mp.d.ts:16

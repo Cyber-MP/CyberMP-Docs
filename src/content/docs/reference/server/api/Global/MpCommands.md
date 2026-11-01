@@ -17,7 +17,7 @@ Defined in: commands.ts:3
 
 Defined in: commands.ts:9
 
-Register a command in the server scope.
+Register a command
 
 #### Parameters
 
@@ -32,6 +32,30 @@ Command name without "/".
 (`player`, `args`) => `void`
 
 Callback with player and args.
+
+#### Returns
+
+`void`
+
+***
+
+<a id="remove"></a>
+
+### remove()
+
+> **remove**(`commandName`): `void`
+
+Defined in: commands.ts:18
+
+Unregister a command
+
+#### Parameters
+
+##### commandName
+
+`string`
+
+Command name without "/".
 
 #### Returns
 

@@ -1,0 +1,84 @@
+---
+title: Objects, peds, and pickups
+description: mp.objects, mp.peds, and mp.pickups.
+slug: guides/server/world-entities
+---
+
+The server also creates objects, peds, and pickups. Create on the server. Nearby clients in the same `dimension` stream them in.
+
+`model` is a [hash](/guides/general/hashes): object `.ent` via `resref`, ped TweakDB `Character.*` via `tweakdbid`, pickup TweakDB item record (`Items.*`) via `tweakdbid` — the client spawns a pickup as an item drop of that record. Peds also need [appearance](/guides/general/appearances) — use `mp.hashes.cname('default')` unless you have a specific look.
+
+Server `position` is always `[x, y, z]`. Examples: [drop](/guides/recipes/drop), [NPC](/guides/recipes/npc). If the entity does not appear: [troubleshooting](/guides/general/troubleshooting).
+
+## Objects
+
+```js title="server.js"
+const gate = mp.hashes.resref(
+  'base\\gameplay\\devices\\doors\\gates\\appearances\\w300_h250_mall_metal.ent',
+);
+
+const object = mp.objects.create({
+  model: gate,
+  position: [x, y + 0.5, z],
+  yaw: 0,
+  dimension: 0,
+  dynamic: false,
+});
+
+object.setMeta('dropId', dropId, true);
+```
+
+`create` is synchronous and runs in the current event-loop turn — same interaction as [vehicles](/guides/server/vehicles). After `await` you are already on another turn.
+
+```js
+if (mp.objects.exists(id)) {
+  const obj = mp.objects.at(id);
+  obj.destroy();
+}
+
+for (const o of mp.objects.toArray()) {
+  if (o.getMeta('dropId')) o.destroy();
+}
+```
+
+On the client: `objectStreamIn` / `objectStreamOut` with `(netID, gameID)`. Convert ids with [`mp.network`](/guides/client/network-and-local).
+
+## Peds (NPCs)
+
+```js title="server.js"
+const ped = mp.peds.create({
+  model: mp.hashes.tweakdbid('Character.CivilianFemaleAverage'),
+  appearance: mp.hashes.cname('default'),
+  position: [x, y, z],
+  yaw: heading,
+  health: 5000,
+  dimension: 0,
+});
+
+ped.setMeta('npcId', npcId, true);
+ped.setMeta('npcName', name, true);
+```
+
+Write gameplay ids on **meta** (`sync = true`) so the client can read them on `pedStreamIn`. Destroy with `ped.destroy()` or `mp.peds.destroy(id)`. Iterate `mp.peds.toArray()` on `resourceStop` so a restart does not leave leftover peds.
+
+## Pickups
+
+```js
+const pickup = mp.pickups.create({
+  model: mp.hashes.tweakdbid('Items.Preset_Nue_Default'), // item record, not an .ent
+  type: 2, // PickupType: Clothes = 1, Weapon = 2, Other = 3
+  position: [x, y, z],
+  yaw: 0,
+  dimension: 0,
+});
+```
+
+Same streaming rules. Use pickups when the engine should treat the item as a pickup. Use objects when the item is a prop and interaction is your own (distance check, RPC).
+
+Which file or TweakDB record to pass: [resource types](/guides/general/resource-types).
+
+## Shared entity fields
+
+Every entity (`MpPlayer`, `MpVehicle`, `MpObject`, `MpPed`, `MpPickup`) has `id`, `dimension`, `streamingRadius`, `position`, `yaw`, `exist`, `getMeta` / `setMeta`. Check `exists` before `at` — `at` returns `undefined` if the id is gone.
+
+Players (not world props): `kick(reason)`, `mute()`, `vehicle` / `lastVehicle`, `ping`, `ip`, `nickname`. `mp.players.kick(player, reason)` does the same. `player.emit(event, ...args)` is a shortcut for `mp.events.emitClient(player, event, ...args)`.

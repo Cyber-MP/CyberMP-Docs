@@ -1,0 +1,109 @@
+---
+title: Игровые нативы
+description: Вызов систем Cyberpunk 2077 через mp.game.
+---
+
+`mp.game` — доступ к движку: игрок, статы, телепорт, TweakDB, подмена методов.
+
+:::tip[NativeDB]
+Все игровые классы, функции и енумы перечислены в [NativeDB](https://nativedb.red4ext.com/). Имена там совпадают с теми, что вызываются из скриптов.
+:::
+
+Нативы `mp.game` подключаются, только если в `resource.toml` ресурса указано `use_game_natives = true`. Без этого `mp.game` пустой.
+
+Вызывайте нативы только после загрузки мира. `resourceStart` означает только старт скрипта. Ждите `mp.game.onGameLoaded`. TweakDB — после `mp.game.onTweak`. Порядок: [жизненный цикл клиента](/ru/guides/client/lifecycle).
+
+## Игрок и системы
+
+```js title="client.js"
+mp.game.onGameLoaded(() => {
+  const player = mp.game.GetPlayer();
+  const playerObj = mp.game.GetPlayerObject();
+  const stats = mp.game.ScriptGameInstance.GetStatsSystem();
+  const pools = mp.game.ScriptGameInstance.GetStatPoolsSystem();
+  const teleport = mp.game.ScriptGameInstance.GetTeleportationFacility();
+
+  console.log('entity', player.GetEntityID());
+});
+```
+
+Сразу после `mp.local.spawnPlayer` `GetPlayer()` ещё может быть пустым. Дождитесь куклы, затем здоровье и телепорт.
+
+Хеши: [хеши](/ru/guides/general/hashes). На клиенте `mp.game.hashes`, на сервере `mp.hashes`. Три алгоритма — `cname`, `tweakdbid`, `resref` — не взаимозаменяемы.
+
+```js
+// клиент (строки)
+const itemHash = mp.game.hashes.toTweakdbid('Items.Preset_Nue_Default');
+const name = mp.game.hashes.fromTweakdbid(itemHash);
+const look = mp.game.hashes.toCname('default');
+const ent = mp.game.hashes.toResref('base\\characters\\main_npc\\jackie.ent');
+
+// сервер (число / bigint)
+const model = mp.hashes.tweakdbid('Vehicle.v_standard2_archer_hella');
+const appearance = mp.hashes.cname('default');
+```
+
+Старого вызова `mp.game.getHashFromName(...)` нет ни в текущих типах, ни в клиентском рантайме. `appearance` у машин и педов: всегда `cname('default')`, пока нет конкретного вида — [внешность](/ru/guides/general/appearances).
+
+## Observe и Override
+
+[Observe](/ru/guides/client/observes) описывает наблюдатели, аргументы и отложенные/Raw-вызовы. [Override](/ru/guides/client/overrides) описывает замену метода, продолжение цепочки и возвращаемые значения.
+
+## Ввод, экран, таймер
+
+```js
+mp.game.onInputKeyEvent((action, key) => {
+  // EInputAction / EInputKey из client-types
+});
+
+const [width, height] = mp.game.getDisplayResolution();
+const elapsedMs = mp.getTimer(); // в старых типах: mp.getGameTimer()
+```
+
+`onceGameLoaded` — одноразовый вариант `onGameLoaded`. Настройки лаунчера: `mp.getLauncherSettingsJSON()` / `mp.getLauncherSettings()`.
+
+`mp.game.ScriptGameInstance.GetMultiplayerSystem()` умеет вычищать классы мира (`DeclareDeletedObjects`), задать спавн по умолчанию (`SetDefaultSpawnPosition`) и дефолтные эффекты MP.
+
+TweakDB (`mp.game.TweakDB`) — после `onTweak`: `getRecord`, `getFlat`, `setFlat`, `createRecord`, `updateRecord`. `setFlat` пишет без обновления записи: пачка правок — несколько `setFlat`, потом `updateRecord`. `setFlatNoUpdate`, вопреки имени, после каждой записи обновляет родительскую запись.
+
+## Variant
+
+Иногда движок отдаёт или ждёт `Variant`:
+
+```js
+const boxed = mp.game.toVariant({ x: 1, y: 2, z: 3 }, 'Vector3');
+const plain = mp.game.fromVariant(boxed);
+```
+
+## Координаты — объектом
+
+В типах бывает и `(x, y)`, и `{ x, y }`. Мост принимает объект. Два числа ничего не сделают. Подробности: [JS-мост](/ru/guides/general/js-bridge).
+
+```js
+widget.SetAnchorPoint({ x: 0.5, y: 0.5 });
+```
+
+## Каждый кадр
+
+`mp.setTick` выполняется каждый кадр отрисовки. Колбэк должен быть коротким. Не обращайтесь к TweakDB и не обходите все машины на тик.
+
+```js
+const tickId = mp.setTick(() => {
+  const player = mp.game.GetPlayer();
+  if (!player) return;
+});
+
+mp.events.on('resourceStop', () => {
+  mp.clearTick(tickId);
+});
+```
+
+Время с запуска движка тоже `mp.getTimer()` — см. выше.
+
+## Где искать метод
+
+1. [Клиентский API](/ru/reference/client/api/readme/) — `MpGame`, классы, енумы.
+2. Имя в [NativeDB](https://nativedb.red4ext.com/).
+3. Вызов `mp.game.ИмяКласса.Метод(...)` или `ScriptGameInstance.Get…()`.
+
+Метод есть в игре, но нет в типах — не задавайте сигнатуру самостоятельно. Оберните вызов и дождитесь обновления пакета.

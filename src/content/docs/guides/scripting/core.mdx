@@ -1,0 +1,40 @@
+---
+title: cybermp_core
+description: "[core], [core.overrides], resource load order."
+---
+
+CyberMP ships a **core runtime** to each connecting client: the built-in `cybermp_core` resource from the server `data/` folder. The `[core]` table configures it.
+
+Configure in [`server.toml`](/reference/server/configuration).
+
+## `[core]`
+
+Nametags, auto-stand after death, default restrictions, seat switching, drop points, quests, garage, extra archives via `core.files`. `delete_map_objects` has no effect in the current version. What each key does and what the resource always does: [`[core]` keys](/reference/server/configuration#core--gameplay-runtime). Each `core.files` entry names a file under `files/` of the `cybermp_core` resource; only files that resource lists in `file` are sent. Special entries: `ArchiveXL` (everything under `files/ArchiveXL/`) and `final.redscript` (sends `files/final.redscripts`).
+
+:::caution
+Keep the `[core]` table in `server.toml`. Without it the client part of `cybermp_core` fails to start.
+:::
+
+## `[core.overrides]`
+
+Exact `CoreConfigOverrides` keys (`cybermp_core`). Applied when the value is `true`.
+
+| Flag | Effect |
+| --- | --- |
+| `change_player_on_death_logic` | Overrides `PlayerPuppet.OnDeath`. The gamemode owns `playerDeath` and respawn. |
+| `disable_side_quests_notifications` | Blocks tracked-mappin updates on the quest tracker and journal queue. |
+| `change_vehicles_logic` | Overrides summon restriction, mounting, visual customization, and hijack passenger-exit. |
+| `disable_player_inventory_encumbrance` | `PlayerPuppet.EvaluateEncumbrance` is a no-op. |
+| `player_extended_customization` | Opens character customization (CCO mirror) in NewGame edit mode. |
+| `disable_time_skip` | `GameTimeUtils.CanPlayerTimeSkip` returns false. |
+| `disable_turrets` | Security turrets cannot rip off or activate. `TurnOnDevice` applies death. |
+| `disable_surveillance_cameras` | `SurveillanceCamera.TurnOnDevice` applies death. |
+| `disable_vending_machines` | `VendingMachine` and `WeaponVendingMachine` stay off. |
+| `disable_generic_devices` | `NetrunnerControlPanel`, `NumericDisplay`, `SecurityGateLock`, `SecurityLocker` stay off. |
+| `disable_no_combat` | Ignores `SecurityArea` enter. Removes `GameplayRestriction.NoCombat`. |
+
+## Resource `cybermp_core`
+
+When the server starts from `server.toml`, it runs `start cybermp_core` before the `resources` list, so its [exports](/guides/general/exports) resolve without listing it. The `[core.overrides]` hooks are part of this resource (`dist/main.lua`). To replace a hook, an archive or redscript, turn it off in `server.toml` and implement it in your own resource: [change cybermp_core](/reference/server/configuration#change-cybermp_core).
+
+Global archives: `core.files`. Per-resource files: [`file`](/guides/resources/adding-resource-files).

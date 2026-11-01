@@ -1,0 +1,118 @@
+---
+title: Vehicles (Lua)
+description: mp.vehicles.create, seats, and meta in Lua.
+---
+import { Steps } from '@astrojs/starlight/components';
+
+A vehicle visible to all players is created on the server with `mp.vehicles.create`. Nearby clients in the same `dimension` receive it.
+
+## Create options
+
+| Field | Default | Value |
+| --- | --- | --- |
+| `model` | — | Integer: tweakdbid of a `Vehicle.*` record. |
+| `appearance` | — | Integer: cname, `'default'` unless you have a specific look. |
+| `position` | `0, 0, 0` | `vector3` or a table with `x`, `y`, `z`. |
+| `yaw` | `0` | Heading. |
+| `health` | `300` | Starting health. |
+| `dimension` | `0` | Applied right after the vehicle is created. [Dimensions](/lua/server/entities#dimensions). |
+
+The hash helpers return decimal strings. Convert them with `tonumber(str, 10)` before passing them ([why](/lua/shared/hashes)):
+
+```lua title="server.lua"
+local function hash(str) return tonumber(str, 10) end
+
+local vehicle = mp.vehicles.create({
+  model = hash(mp.hashes.toTweakdbid('Vehicle.v_standard2_archer_hella')),
+  appearance = hash(mp.hashes.toCname('default')),
+  position = vector3(-1392.6, 1271.5, 123.1),
+})
+print('vehicle', vehicle.id)
+```
+
+Do not hash the vehicle record with `toCname`, and do not pass `appearance = 0`: clients will not agree on the look. Details: [hashes](/lua/shared/hashes#models-and-appearances), [appearances](/lua/shared/hashes#models-and-appearances), [resource types](/lua/shared/hashes#models-and-appearances).
+
+`create` returns when the vehicle exists on the server, with an assigned `id`. A handler runs until it returns or calls `mp.wait`; code after `mp.wait` runs on a later tick.
+
+## Synced meta
+
+`vehicle:setMeta` never syncs. For keys that clients read, use `mp.meta.setEntity` with `sync = true`:
+
+```lua title="server.lua"
+mp.meta.setEntity(vehicle, 'locked', true, true)
+mp.meta.setEntity(vehicle, 'ownerId', tostring(player.id), true)
+```
+
+Clients read them with `mp.meta.getEntity(netId, key)` once the vehicle streams in (`vehicleStreamIn`). See [meta](/lua/shared/meta).
+
+## Seats and lifetime
+
+| Member | Description |
+| --- | --- |
+| `vehicle.seats` / `vehicle.lastSeats` | Tables with `driver`, `passenger`, `rearLeft`, `rearRight`: player object or `nil`. |
+| `vehicle:getPlayerInSeat(seat)` / `vehicle:getLastPlayerInSeat(seat)` | Seat `0` driver, `1` passenger, `2` rear left, `3` rear right. |
+| `vehicle.model`, `vehicle.appearance`, `vehicle.health`, `vehicle.velocity`, `vehicle.angularVelocity` | Read only. |
+| `vehicle:destroy()` | Removes the vehicle. |
+
+```lua title="server.lua"
+mp.events.add('enterVehicle', function(playerId, data)
+  local vehicleId, seat = data[1], data[2] -- the payload is an array
+  if not mp.vehicles.exists(vehicleId) then return end
+
+  local driver = mp.vehicles.at(vehicleId).seats.driver
+  print('seat', seat, 'driver', driver and driver.id)
+end)
+
+mp.events.add('vehicleDespawn', function(id)
+  print('gone', id)
+end)
+
+if vehicle.exist then
+  vehicle:destroy()
+end
+```
+
+Leaving is `exitVehicle` with `(playerId, data)`, where `data[1]` is the vehicle id.
+
+## Example resource
+
+The F8 command `car` asks the server for a vehicle.
+
+<Steps>
+
+1. ## Server: create the vehicle
+
+   ```lua title="server.lua"
+   local function hash(str) return tonumber(str, 10) end
+
+   mp.events.addClient('requestVehicleSpawn', function(player, modelName)
+     local vehicle = mp.vehicles.create({
+       model = hash(mp.hashes.toTweakdbid(modelName)),
+       appearance = hash(mp.hashes.toCname('default')),
+       position = player.position,
+       yaw = player.yaw,
+       health = 5000,
+       dimension = player.dimension,
+     })
+
+     mp.meta.setEntity(vehicle, 'ownerId', tostring(player.id), true)
+     player:trigger('vehicleSpawned', vehicle.id)
+   end)
+   ```
+
+2. ## Client: request and watch stream-in
+
+   ```lua title="client.lua"
+   mp.commands.add('car', function()
+     mp.events.triggerServer('requestVehicleSpawn', 'Vehicle.v_standard2_archer_hella')
+   end)
+
+   mp.events.add('vehicleStreamIn', function(netID, gameID)
+     local ownerId = mp.meta.getEntity(netID, 'ownerId')
+     print('vehicle in range', netID, gameID, ownerId)
+   end)
+   ```
+
+</Steps>
+
+If the vehicle does not appear, see [troubleshooting](/lua/shared/cheatsheet#troubleshooting).

@@ -1,0 +1,62 @@
+---
+title: Meta (Lua)
+description: Global, player, and entity meta in Lua on server and client.
+---
+
+Meta is a key-value store on players, entities and the server. Model, scopes and limits: [sync and meta](/lua/shared/meta#streaming).
+
+## Server
+
+| Call | Scope |
+| --- | --- |
+| `mp.meta.setGlobal(key, value, sync)` / `mp.meta.getGlobal(key)` | Global |
+| `mp.meta.setPlayer(playerOrId, key, value, sync)` / `mp.meta.getPlayer(playerOrId, key)` | Player |
+| `mp.meta.setEntity(entityOrId, key, value, sync)` / `mp.meta.getEntity(entityOrId, key)` | Vehicle, ped, object, pickup |
+| `entity:getMeta(key)` / `entity:setMeta(key, value)` | Same, on the entity object. `setMeta` **never** syncs. |
+
+`sync = true` replicates the value to clients. Omitting `sync` means **not** synced.
+
+```lua title="server.lua"
+mp.meta.setPlayer(player, 'characterName', 'V', true)
+mp.meta.setEntity(vehicle, 'locked', true, true)
+mp.meta.setGlobal('round', 3, true)
+```
+
+## Client
+
+| Call | Scope |
+| --- | --- |
+| `mp.meta.setGlobal(key, value, sync)` / `mp.meta.getGlobal(key)` | Global |
+| `mp.meta.setPlayer(netId, key, value, sync)` / `mp.meta.getPlayer(netId, key)` | Player |
+| `mp.meta.setLocalPlayer(key, value, sync)` / `mp.meta.getLocalPlayer(key)` | Local player |
+| `mp.meta.setEntity(netId, key, value, sync)` / `mp.meta.getEntity(netId, key)` | Vehicle, ped, object, pickup |
+
+The client calls take network ids as numbers (or numeric strings); any other value is ignored and `get` returns `nil`. An omitted `sync` means local only. With `sync = true` the value is sent to the server, which drops it when the key belongs to someone else (global meta, another player, an entity owned by another client).
+
+```lua title="client.lua"
+mp.events.add('vehicleStreamIn', function(netID, gameID)
+  local locked = mp.meta.getEntity(netID, 'locked')
+  print('vehicle', netID, 'locked', locked)
+end)
+```
+
+## Change events
+
+Handlers receive these arguments:
+
+- `playerMetaChange(id, key, newValue, oldValue)`
+- `entityMetaChange(id, key, newValue, oldValue)`
+- `globalMetaChange(key, newValue, oldValue)`
+
+```lua
+mp.events.add('entityMetaChange', function(id, key, newValue, oldValue)
+  print('meta', id, key, oldValue, '->', newValue)
+end)
+```
+
+Meta is a replicated key-value store, not a message channel. Large or high-frequency payloads belong on targeted [events](/lua/shared/events).
+
+<a id="streaming"></a>
+## Synchronization and streaming
+
+The server controls synchronized entities. Clients receive entities in the same dimension and within the streaming radius. Stream callbacks receive `(netID, gameID)`; use `netID` for meta and convert ids with `mp.network` before game calls. Discard cached client state on `*StreamOut` and `resourceStop`. Meta holds extra values such as names, locks, and wanted levels; it does not replace entity transforms.

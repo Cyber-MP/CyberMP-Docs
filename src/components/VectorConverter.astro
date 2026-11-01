@@ -1,0 +1,132 @@
+---
+interface Props {
+  lang?: 'en' | 'ru';
+}
+
+const lang = Astro.props.lang === 'ru' ? 'ru' : 'en';
+const ru = lang === 'ru';
+---
+
+<div class="cmp-widget" data-vectors data-lang={lang}>
+  <label class="cmp-widget__label">
+    {ru ? 'Вставьте координаты' : 'Paste coordinates'}
+    <input
+      class="cmp-widget__input"
+      type="text"
+      spellcheck="false"
+      autocomplete="off"
+      placeholder="[ -1392.6, 1271.5, 123.1 ]  ·  { x, y, z }  ·  1, 2, 3"
+      value="[-1392.637, 1271.537, 123.082]"
+    />
+  </label>
+  <p class="cmp-widget__guess" data-status></p>
+  <div class="cmp-hash-grid">
+    <article class="cmp-hash-card">
+      <header><code>server Vector3</code></header>
+      <pre class="cmp-toml" data-out="server"></pre>
+      <button type="button" data-copy="server">{ru ? 'Копировать' : 'Copy'}</button>
+    </article>
+    <article class="cmp-hash-card">
+      <header><code>client {'{ x, y, z }'}</code></header>
+      <pre class="cmp-toml" data-out="client"></pre>
+      <button type="button" data-copy="client">{ru ? 'Копировать' : 'Copy'}</button>
+    </article>
+    <article class="cmp-hash-card">
+      <header><code>Vector4 / yaw</code></header>
+      <pre class="cmp-toml" data-out="engine"></pre>
+      <button type="button" data-copy="engine">{ru ? 'Копировать' : 'Copy'}</button>
+    </article>
+  </div>
+</div>
+
+<script>
+  function parseVec(raw: string): number[] | null {
+    const t = raw.trim();
+    if (!t) return null;
+    try {
+      const json = t.startsWith('{') || t.startsWith('[') ? t : `[${t}]`;
+      const v = JSON.parse(json.replace(/'/g, '"'));
+      if (Array.isArray(v)) {
+        const nums = v.map(Number).filter((n) => Number.isFinite(n));
+        return nums.length >= 2 ? nums : null;
+      }
+      if (v && typeof v === 'object') {
+        const x = Number(v.x);
+        const y = Number(v.y);
+        const z = v.z === undefined ? undefined : Number(v.z);
+        const w = v.w === undefined ? undefined : Number(v.w);
+        const nums = [x, y];
+        if (Number.isFinite(z)) nums.push(z as number);
+        if (Number.isFinite(w)) nums.push(w as number);
+        return nums.every(Number.isFinite) ? nums : null;
+      }
+    } catch {
+      const nums = t
+        .split(/[,\s]+/)
+        .map(Number)
+        .filter((n) => Number.isFinite(n));
+      if (nums.length >= 2) return nums;
+    }
+    return null;
+  }
+
+  function bind(root: HTMLElement) {
+    const input = root.querySelector<HTMLInputElement>('.cmp-widget__input');
+    const status = root.querySelector<HTMLElement>('[data-status]');
+    const ru = root.getAttribute('data-lang') === 'ru';
+    if (!input || !status) return;
+
+    const setOut = (key: string, text: string) => {
+      const el = root.querySelector(`[data-out="${key}"]`);
+      if (el) el.textContent = text;
+    };
+
+    const render = () => {
+      const nums = parseVec(input.value);
+      if (!nums) {
+        status.textContent = ru ? 'Не разобрать. Массив, объект или числа через запятую.' : 'Could not parse. Array, object, or comma-separated numbers.';
+        setOut('server', '—');
+        setOut('client', '—');
+        setOut('engine', '—');
+        return;
+      }
+      const [x, y, z = 0, w] = nums;
+      status.textContent =
+        nums.length === 2
+          ? ru
+            ? 'Два числа — inkWidget { x, y }. Для мира добавьте z.'
+            : 'Two numbers → inkWidget { x, y }. Add z for world position.'
+          : ru
+            ? 'Сервер ждёт кортеж. Нативы ink/телепорта — объект.'
+            : 'Server wants a tuple. ink / teleport natives want an object.';
+      setOut('server', `[${x}, ${y}${nums.length > 2 ? `, ${z}` : ''}]`);
+      setOut(
+        'client',
+        nums.length === 2 ? `{ x: ${x}, y: ${y} }` : `{ x: ${x}, y: ${y}, z: ${z} }`,
+      );
+      setOut(
+        'engine',
+        nums.length === 2
+          ? `widget.SetTranslation({ x: ${x}, y: ${y} })`
+          : `Object.assign(new mp.game.Vector4(), { x: ${x}, y: ${y}, z: ${z}, w: ${w ?? 1} })\n// yaw on server: player.yaw  ·  rotation [roll, pitch, yaw]`,
+      );
+    };
+
+    input.addEventListener('input', render);
+    root.querySelectorAll<HTMLButtonElement>('[data-copy]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const key = btn.dataset.copy;
+        const text = root.querySelector(`[data-out="${key}"]`)?.textContent ?? '';
+        await navigator.clipboard.writeText(text);
+        const prev = btn.textContent;
+        btn.textContent = ru ? 'Скопировано' : 'Copied';
+        setTimeout(() => {
+          btn.textContent = prev;
+        }, 1200);
+      });
+    });
+    render();
+  }
+
+  document.querySelectorAll<HTMLElement>('[data-vectors]').forEach(bind);
+</script>

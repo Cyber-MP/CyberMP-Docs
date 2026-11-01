@@ -1,0 +1,44 @@
+---
+title: Числа и хэши (Lua)
+description: Почему хэш-функции Lua возвращают десятичные строки и как передавать хэши в нативы.
+---
+
+Целые числа Lua — знаковые 64-битные. Хэш-функции возвращают хэш **десятичной строкой**. Вызовы, принимающие model или appearance, читают сырое 64-битное целое, поэтому сначала переведите строку:
+
+```lua
+local function hash(str)
+  return tonumber(str, 10)
+end
+
+local model = hash(mp.hashes.toTweakdbid('Vehicle.v_standard2_archer_hella'))
+```
+
+- `tonumber(str, 10)` сохраняет все 64 бита. Хэши больше 2^63 становятся отрицательными целыми с теми же битами — это то, что ждёт натив.
+- `tonumber(str)` без основания превращает хэши больше 2^63 во float, а float доходит до натива как 32-битный float. Хэш теряется.
+- Никогда не передавайте саму строку: натив получит указатель вместо хэша.
+
+## Функции
+
+| Вызов | Сервер | Клиент |
+| --- | --- | --- |
+| `mp.hashes.toCname(name)` / `toTweakdbid(name)` / `toResref(name)` | Да | С `use_game_natives = true` |
+| `mp.hashes.fromCname(hash)` / `fromTweakdbid(hash)` / `fromResref(hash)` | Нет | С `use_game_natives = true` |
+| `mp.getHashFromName(name, type)` с `'cname'`, `'tweakdbid'` или `'resref'` | Да | Нет |
+
+Без `use_game_natives = true` клиентские функции вызывают ошибку.
+
+| Поле | Функция |
+| --- | --- |
+| `model` педа / транспорта | `toTweakdbid` (`Character.*`, `Vehicle.*`) |
+| `model` объекта | `toResref` (`…\\.ent`) |
+| `model` пикапа | `toTweakdbid` (`Items.*`) |
+| `appearance` | `toCname('default')`, если не известно конкретное имя `.app` |
+
+Три хешера не взаимозаменяемы: каждый ждёт свой вид строки. Алгоритмы и именование: [хэши](/ru/lua/shared/hashes#models-and-appearances).
+
+<a id="models-and-appearances"></a>
+## Модели и внешний вид
+
+Модель транспорта или педа — запись TweakDB (`Vehicle.*` или `Character.*`). Пикап использует запись предмета (`Items.*`). Модель объекта — путь к ресурсу `.ent`. Appearance задаёт отдельный именованный вид; используйте `tonumber(mp.hashes.toCname('default'), 10)`, если не нужен конкретный вид. Нулевой или пропущенный appearance может дать разный внешний вид у разных клиентов.
+
+Алгоритм `tweakdbid` сочетает CRC32 с длиной строки. `cname` и `resref` используют FNV-1a 64 и хэшируют исходную строку: сохраняйте точное написание и обратные слеши пути. Выбирайте хэшер по назначению поля модели или внешнего вида.

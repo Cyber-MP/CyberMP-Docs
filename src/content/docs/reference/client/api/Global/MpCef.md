@@ -38,7 +38,7 @@ Evaluates whether the user's input focus context is currently actively captured 
 
 Defined in: cef.d.ts:11
 
-Sets the interaction focus and inputs routing priority over the active browser frame layout.
+Sets the interaction focus and inputs routing priority for the calling resource's CEF frame. Does nothing if the resource has no frame yet.
 
 #### Parameters
 
@@ -52,7 +52,7 @@ Sets the interaction focus and inputs routing priority over the active browser f
 
 `boolean`
 
-Optional flag. `true` renders and locks the OS cursor over the game window, `false` hides it.
+Optional flag. `true` renders and locks the OS cursor over the game window, `false` hides it. Defaults to the value of `focus`.
 
 #### Returns
 
@@ -68,7 +68,7 @@ Optional flag. `true` renders and locks the OS cursor over the game window, `fal
 
 Defined in: cef.d.ts:23
 
-Instructs the web view instance frame to perform immediate route navigation to a new target path or web address destination.
+Navigates the calling resource's CEF frame to a new URL, creating the frame if the resource has none yet.
 
 #### Parameters
 

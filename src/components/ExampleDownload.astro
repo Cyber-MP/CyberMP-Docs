@@ -1,0 +1,14 @@
+---
+interface Props {
+  href: string;
+  lang?: 'en' | 'ru';
+}
+
+const { href, lang = 'en' } = Astro.props;
+const label = lang === 'ru' ? 'Скачать папку ресурса' : 'Download resource folder';
+---
+
+<p class="cmp-download">
+  <a href={href}>{label}</a>
+  <span>{lang === 'ru' ? '— скопируйте в resources/' : '— copy into resources/'}</span>
+</p>

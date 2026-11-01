@@ -1,0 +1,16 @@
+---
+title: Прямое подключение
+description: Подключение к серверу CyberMP по IP-адресу или доменному имени.
+---
+
+Прямое подключение открывает сессию на сервере по его адресу, без [Master List](/ru/guides/server-manager/server-list). В лаунчере нажмите **Direct connect** внизу меню и введите адрес.
+
+Адрес — IP-адрес или доменное имя с портом: `203.0.113.10:2077` или `play.example.com:2077`. Доменное имя разрешается через DNS.
+
+Адрес — endpoint для клиента (`connection_host_addr` в [`server.toml`](/ru/reference/server/configuration)). `tcp_host` / `udp_host` — адреса прослушивания (обычно `0.0.0.0:2077`). Пробросьте TCP и UDP на одном порту.
+
+Локально по умолчанию: `127.0.0.1:2077`.
+
+После входа клиентские скрипты получают адрес сессии через `mp.network.getServerAddress()` в JavaScript или `mp.getServerAddress()` в Lua.
+
+Вход по ссылке из браузера через лаунчер — другая функция: [быстрое подключение](/ru/guides/game-client/fast-connect).

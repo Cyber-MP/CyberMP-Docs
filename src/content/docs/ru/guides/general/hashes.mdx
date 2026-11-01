@@ -1,0 +1,99 @@
+---
+title: Хеши
+description: "cname, tweakdbid и resref: какой хешер для какого поля."
+---
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import HashPlayground from '../../../../../components/HashPlayground.astro';
+
+Движок не ищет модели и внешность по строке. Ему нужен **хеш**. Его собирают `mp.hashes` (серверный JavaScript, серверный и клиентский Lua) и `mp.game.hashes` (клиентский JavaScript).
+
+Алгоритма два. `tweakdbid` — CRC32 плюс длина строки; `cname` и `resref` — оба FNV-1a 64, поэтому одна и та же строка через них даёт одно и то же число. Различается то, какую строку ждёт поле (имя записи TweakDB, путь в архиве или имя движка). Неверный hasher или строка не того вида не сообщают об ошибке: сущность не появляется или появляется другая.
+
+<HashPlayground lang="ru" />
+
+## Выбор hasher
+
+| Hasher | Вход | Типичное поле |
+| --- | --- | --- |
+| `tweakdbid` | запись TweakDB: `Character.*`, `Vehicle.*`, `Items.*` | `model` педа и машины; `model` пикапа (`Items.*` — клиент создаёт пикап как выпавший предмет) |
+| `resref` | путь в архиве, файл `.ent` | `model` объекта |
+| `cname` | имя движка: `default`, имена внешности / цвета | `appearance` |
+
+Что это за строки: [типы ресурсов](/ru/guides/general/resource-types). Почему `appearance` нельзя ставить в `0`: [внешность](/ru/guides/general/appearances).
+
+<Tabs syncKey="lang">
+<TabItem label="JavaScript">
+
+```js title="server.js"
+mp.hashes.tweakdbid('Character.CivilianFemaleAverage');
+mp.hashes.tweakdbid('Vehicle.v_standard2_archer_hella');
+mp.hashes.resref('base\\gameplay\\devices\\doors\\gates\\appearances\\w300_h250_mall_metal.ent');
+mp.hashes.cname('default');
+```
+
+</TabItem>
+<TabItem label="Lua">
+
+```lua title="server.lua"
+mp.hashes.toTweakdbid('Character.CivilianFemaleAverage')
+mp.hashes.toTweakdbid('Vehicle.v_standard2_archer_hella')
+mp.hashes.toResref('base\\gameplay\\devices\\doors\\gates\\appearances\\w300_h250_mall_metal.ent')
+mp.hashes.toCname('default')
+```
+
+</TabItem>
+</Tabs>
+
+Не передавайте запись TweakDB в `cname`. Не передавайте путь `.ent` в `tweakdbid`.
+
+## Сервер и клиент
+
+На **сервере** хелперы JavaScript возвращают `GameHash`: `tweakdbid` — `number`, `cname` и `resref` — `bigint`. Хелперы Lua возвращают хеш десятичной **строкой**: переведите его через `tonumber(str, 10)` ([почему](/ru/lua/shared/hashes)). Результат передают в `mp.vehicles.create`, `mp.peds.create`, `mp.objects.create`, `mp.pickups.create`.
+
+<Tabs syncKey="lang">
+<TabItem label="JavaScript">
+
+```js title="server.js"
+const model = mp.hashes.tweakdbid('Vehicle.v_standard2_archer_hella');
+const look = mp.hashes.cname('default');
+```
+
+</TabItem>
+<TabItem label="Lua">
+
+```lua title="server.lua"
+local model = tonumber(mp.hashes.toTweakdbid('Vehicle.v_standard2_archer_hella'), 10)
+local look = tonumber(mp.hashes.toCname('default'), 10)
+```
+
+</TabItem>
+</Tabs>
+
+На **клиенте** хелперы возвращают 64-битный хеш десятичной **строкой**, `from*` превращает такую строку обратно в имя. В JavaScript они в `mp.game.hashes`, в Lua — в `mp.hashes`, при `use_game_natives = true` в `resource.toml`. Сами игровые нативы принимают аргументы TweakDBID / CName / ResRef как обычные имена и хешируют их сами, поэтому передавайте `'Items.Preset_Nue_Default'`, а не его хеш.
+
+<Tabs syncKey="lang">
+<TabItem label="JavaScript">
+
+```js title="client.js"
+const item = mp.game.hashes.toTweakdbid('Items.Preset_Nue_Default');
+const name = mp.game.hashes.fromTweakdbid(item);
+
+const look = mp.game.hashes.toCname('default');
+const ent = mp.game.hashes.toResref('base\\quest\\secondary_characters\\judy.ent');
+```
+
+</TabItem>
+<TabItem label="Lua">
+
+```lua title="client.lua"
+local item = mp.hashes.toTweakdbid('Items.Preset_Nue_Default')
+local name = mp.hashes.fromTweakdbid(item)
+
+local look = mp.hashes.toCname('default')
+local ent = mp.hashes.toResref('base\\quest\\secondary_characters\\judy.ent')
+```
+
+</TabItem>
+</Tabs>
+
+Локальный спавн на клиенте ждёт сырые 64-битные хеши, не текст: строка уходит в натив как указатель, а не как число. В JavaScript оберните строку в `BigInt(...)` для `mp.local.spawnPed` / `spawnVehicle` / `spawnObject`. В Lua переведите её через `tonumber(str, 10)` для `mp.client.spawnPed` / `spawnVehicle` / `spawnObject`. В клиентском JavaScript `mp.hashes` нет.

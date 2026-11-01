@@ -1,0 +1,159 @@
+---
+title: Синхронизация, миры и meta
+description: Стриминг сущностей, dimension и репликация метаданных.
+---
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+Сервер определяет, что существует. Клиент отрисовывает сущности рядом и в том же `dimension`. Дополнительные поля (имя, замок, розыск) хранятся в **meta**.
+
+## Сущности
+
+Игрок, машина, пед, объект, пикап — всё это сущности. У каждой есть:
+
+| Поле | Что это |
+| --- | --- |
+| `id` | Сетевой номер. Пока сущность жива — не меняется. |
+| `dimension` | Отдельный мир. Кто в другом dimension — вас не видит. Обычно город — `0`. |
+| `streamingRadius` | С какого расстояния другие начинают вас видеть. |
+| `position` | На сервере `[x, y, z]`. |
+| `exist` | `false`, если уже удалили или игрок вышел. |
+
+Когда сущность входит в локальный радиус, на клиенте приходят:
+
+- `vehicleStreamIn` / `vehicleStreamOut`
+- `remotePlayerStreamIn` / `remotePlayerStreamOut`
+- `pedStreamIn` / `pedStreamOut`
+- `objectStreamIn` / `objectStreamOut`
+
+Аргументы: `(netID, gameID)`. В meta передаётся `netID`. `gameID` — id в движке (`mp.network.getVehicleGameId` и похожие).
+
+<Tabs syncKey="lang">
+<TabItem label="JavaScript">
+
+```js title="client.js"
+mp.events.on('vehicleStreamIn', (netID, gameID) => {
+  const locked = mp.meta.getEntityMeta(netID, 'locked');
+  console.log('streamed vehicle', netID, gameID, locked);
+});
+```
+
+</TabItem>
+<TabItem label="Lua">
+
+```lua title="client.lua"
+mp.events.add('vehicleStreamIn', function(netID, gameID)
+  local locked = mp.meta.getEntity(netID, 'locked')
+  print('streamed vehicle', netID, gameID, locked)
+end)
+```
+
+</TabItem>
+</Tabs>
+
+После `StreamOut` отбрасывайте клиентское состояние сущности. Не храните на клиенте полный список всех машин.
+
+## Meta
+
+Свои данные задают так:
+
+| Вызов | На ком |
+| --- | --- |
+| `mp.meta.setGlobalMeta(key, value, sync?)` | На весь сервер |
+| `mp.meta.setPlayerMeta(player, key, value, sync?)` | На игрока |
+| `mp.meta.setEntityMeta(entity, key, value, sync?)` | На машину, педа, объект |
+| `entity.setMeta(key, value, sync?)` | То же, с самой сущности |
+
+Таблица — серверный API JavaScript. В Lua вызовы называются `mp.meta.setGlobal` / `setPlayer` / `setEntity`, а `entity:setMeta` никогда не синхронизирует: [meta в Lua](/ru/lua/shared/meta). На клиенте JavaScript глобальный сеттер называется `mp.meta.setGlobal(key, value, sync?)` (клиентского `setGlobalMeta` нет; геттер — `getGlobalMeta`), и ещё есть `setLocalPlayerMeta` / `getLocalPlayerMeta`. Свой сетевой id: `mp.network.getLocalPlayerId()`.
+
+Последний аргумент `sync`: `true` — другие клиенты увидят значение (имя, замок). На сервере JavaScript, если его не передать, он равен **`true`**; в Lua без `sync` значение не синхронизируется. Чтобы поле осталось только на сервере, передайте `false` явно. На клиенте по умолчанию `false` (только локально); с `true` значение уходит на сервер, и он его отбрасывает, если владелец другой (global meta, чужой игрок, сущность другого клиента).
+
+<Tabs syncKey="lang">
+<TabItem label="JavaScript">
+
+```js title="server.js"
+player.setMeta('characterName', 'V', true);
+mp.meta.setPlayerMeta(player, 'wantedLevel', 2, true);
+
+vehicle.setMeta('locked', true, true);
+```
+
+</TabItem>
+<TabItem label="Lua">
+
+```lua title="server.lua"
+mp.meta.setPlayer(player, 'characterName', 'V', true)
+mp.meta.setPlayer(player, 'wantedLevel', 2, true)
+
+mp.meta.setEntity(vehicle, 'locked', true, true)
+```
+
+</TabItem>
+</Tabs>
+
+<Tabs syncKey="lang">
+<TabItem label="JavaScript">
+
+```js title="client.js"
+const name = mp.meta.getPlayerMeta(netId, 'characterName');
+const wanted = mp.meta.getPlayerMeta(netId, 'wantedLevel') ?? 0;
+const locked = mp.meta.getEntityMeta(vehicleNetId, 'locked');
+```
+
+</TabItem>
+<TabItem label="Lua">
+
+```lua title="client.lua"
+local name = mp.meta.getPlayer(netId, 'characterName')
+local wanted = mp.meta.getPlayer(netId, 'wantedLevel') or 0
+local locked = mp.meta.getEntity(vehicleNetId, 'locked')
+```
+
+</TabItem>
+</Tabs>
+
+Когда значение меняется:
+
+- `playerMetaChange(id, key, newValue, oldValue)`
+- `entityMetaChange(id, key, newValue, oldValue)`
+- `globalMetaChange(key, newValue, oldValue)`
+
+Большие и частые данные (весь инвентарь каждый кадр) лучше слать обычными событиями или [RPC](/ru/guides/general/rpc), не meta.
+
+## Списки
+
+<Tabs syncKey="lang">
+<TabItem label="JavaScript">
+
+```js title="server.js"
+if (mp.vehicles.exists(id)) {
+  const vehicle = mp.vehicles.at(id);
+  vehicle.dimension = 0;
+}
+
+for (const p of mp.players.toArray()) {
+  mp.events.emitClient(p, 'announce', 'Round starting');
+}
+```
+
+</TabItem>
+<TabItem label="Lua">
+
+```lua title="server.lua"
+if mp.vehicles.exists(id) then
+  local vehicle = mp.vehicles.at(id)
+  vehicle.dimension = 0
+end
+
+for _, p in ipairs(mp.players.toArray()) do
+  p:trigger('announce', 'Round starting')
+end
+```
+
+</TabItem>
+</Tabs>
+
+Если сущности нет, `at` в JavaScript возвращает `undefined` (в типах написано, что выбрасывает исключение), а в Lua бросает ошибку. Сначала `exists`.
+
+## Только у себя на клиенте
+
+`spawnPed`, `spawnVehicle`, `spawnObject` (`mp.local` в JavaScript, `mp.client` в Lua) создают объект, который **никто другой не видит**. Декор, превью, свои чекпоинты. Не для геймплея, который должен быть общим. См. [сеть и локальный спавн](/ru/guides/client/network-and-local).

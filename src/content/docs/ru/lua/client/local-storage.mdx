@@ -1,0 +1,32 @@
+---
+title: Локальное хранилище (Lua)
+description: mp.localStorage в клиентском скрипте Lua.
+---
+
+`mp.localStorage` — словарь строк на локальной машине. Сохраняется между переподключениями и перезапусками ресурсов. На сервер не передаётся. Хранилище одно на адрес сервера и общее для всех ресурсов этого сервера: добавляйте к ключам префикс и помните, что `deleteAll()` очищает его для всех ресурсов.
+
+```lua title="client.lua"
+local KEY = 'myresource:keybinds'
+
+mp.localStorage.set(KEY, json.encode(bindings))
+mp.localStorage.save()
+
+local raw = mp.localStorage.get(KEY) -- JSON-encoded: '"<your string>"', or 'null' when missing
+local loaded = {}
+if raw and raw ~= 'null' then
+  loaded = json.decode(json.decode(raw)) -- unwrap, then parse your own JSON
+end
+
+mp.localStorage.delete(KEY)
+mp.localStorage.deleteAll()
+mp.localStorage.save()
+```
+
+| API | Примечание |
+| --- | --- |
+| Значения | Только непустые строки. Таблицы сериализуйте через `json.encode` / `json.decode`. |
+| `get(key)` | Возвращает значение в JSON (`'"abc"'` для `'abc'`, `'null'` для отсутствующего ключа). Сравните с `'null'` перед `json.decode`. |
+| `save()` | Пишет на диск. До `save()` изменения только в памяти; автоматически ничего не сохраняется. |
+| Область | Только клиент (бинды, UI). Состояние сессии: [мета](/ru/lua/shared/meta), [сетевые события](/ru/lua/shared/events). |
+
+Настройки лаунчера: [`mp.getLauncherSettings`](/ru/lua/client/network-and-local#таймер-и-лаунчер).

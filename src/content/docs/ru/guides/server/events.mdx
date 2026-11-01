@@ -1,0 +1,106 @@
+---
+title: События
+description: Платформенные события, onClient, emitClient и отмена стандартного действия.
+---
+import EventFilter from '../../../../../components/EventFilter.astro';
+
+Серверные скрипты получают платформенный и сетевой трафик через `mp.events`. Подключения, смерти, взаимодействие с транспортом и пакеты с клиента приходят сюда.
+
+## Платформенные и свои события
+
+[`mp.events.on`](/ru/reference/server/api/events/mpevents#on) регистрирует обработчики платформенных событий жизненного цикла (подключение, смерть, транспорт) и пользовательских событий, испускаемых внутри процесса сервера.
+
+```js title="server.js"
+mp.events.on('playerConnected', (playerId, tempId) => {
+    console.log(`Player connected - assigned Network ID: ${playerId}`);
+});
+
+mp.events.on('playerDeath', (playerId, data) => {
+    if (data.killerId) {
+      console.log(`Player ${playerId} was flatlined by Killer ID: ${data.killerId}`);
+    } else {
+      console.log(`Player ${playerId} flatlined due to environmental damage.`);
+    }
+});
+
+mp.events.on('logServerActivity', (action, details) => {
+    console.log(`[Activity Log] Action: ${action} | ${details}`);
+});
+
+mp.events.emit('logServerActivity', 'Database', 'Initial connection established.');
+```
+
+## Пакеты с клиента
+
+Клиентский скрипт отправляет пакет через [`emitServer`](/ru/reference/client/api/events/mpevents#emitserver). Сервер принимает его в [`mp.events.onClient`](/ru/reference/server/api/events/mpevents#onclient). Для возвращаемого значения используйте [RPC](/ru/guides/general/rpc), а не пару событий.
+
+Первый аргумент обработчика — **`player`** (`MpPlayer`), отправивший пакет. Не берите id игрока из полезной нагрузки: клиент может его подделать.
+
+```js title="server.js"
+mp.events.onClient('requestVehicleSpawn', (player, modelHash, x, y, z) => {
+  console.log(`Player ${player.nickname} (${player.id}) requested to spawn: ${modelHash}`);
+});
+```
+
+## События на клиент
+
+[`mp.events.emitClient`](/ru/reference/server/api/events/mpevents#emitclient) отправляет событие одному клиенту. Первый аргумент — цель: экземпляр [`MpPlayer`](/ru/reference/server/api/entities/players/mpplayer/) или числовой `playerId`. `-1` отправляет событие всем игрокам; `0`, `null` и `undefined` отклоняются с ошибкой в логе.
+
+```js title="server.js"
+mp.events.on('playerSpawn', (playerId) => {
+  mp.events.emitClient(playerId, 'serverNotification', 'Welcome back to Night City.');
+});
+
+mp.events.on('vehicleHittedByPlayer', (playerId, data) => {
+  // data — массив: [vehicleID, componentNameHash, weaponHash, byOwner]
+  const [vehicleId, , , byOwner] = data;
+  if (byOwner) {
+    mp.events.emitClient(playerId, 'uiNotification', `You damaged your own vehicle ${vehicleId}!`);
+  }
+});
+```
+
+## Снятие обработчиков
+
+[`mp.events.off`](/ru/reference/server/api/events/mpevents#off) снимает именованную функцию, ранее переданную в [`mp.events.on`](/ru/reference/server/api/events/mpevents#on). Обработчики [`mp.events.onClient`](/ru/reference/server/api/events/mpevents#onclient) так не снимаются: они хранятся под внутренним именем события с префиксом, а `off(name, fn)` ищет по обычному имени. Используйте при выгрузке модуля.
+
+```js title="server.js"
+const trackExplosions = (playerId, data) => {
+  console.log(`Explosion tracked at coordinate cluster: [${data.posX}, ${data.posY}]`);
+};
+
+mp.events.on('explosion', trackExplosions);
+mp.events.off('explosion', trackExplosions);
+```
+
+## Отмена стандартного действия
+
+Часть платформенных событий типизирована как `void | boolean`. Верните `false` из обработчика, чтобы движок пропустил своё действие (ванильный хил, нокдаун, дверь, взрыв). Любое другое значение или его отсутствие действие не отменяет.
+
+```js title="server.js"
+mp.events.on('playerHealing', (playerId) => {
+  return false;
+});
+
+mp.events.on('doorStateChange', (playerId, data) => {
+  if (restrictedDoors.has(data.hashObject)) {
+    return false;
+  }
+});
+```
+
+- Учитывается только значение, возвращённое синхронно. Обработчик `async` возвращает Promise и отменить событие не может.
+- Если обработчиков несколько, достаточно одного `false`. Все обработчики всё равно выполняются.
+- `mp.cancelEvent()` удалён. Замените его на `return false`.
+
+Отмена без согласования клиентского состояния оставляет игрока в несогласованном виде (дверь визуально открыта, состояние закрыто). Сначала проверьте на одном случае.
+
+`mp.isServer()` возвращает `true` в процессе сервера.
+
+## Каталог событий
+
+Имена из `@cybermp/server-types`. Первый аргумент часто `playerId` (число), не объект игрока — кроме `onClient`. Фильтр ниже; поля payload — в [справочнике API](/ru/reference/server/api/events/mpevents/).
+
+<EventFilter lang="ru" />
+
+Голос и Discord: [голос](/ru/guides/general/voice), [Discord](/ru/guides/client/discord).

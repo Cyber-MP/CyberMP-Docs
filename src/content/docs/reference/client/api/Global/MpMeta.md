@@ -48,7 +48,7 @@ The unique identifier string of the entity's metadata entry.
 
 `T`
 
-The stored metadata value cast to type T, or undefined if it does not exist.
+The stored metadata value cast to type T, or `null` if it does not exist.
 
 ***
 
@@ -82,7 +82,7 @@ The unique identifier string of the metadata entry to look up.
 
 `T`
 
-The stored global metadata value cast to type T, or undefined if it does not exist.
+The stored global metadata value cast to type T, or `null` if it does not exist.
 
 ***
 
@@ -116,7 +116,7 @@ The unique identifier string of the local player's metadata entry.
 
 `T`
 
-The stored metadata value cast to type T, or undefined if it does not exist.
+The stored metadata value cast to type T, or `null` if it does not exist.
 
 ***
 
@@ -156,7 +156,7 @@ The unique identifier string of the player's metadata entry.
 
 `T`
 
-The stored metadata value cast to type T, or undefined if it does not exist.
+The stored metadata value cast to type T, or `null` if it does not exist.
 
 ***
 
@@ -211,6 +211,10 @@ Optional flag. If `true`, synchronizes this entity metadata property to all clie
 Defined in: meta.d.ts:12
 
 Sets a global metadata value accessible across the entire runtime environment.
+
+:::caution
+The client runtime defines this method as `mp.meta.setGlobal(key, value, sync?)`. `mp.meta.setGlobalMeta` is not defined on the client, so calling it throws a `TypeError`.
+:::
 
 #### Parameters
 

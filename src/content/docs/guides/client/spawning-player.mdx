@@ -1,18 +1,18 @@
 ---
-title: Spawning player
-description: Learn how to set player health and spawn a player in the game world.
+title: Spawn the player
+description: Spawn the local player and set health.
 slug: guides/client/spawning-player
 ---
 import { Steps } from '@astrojs/starlight/components';
 
-In this guide, you will learn how to configure your client-side script to handle player spawning, manage health stat pools, and set up a basic spawn command.
+After the world loads, the local player is not in the scene. Spawn sets health, coordinates, and a console command for recovery.
 
 <Steps>
-1. ## Handling Health Stats
+1. ## Health stats
 
-   Before we can safely spawn a player, we need to initialize their health values. The game relies on specific entity IDs and stat modifiers to change player attributes.
+   Initialize current and maximum health before spawn. The game uses entity IDs and stat modifiers.
 
-   Add the following constants and helper functions to your `client.js` file to handle setting normal health and maximum health:
+   Constants and helpers for `client.js`:
 
    ```js title="client.js"
    // Health stat pool type - https://nativedb.red4ext.com/e/5923428624360168
@@ -68,11 +68,11 @@ In this guide, you will learn how to configure your client-side script to handle
    };
    ```
 
-2. ## Implementing the Spawn Logic
+2. ## Spawn
 
-   To trigger a successful spawn, we must apply the health values, and invoke the client runtime's spawn methods.
+   Spawn with `mp.local.spawnPlayer`. The call sets coordinates and starts spawn. It returns `true` if the sequence started. The character may still be absent from the world.
 
-   ```js title="client.js"
+   ```js title="client.js" mark={10}
    const SPAWN_HEALTH = 300;
    // V's apartment
    const DEFAULT_SPAWN_LOCATION = [-1392.637329, 1271.536865, 123.082397, 1];
@@ -81,18 +81,17 @@ In this guide, you will learn how to configure your client-side script to handle
      setMaxHealth(SPAWN_HEALTH);
      setHealth(SPAWN_HEALTH);
 
-     mp.setSpawnDataLocalPlayer(x, y, z, yaw);
-     mp.spawnLocalPlayer();
+     mp.local.spawnPlayer(x, y, z, yaw);
    };
    ```
 
-3. ## Spawning on Game Load & Custom Commands
+3. ## Game load and commands
 
-   To make the player spawn immediately when the game finishes loading, wrap the `spawnPlayer` logic inside the `onceGameLoaded` event. Additionally, we will register a `spawn` console command so players can manually respawn if they die or get stuck.
+   Spawn only after `mp.game.onGameLoaded`. Register the console command immediately. It runs when the player types it.
 
    ```js title="client.js"
    // Automatically spawn when the world loads
-   mp.game.onceGameLoaded(() => {
+   mp.game.onGameLoaded(() => {
      spawnPlayer(...DEFAULT_SPAWN_LOCATION);
    });
 
@@ -102,9 +101,20 @@ In this guide, you will learn how to configure your client-side script to handle
    });
    ```
 
-   Now, when you connect to your server, you will automatically drop into the world with `300` health near V's apartment. If you need to reset, open your client console (`F8`) and type:
+   On connect the local player appears with `300` health near V's apartment. Reset: client console (`F8`), then:
 
    ```text
    spawn
    ```
 </Steps>
+
+## Production notes
+
+Constraints for production spawn. Timeline: [Client lifecycle](/guides/client/lifecycle).
+
+- **`onGameLoaded`, not `resourceStart`.** Do not call `GetPlayer()`, stat pools, or spawn until the world hook fires.
+- **Close menus first.** A leftover pause or settings controller freezes input after spawn. Reuse the observers from [teleporting a player](/guides/client/teleporting-player).
+- **Wait for the puppet.** `true` from `spawnPlayer` only means the sequence **started**. Poll `mp.game.GetPlayer()` (with a timeout) before health, appearance, or a second teleport.
+- **Incomplete gender / `None`.** Right after init the puppet can report no gender. Character-specific meshes and some REDscript calls no-op in that state. Spawn the local player, wait until the puppet exists, then apply appearance.
+- **Re-anchor after customization.** Opening the character customization mirror can leave the puppet off the spawn point. Teleport once more after appearance is applied.
+- **Natives after load.** Register events and commands immediately. Keep every `mp.game.*` call behind `onGameLoaded`.

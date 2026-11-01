@@ -1,0 +1,49 @@
+---
+title: resource.toml
+description: Поля манифеста ресурса.
+---
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+Ресурс — каталог в `resources/` с файлом `resource.toml`. Имя каталога — имя ресурса в `server.toml`. Порядок: [создание ресурса](/ru/guides/resources/creating-resource).
+
+<Tabs syncKey="lang">
+<TabItem label="JavaScript">
+
+```toml title="resource.toml"
+client_script = './client.js'
+server_script = './server.js'
+```
+
+</TabItem>
+<TabItem label="Lua">
+
+```toml title="resource.toml"
+client_script = './client.lua'
+server_script = './server.lua'
+```
+
+</TabItem>
+</Tabs>
+
+Lua использует те же ключи с путями `.lua`. Опускайте `client_script` или `server_script`, если на этой стороне нет скрипта.
+
+## Поля
+
+| Поле | Описание |
+| --- | --- |
+| `client_script` | Скрипт игрового клиента. |
+| `server_script` | Скрипт выделенного сервера. |
+| `shared_script` | Скрипт, который загружается и на сервере, и на клиенте. |
+| `file` | Файлы клиента: UI, архивы, моды. [Кастомные ассеты](/ru/guides/resources/adding-resource-files). |
+| `cef_url` | HTML-вход CEF. [CEF UI](/ru/guides/client/first-cef-ui). |
+| `use_game_natives` | `true`, если клиентские скрипты используют игровые нативы: `mp.game` в JavaScript, игровой слой (`Game`, `TweakDB`, хуки, клиентский `mp.hashes`) в Lua. Без него игровые нативы для ресурса не инициализируются. |
+| `hot_reload` | Платформа его не читает. Соглашение для примера [hotreload](/ru/guides/general/hotreload)-вотчера, который сам читает файл. |
+| `author`, `description`, `version` | Опционально. Метаданные. `mp.resources.getTOML(name)` (JavaScript) или `mp.resources.getTomlFile(name)` (Lua) возвращает весь `resource.toml` строкой JSON. |
+
+Сервер не устанавливает пакеты npm. Серверные скрипты могут делать `require` из папки `node_modules` внутри ресурса; клиент получает только файлы, перечисленные в этих ключах, поэтому импорты клиента бандлите в них ([окружение](/ru/guides/getting-started/workspace)).
+
+```toml title="server.toml"
+resources = ['hello_world']
+```
+
+Порядок массива — порядок загрузки. Сначала общие хелперы, в конце режим.

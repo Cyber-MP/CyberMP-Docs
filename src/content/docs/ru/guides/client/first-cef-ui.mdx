@@ -1,0 +1,128 @@
+---
+title: Интерфейс CEF
+description: HTML-оверлей и обмен событиями между страницей и клиентским скриптом.
+---
+import { Steps, Tabs, TabItem } from '@astrojs/starlight/components';
+
+Интерфейс в CyberMP — HTML-страница во встроенном браузере (CEF). Меню, HUD и инвентарь реализуются на HTML, CSS и JS.
+
+Пример: кнопка отправляет текст в клиентский скрипт и получает ответ.
+
+<Steps>
+1. ## Инициализация CEF
+
+   Два способа создать представление CEF: `resource.toml` или клиентский API.
+
+   HTML, CSS и JS необходимо перечислить в `file`. Иначе клиент их не получит.
+
+   <Tabs syncKey="cef-init-method">
+     <TabItem label="В resource.toml">
+       `cef_url` — путь к HTML. Страница открывается вместе с ресурсом.
+
+       ```toml title="resource.toml"
+       client_script = './client.js'
+       server_script = './server.js'
+       cef_url = './ui/index.html'
+       file = ["./ui/index.html"]
+       ```
+     </TabItem>
+     <TabItem label="Из скрипта">
+       `mp.cef.setUrl` открывает страницу. Если окна нет — создаёт. Файл всё равно должен быть в `file`.
+
+       ```toml title="resource.toml"
+       client_script = './client.js'
+       file = ["./ui/index.html"]
+       ```
+
+       ```js title="client.js"
+       mp.cef.setUrl('./ui/index.html');
+       ```
+     </TabItem>
+   </Tabs>
+
+2. ## Страница
+
+   CyberMP внедряет в страницу объект `mp`. Из JS доступны `mp.events.emit` и `mp.events.on`.
+
+   ```html title="ui/index.html"
+   <!DOCTYPE html>
+   <html lang="ru">
+   <head>
+       <meta charset="UTF-8">
+       <title>CyberMP Minimal UI</title>
+       <style>
+           body {
+               font-family: Arial, sans-serif;
+               color: white;
+               background: rgba(0, 0, 0, 0.6);
+               display: flex;
+               flex-direction: column;
+               align-items: center;
+               justify-content: center;
+               height: 100vh;
+               margin: 0;
+           }
+           button {
+               padding: 12px 24px;
+               font-size: 16px;
+               background-color: #f50057;
+               color: white;
+               border: none;
+               cursor: pointer;
+               border-radius: 4px;
+           }
+       </style>
+   </head>
+   <body>
+       <h1>CyberMP UI Layer</h1>
+       <button id="action-btn">Send Data to Client</button>
+       <p id="status-text">Awaiting transmission...</p>
+
+       <script>
+           const button = document.getElementById('action-btn');
+           const status = document.getElementById('status-text');
+
+           button.addEventListener('click', () => {
+               mp.events.emit('uiClickEvent', 'Hello from the CEF browser context!');
+           });
+
+           mp.events.on('acknowledgeClientData', (payload) => {
+               status.innerText = payload;
+           });
+       </script>
+   </body>
+   </html>
+   ```
+
+3. ## Фокус и ответ из client.js
+
+   `setFocus(true, true)` передаёт клавиатуру странице и показывает курсор. `false, false` возвращает управление игре.
+
+   ```js title="client.js"
+   mp.commands.add('ui', () => {
+     mp.cef.setUrl('./ui/index.html');
+     mp.cef.setFocus(true, true);
+     console.log('UI Focused. Active focus status:', mp.cef.isInFocus());
+   });
+
+   mp.commands.add('closeui', () => {
+     mp.cef.setFocus(false, false);
+     console.log('UI Unfocused. Active focus status:', mp.cef.isInFocus());
+   });
+
+   mp.events.onCef('uiClickEvent', (message) => {
+     console.log(`[Client Script] Received payload: ${message}`);
+     mp.events.emitCef('acknowledgeClientData', 'Data received! System synchronized.');
+   });
+   ```
+
+4. ## Проверка
+
+   1. `F8`.
+   2. Команда `ui` — страница и курсор.
+   3. Нажмите кнопку.
+   4. В консоли клиента — лог. На странице — ответ.
+   5. Команда `closeui` возвращает мышь и клавиатуру игре.
+</Steps>
+
+Для возвращаемого значения с сервера — [RPC](/ru/guides/general/rpc) (`RpcBrowser` и на клиенте `RpcClient`).

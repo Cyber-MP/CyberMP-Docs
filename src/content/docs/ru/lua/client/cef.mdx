@@ -1,0 +1,103 @@
+---
+title: Интерфейс CEF (Lua)
+description: HTML-оверлей и события между страницей и клиентским скриптом Lua.
+---
+import { Steps, Tabs, TabItem } from '@astrojs/starlight/components';
+
+Интерфейс в CyberMP — HTML-страница во встроенном браузере (CEF).
+
+Пример отправляет текст с кнопки в клиентский скрипт и обратно.
+
+<Steps>
+1. ## Инициализация CEF
+
+   Все локальные файлы страницы должны быть перечислены в `file` в `resource.toml`. Иначе клиент их не получит.
+
+   <Tabs syncKey="lua-cef-init-method">
+     <TabItem label="Через resource.toml">
+       `cef_url` читается для каждого ресурса, поэтому работает и для ресурса на Lua.
+
+       ```toml title="resource.toml"
+       client_script = 'client.lua'
+       cef_url = './ui/index.html'
+       file = ["./ui/index.html"]
+       ```
+     </TabItem>
+     <TabItem label="Через клиентский API">
+       Вызовите `mp.cef.setUrl`. Если окна CEF ещё нет, оно создаётся. Локальный путь всё равно должен быть в манифесте.
+
+       ```toml title="resource.toml"
+       client_script = 'client.lua'
+       file = ["./ui/index.html"]
+       ```
+
+       ```lua title="client.lua"
+       mp.cef.setUrl('./ui/index.html')
+       ```
+     </TabItem>
+   </Tabs>
+
+2. ## Страница
+
+   Создайте `ui/index.html`. Кнопка отправляет `uiClickEvent`, а текст статуса обновляется по событию `acknowledgeClientData`:
+
+   ```html title="ui/index.html"
+   <!doctype html>
+   <html lang="ru">
+   <head>
+     <meta charset="utf-8">
+     <title>CyberMP UI</title>
+   </head>
+   <body>
+   <button id="action-btn">Send Data to Client</button>
+   <p id="status-text" role="status"></p>
+   <script>
+       document.getElementById('action-btn').addEventListener('click', () => {
+           mp.events.emit('uiClickEvent', 'Hello from the CEF browser context!');
+       });
+
+       mp.events.on('acknowledgeClientData', (payload) => {
+           document.getElementById('status-text').innerText = payload;
+       });
+   </script>
+   </body>
+   </html>
+   ```
+
+3. ## Фокус и ответ из client.lua
+
+   ```lua title="client.lua"
+   -- Show the UI and capture keyboard and mouse
+   mp.commands.add('ui', function()
+     mp.cef.setUrl('./ui/index.html')
+     mp.cef.setFocus(true, true) -- focus, cursor
+     print('UI focused:', mp.cef.isInFocus())
+   end)
+
+   -- Return control to the game
+   mp.commands.add('closeui', function()
+     mp.cef.setFocus(false, false)
+     print('UI focused:', mp.cef.isInFocus())
+   end)
+
+   -- Events from the page
+   mp.events.addCef('uiClickEvent', function(message)
+     print('[Client Script] Received payload: ' .. message)
+     mp.events.triggerCef('acknowledgeClientData', 'Data received! System synchronized.')
+   end)
+   ```
+
+   В Lua передавайте оба аргумента `mp.cef.setFocus(focus, cursor)`.
+
+4. ## Проверка
+
+   Подключитесь к серверу разработки.
+
+   1. Нажмите `F8`, чтобы открыть консоль клиента.
+   2. Выполните `ui`, чтобы показать HTML-оверлей. Поверх игры появится курсор.
+   3. Нажмите **Send Data to Client**.
+   4. Консоль клиента выведет данные. Текст статуса на странице обновится ответным событием.
+   5. Выполните `closeui`, чтобы вернуть мышь и клавиатуру игре.
+</Steps>
+
+Правила данных и встроенные события страницы: [события на клиенте](/ru/lua/client/events).

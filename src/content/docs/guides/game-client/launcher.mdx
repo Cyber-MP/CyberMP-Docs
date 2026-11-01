@@ -1,0 +1,62 @@
+---
+title: Launcher
+description: CyberMP launcher sections and settings, and what each option changes.
+---
+
+The CyberMP launcher lists servers, starts Cyberpunk 2077 with the multiplayer client and connects to the chosen server. It updates itself.
+
+## Sections
+
+| Section | What it shows |
+| --- | --- |
+| **Servers** | The public [server list](/guides/server-manager/server-list). Above it are the **Servers**, **Players** and **Peak players** counters, a **Search** field and the **Players**, **Full** and **Empty** filters. |
+| **Favorites** | Servers the player saved. |
+| **History** | Servers the player joined before. |
+| **Settings** | Launcher settings, see below. |
+| **About** | Launcher information. |
+| **Direct connect** | The button at the bottom of the menu. Connects by address, see [direct connect](/guides/game-client/direct-connect). |
+
+## Settings
+
+Launcher settings are stored on the player's PC and apply to every server. Server owners do not control them.
+
+Client scripts read the settings as JSON with `mp.getLauncherSettings()`. The **Key** column shows the JSON field the game client reads. A dash means the client reads no field for that option.
+
+### General
+
+| Setting | Key | What it does |
+| --- | --- | --- |
+| Nickname | `username` | The player name. Other players and server scripts see it. When it is empty, the Windows user name is used. |
+| Language | — | Launcher interface language. |
+
+### Audio
+
+| Setting | Key | What it does |
+| --- | --- | --- |
+| Voice chat | `voiceChatEnabled` | Turns voice chat on. The options below are available only while it is on. |
+| Push to talk | `pushToTalk` | The microphone transmits only while the key is held. |
+| Push to talk key | `pushToTalkKey` | The push-to-talk key. |
+| Device input / Device output | `audioInputName` / `audioOutputName` | Microphone and playback device. |
+| Input volume / Output volume | `audioInputVolume` / `audioOutputVolume` | Microphone and playback volume. |
+
+### Other
+
+| Setting | Key | What it does |
+| --- | --- | --- |
+| Game location | `gameLocation` | Path to `Cyberpunk2077.exe`. **Browse** picks the file. |
+| GPU accelerated cef | `cefSharedTexture` | The in-game browser UI ([CEF](/guides/client/first-cef-ui)) is passed to the game through a shared GPU texture instead of a copy in memory. |
+| Auto close after connected | — | Closes the launcher after the game connects to a server. |
+| Im edgerunner! | — | Not documented yet. |
+| Clear cache | — | Clears the launcher cache. |
+| Reset settings | — | Restores the default settings. |
+
+### Dev
+
+These options are for developers.
+
+| Setting | Key | What it does |
+| --- | --- | --- |
+| Player gender | `gender` | Male or female body of the default character the player gets on joining a server. |
+| Local server host | — | Address of a local server for development. The default is `127.0.0.1:2077`. |
+| Disable RTX | `disableRtx` | Starts the game without NVIDIA DLSS, Frame Generation, Reflex and NIS: their libraries are not copied to the game. |
+| Enable console | — | Opens a separate console window (cmd) with the client log. See [developer console](/reference/client/console#developer-console). |

@@ -1,0 +1,102 @@
+---
+title: Типизация
+description: Официальные пакеты TypeScript CyberMP для сервера, клиента и CEF.
+---
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+TypeScript не обязателен. Официальные пакеты типизируют `mp`: события, игроки, транспорт, CEF, нативы.
+
+Справка API на этом сайте собрана из тех же пакетов. Чтобы имена вроде `mp.local` и `mp.network` совпадали с гайдами, держите пакеты актуальными. Карта `mp` по рантаймам: [карта API](/ru/guides/general/api-map).
+
+## Пакеты
+
+| Пакет | Где | Глобальный `mp` |
+| --- | --- | --- |
+| `@cybermp/server-types` | сервер | `MpServer` |
+| `@cybermp/client-types` | клиент игры | `MpClient` |
+| `@cybermp/browser-types` | страница CEF | `MpBrowser` |
+
+```shell
+npm install -D @cybermp/server-types @cybermp/client-types @cybermp/browser-types @types/node
+```
+
+## Объявление глобального `mp`
+
+`mp` появляется в рантайме. Для компилятора нужен отдельный файл объявлений на каждый рантайм. Каждый tsconfig подключает только свой файл.
+
+<Tabs>
+  <TabItem label="Сервер">
+    ```ts title="src/types/server-global.d.ts"
+    import type { MpServer } from '@cybermp/server-types';
+
+    declare global {
+      const mp: MpServer;
+    }
+
+    export {};
+    ```
+  </TabItem>
+  <TabItem label="Клиент">
+    ```ts title="src/types/client-global.d.ts"
+    import type { MpClient } from '@cybermp/client-types';
+
+    declare global {
+      const mp: MpClient;
+    }
+
+    export {};
+    ```
+  </TabItem>
+  <TabItem label="Браузер (CEF)">
+    ```ts title="src/types/browser-global.d.ts"
+    import type { MpBrowser } from '@cybermp/browser-types';
+
+    declare global {
+      const mp: MpBrowser;
+    }
+
+    export {};
+    ```
+  </TabItem>
+</Tabs>
+
+Три отдельных tsconfig (или три пакета). На сервере есть `mp.vehicles.create`, на клиенте — `mp.game`, `mp.local`, `mp.cef`. Смешение типов в одном файле даёт ошибку проверки или неверный `mp`.
+
+## Пример tsconfig
+
+```json title="tsconfig.server.json"
+{
+  "compilerOptions": {
+    "strict": true,
+    "noImplicitAny": true,
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "target": "ESNext",
+    "types": ["node"],
+    "lib": ["ESNext"]
+  },
+  "include": ["src/server/**/*.ts", "src/types/server-global.d.ts"]
+}
+```
+
+Сервер работает на Node.js, поэтому `@types/node` даёт ему `console`, таймеры и `require`. Для `tsconfig.client.json` возьмите те же опции с `"types": []`, `"lib": ["ESNext", "DOM"]` для `console` и таймеров и `"skipLibCheck": true`: сгенерированные типы игры в `@cybermp/client-types` не проходят проверку библиотек.
+
+На клиенте классы игры импортируются из подпути `/game` того же пакета:
+
+```ts title="client.ts"
+import type { PlayerPuppet } from '@cybermp/client-types/game';
+
+mp.game.onGameLoaded(() => {
+  const player: PlayerPuppet = mp.game.GetPlayer();
+  console.log(player.GetEntityID());
+});
+```
+
+## Правила типизации
+
+- Используйте `MpPlayer`, `MpVehicle`, `GameHash`, `Vector3` из пакетов.
+- На границах RPC принимайте `unknown` и сужайте тип. Сквозная типизация вызовов — [`@cybermp/rpc-router`](/ru/guides/general/rpc#роутер-с-типами).
+- `getMeta` не типизирует ключи. Для строгой типизации оберните ключи проектными хелперами.
+- Нативы — из `@cybermp/client-types`. Если метода нет в `.d.ts`, не объявляйте сигнатуру самостоятельно. См. [игровые нативы](/ru/reference/client/working-with-game-natives).
+
+Сервер запускает `.js`. Соберите TypeScript (esbuild, Bun, tsc) и в `resource.toml` укажите уже собранные файлы.

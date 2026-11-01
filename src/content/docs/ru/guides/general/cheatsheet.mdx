@@ -1,0 +1,52 @@
+---
+title: Шпаргалка
+description: Обязательные правила spawn, client, events и конфигурации.
+---
+
+Краткая форма [карты API](/ru/guides/general/api-map). Сбои спавна и стрима: [диагностика](/ru/guides/general/troubleshooting).
+
+## Спавн
+
+`create` синхронный: текущий ход event loop. После `await` вы уже в другом ходе. Подробнее: [транспорт](/ru/guides/server/vehicles).
+
+```js
+mp.vehicles.create({
+  model: mp.hashes.tweakdbid('Vehicle.v_standard2_archer_hella'),
+  appearance: mp.hashes.cname('default'),
+  position: player.position, // [x, y, z]
+  yaw: player.yaw,
+  dimension: player.dimension,
+});
+```
+
+| Поле | Hasher |
+| --- | --- |
+| `model` педа / машины | `tweakdbid` (`Character.*`, `Vehicle.*`) |
+| `model` объекта | `resref` (`…\\.ent`) |
+| `model` пикапа | `tweakdbid` (`Items.*`) |
+| `appearance` | `cname('default')`, пока нет имени из `.app` |
+
+## Клиент
+
+```js
+mp.game.onGameLoaded(() => {
+  mp.local.spawnPlayer(x, y, z, yaw);
+});
+
+mp.events.on('vehicleStreamIn', (netID, gameID) => {
+  mp.network.getVehicleGameId(netID); // нативы хотят gameID
+});
+
+widget.SetTranslation({ x: 100, y: 200 }); // не (100, 200)
+```
+
+## События / RPC
+
+- У `onClient` первый аргумент — `player`.
+- Нужен ответ — [RPC](/ru/guides/general/rpc), не пара `emit` + `emitClient`.
+- События `void \| boolean`: отмена через `return false` из синхронного обработчика.
+- При `restart` скриптовый рантайм пересоздаётся; в `resourceStop` освобождайте только состояние вне него (например, заспавненные сущности).
+
+## Имена в конфиге
+
+`private_token` (Master List), `disable_voice`.

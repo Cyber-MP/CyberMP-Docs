@@ -1,0 +1,52 @@
+---
+title: Живые обновления
+description: Перезапуск ресурса после правки скрипта без остановки сервера.
+---
+import { Steps } from '@astrojs/starlight/components';
+
+После правки `server.js` или `client.js` перезапустите этот ресурс. Процесс остаётся запущенным.
+
+Требования:
+
+- работающий сервер
+- [консоль сервера](/ru/reference/server/console)
+- ресурс, например `hello_world` из [создания ресурса](/ru/guides/resources/creating-resource)
+
+<Steps>
+    1. #### Правка скрипта
+
+        В `resources/hello_world/server.js`:
+
+        ```js title="server.js" ins={2-3}
+        console.log('Hello World from CyberMP Server!');
+        // New test log:
+        console.log("The resource has been updated live!");
+        ```
+
+    2. #### Перезапуск ресурса
+
+        Консоль:
+
+        ```shell
+        restart hello_world
+        ```
+
+        Из кода: `mp.resources.restart('hello_world')`.
+
+    3. #### Проверка логов
+
+        Предыдущий экземпляр останавливается; новый стартует с обновлённым текстом:
+
+        ```ansi
+        [38;2;179;133;0m[00:00:00] [resources][0m Stopped resource hello_world
+        [38;2;179;133;0m[00:00:00] [hello_world][0m Hello World from CyberMP Server!
+        [38;2;179;133;0m[00:00:00] [hello_world][0m The resource has been updated live!
+        [38;2;179;133;0m[00:00:00] [resources][0m Loaded resource hello_world
+        >
+        ```
+
+</Steps>
+
+`restart` перезагружает клиентский скрипт. Подключённые клиенты скачивают его снова.
+
+Слежение за файлами вместо ручного `restart`: [Hotreload](/ru/guides/general/hotreload).

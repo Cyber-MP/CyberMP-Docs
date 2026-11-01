@@ -1,0 +1,114 @@
+---
+title: Типы ресурсов
+description: "Пути .ent, записи TweakDB и значения, которые create() не принимает."
+---
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+`model` при спавне — **запись TweakDB** или **шаблон сущности** (`.ent`). Хешируйте тем [hasher](/ru/guides/general/hashes), который соответствует типу.
+
+## `.ent`
+
+Шаблон сущности в архивах: проп, контейнер, иногда сборка персонажа. Это то, что требует `mp.objects.create`. Для `mp.pickups.create` — нет: `model` пикапа — запись предмета TweakDB (`Items.*`, хеш через `tweakdbid`).
+
+Путь с обратными слэшами. В строковом литерале JavaScript или Lua каждый пишется как `\\`. Пример создаёт металлические ворота — эту модель используют тестовые ресурсы CyberMP:
+
+<Tabs syncKey="lang">
+<TabItem label="JavaScript">
+
+```js title="server.js"
+const gate = mp.hashes.resref(
+  'base\\gameplay\\devices\\doors\\gates\\appearances\\w300_h250_mall_metal.ent',
+);
+
+mp.objects.create({
+  model: gate,
+  position: [x, y, z],
+});
+```
+
+</TabItem>
+<TabItem label="Lua">
+
+```lua title="server.lua"
+local gate = tonumber(mp.hashes.toResref(
+  'base\\gameplay\\devices\\doors\\gates\\appearances\\w300_h250_mall_metal.ent'
+), 10)
+
+mp.objects.create({
+  model = gate,
+  position = vector3(x, y, z),
+})
+```
+
+</TabItem>
+</Tabs>
+
+Прямые слэши, имя файла без папки архива или `resref` от `.mesh` сущность не создают.
+
+## Записи TweakDB
+
+Именованные данные в TweakDB, не путь к файлу. Типичные префиксы:
+
+| Префикс | Куда |
+| --- | --- |
+| `Character.*` | `model` педа / NPC |
+| `Vehicle.*` | `model` машины |
+| `Items.*` | предметы (нативы, инвентарь, не `mp.objects`) |
+
+<Tabs syncKey="lang">
+<TabItem label="JavaScript">
+
+```js title="server.js"
+mp.peds.create({
+  model: mp.hashes.tweakdbid('Character.CivilianFemaleAverage'),
+  appearance: mp.hashes.cname('default'),
+  position: [x, y, z],
+});
+
+mp.vehicles.create({
+  model: mp.hashes.tweakdbid('Vehicle.v_standard2_archer_hella'),
+  appearance: mp.hashes.cname('default'),
+  position: [x, y, z],
+});
+```
+
+</TabItem>
+<TabItem label="Lua">
+
+```lua title="server.lua"
+local function hash(str) return tonumber(str, 10) end
+
+mp.peds.create({
+  model = hash(mp.hashes.toTweakdbid('Character.CivilianFemaleAverage')),
+  appearance = hash(mp.hashes.toCname('default')),
+  position = vector3(x, y, z),
+})
+
+mp.vehicles.create({
+  model = hash(mp.hashes.toTweakdbid('Vehicle.v_standard2_archer_hella')),
+  appearance = hash(mp.hashes.toCname('default')),
+  position = vector3(x, y, z),
+})
+```
+
+</TabItem>
+</Tabs>
+
+Запись уже ссылается на `.ent` и `.app`. Эти файлы в `create` не передают.
+
+## `.app` и остальное
+
+| Тип | Роль |
+| --- | --- |
+| `.app` | Ресурс внешности. Имена внутри (`default`, цвета, варианты) хешируются через `cname` как [внешность](/ru/guides/general/appearances). |
+| `.mesh`, `.mi`, `.rig`, `.anims` | Меш, материал, скелет, анимации. `.ent` / запись TweakDB уже на них ссылаются. |
+
+У `create` нет поля для этих файлов. Если известен только путь `.mesh`, найдите `.ent` или запись TweakDB, которая его использует.
+
+## Где искать
+
+- Пути в архивах (`.ent`, `.app`): браузер ассетов [WolvenKit](https://wiki.redmodding.org/wolvenkit).
+- Имена записей TweakDB: [Tweak Browser](https://wiki.redmodding.org/wolvenkit/wolvenkit-app/editor/tweak-browser) в WolvenKit или в игре через `mp.game.TweakDB` (JavaScript) / `TweakDB` (Lua) после стадии `onTweak`.
+- Классы и функции игры (нативы): [NativeDB](https://nativedb.red4ext.com/). Записей TweakDB там нет.
+
+Копируйте путь или запись как есть. Опечатка хешируется в корректное на вид число, которое ни на что не указывает.

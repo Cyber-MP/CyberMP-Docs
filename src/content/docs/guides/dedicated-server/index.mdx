@@ -1,0 +1,30 @@
+---
+title: Server overview
+description: CyberMP dedicated server — configuration, console, network.
+---
+
+import { LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+The **server** is a headless process. It loads `server.toml`, starts listed resources, and accepts clients on TCP/UDP. It does not launch Cyberpunk 2077.
+
+Install: Docker image `ghcr.io/cyber-mp/server` or a [release binary](https://github.com/cyber-mp/cybermp-server-releases/releases). Procedure: [install](/guides/getting-started/install-server), [run](/guides/getting-started/run-server).
+
+<CardGrid>
+  <LinkCard title="Hardware and OS" href="/guides/dedicated-server/hardware" description="Windows, Linux, ports, libraries" />
+  <LinkCard title="Console commands" href="/reference/server/console" description="start / stop / refresh, mp.commands.add" />
+  <LinkCard title="server.toml" href="/reference/server/configuration" description="Bind addresses, resources, [core], token" />
+  <LinkCard title="CDN" href="/guides/dedicated-server/cdn" description="Resource file delivery" />
+</CardGrid>
+
+## Command-line arguments
+
+| Argument | Description |
+| --- | --- |
+| `-run` | Reads `server.toml` from the working directory and starts the server. |
+| `-rdir=<path>` | Takes resources from `<path>` instead of the `resources/` folder of the server, at startup and on `refresh`. The built-in `cybermp_core` from `data/` is still found. If both folders contain a resource with the same name, the one in `<path>` is used. |
+| `--justpack` | Packs the client files for a [CDN](/guides/dedicated-server/cdn) and exits. |
+
+```shell
+cybermp-server.exe -run -rdir="D:\cybermp\resources"
+./cybermp-server -run -rdir=/srv/cybermp/resources
+```

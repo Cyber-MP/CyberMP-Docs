@@ -1,0 +1,21 @@
+---
+title: API map
+description: The mp object on server, client, and CEF, and which guide applies.
+slug: guides/general/api-map
+---
+import ApiMap from '../../../../components/ApiMap.astro';
+
+`mp` is a different object in each runtime. Importing `@cybermp/server-types` into a client file autocompletes methods that throw at runtime.
+
+<ApiMap />
+
+## Rules
+
+1. **`mp.*.create` on the server** — synchronous, current event-loop turn. After `await` you are on another turn. [Vehicles](/guides/server/vehicles).
+2. **`appearance`** — `mp.hashes.cname('default')`, never `0`. [Appearances](/guides/general/appearances).
+3. **Hashes** — `tweakdbid` (CRC32 + length) differs from `cname` / `resref` (FNV-1a 64). Use the hasher that matches the field. [Hashes](/guides/general/hashes).
+4. **Vectors** — server `[x, y, z]`; many client natives `{ x, y, z }`. [JS bridge](/guides/general/js-bridge).
+5. **Ids on the client** — stream events give `netID`; natives require `gameID`. [Network](/guides/client/network-and-local).
+6. **Natives** — not before `onGameLoaded`; TweakDB after `onTweak`. [Lifecycle](/guides/client/lifecycle).
+
+TypeDoc: [server](/reference/server/api/readme/), [client](/reference/client/api/readme/), [browser](/reference/browser/api/readme/). One-page summary: [cheatsheet](/guides/general/cheatsheet).

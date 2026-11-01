@@ -1,0 +1,52 @@
+---
+title: Hotreload (Lua)
+description: Automatically restart Lua resources when scripts change.
+---
+
+For infrequent edits, run `restart` in the [server console](/lua/server/resources#console) ([live updates](/lua/server/live-updates)). For continuous editing, use a watcher resource that calls `mp.resources.restart`.
+
+Hotreload reloads **that resource** only. Connected clients re-download its client scripts. The old Lua state is closed, so its event handlers, tasks, timeouts, `mp.onUpdateLoop` callbacks and game hooks do not carry over.
+
+## Enable it on the resource
+
+Set `hot_reload` in the target `resource.toml`. The platform does not read this key; the watcher reads it from the file and skips folders that do not opt in:
+
+```toml title="resources/hello_world/resource.toml"
+client_script = 'client.lua'
+server_script = 'server.lua'
+hot_reload = true
+```
+
+## Watcher resource
+
+Automatic file watching requires a separate watcher resource; the Lua runtime does not watch files itself. Configure the watcher to read script paths and the `hot_reload` flag from `resource.toml`, then call `mp.resources.restart` when a watched file changes. The configuration described here watches these paths:
+
+- `server_script`: one path or an array.
+- `client_script`: one path in quotes only. An array is not watched.
+- `shared_script` and other files are not watched. Run `restart` by hand after changing them.
+
+## Clean up before restart
+
+Entities created with `mp.*.create` stay on the server after the old state is closed, and a restart that creates them again duplicates them. Destroy them in `resourceStop`:
+
+```lua title="server.lua"
+local spawned = {}
+
+mp.events.add('resourceStart', function()
+  spawned[#spawned + 1] = mp.vehicles.create({ --[[ … ]] })
+end)
+
+mp.events.add('resourceStop', function()
+  for _, vehicle in ipairs(spawned) do
+    if vehicle.exist then vehicle:destroy() end
+  end
+end)
+```
+
+Keep the `resourceStop` handler free of `mp.wait`: the state closes right after it. On the client, drop CEF focus if your UI held the cursor.
+
+## What hotreload does not cover
+
+- New resource **folders** still need [`refresh`](/lua/server/resources) (or a server restart) before `start`.
+- Changes to `resource.toml` itself — `file`, `cef_url`, `use_game_natives`, `export` — are not re-read by `restart`. Run `refresh` (it re-reads the manifests), then `restart`.
+- Game archives and `.redscripts` listed in `file` are injected when the game launches. Players must relaunch the game to pick them up.

@@ -19,7 +19,7 @@ Defined in: players.ts:26
 
 > **at**(`entity`): [`MpPlayer`](/reference/server/api/entities/players/mpplayer/)
 
-Defined in: entities.ts:110
+Defined in: entities.ts:108
 
 Retrieves an entity by instance or ID.
 
@@ -35,11 +35,7 @@ Entity instance or ID
 
 [`MpPlayer`](/reference/server/api/entities/players/mpplayer/)
 
-Entity instance
-
-#### Throws
-
-If entity does not exist
+Entity instance, or `undefined` if the entity does not exist (does not throw)
 
 #### Inherited from
 
@@ -53,7 +49,7 @@ If entity does not exist
 
 > **exists**(`entity`): `boolean`
 
-Defined in: entities.ts:100
+Defined in: entities.ts:98
 
 Checks if an entity exists.
 
@@ -94,6 +90,8 @@ Defined in: players.ts:27
 ##### reason?
 
 `string`
+
+Kick reason shown to the player. Pass it explicitly (an empty string is fine): in the current server a call without `reason` fails with `Argument at index 1 was null`.
 
 #### Returns
 

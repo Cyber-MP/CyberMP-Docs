@@ -9,6 +9,10 @@ title: "AppearancePropertyData"
 
 Defined in: events.ts:125
 
+:::caution
+The current server sends this payload as an **array**, not as an object with named fields. Read the values by index in this order: `[meshType, isEnabed, pathToMesh, appearanceHash, chunkMask]`.
+:::
+
 ## Properties
 
 <a id="appearancehash"></a>

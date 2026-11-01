@@ -1,0 +1,179 @@
+---
+interface Props {
+  lang?: 'en' | 'ru';
+}
+
+const lang = Astro.props.lang === 'ru' ? 'ru' : 'en';
+
+const t =
+  lang === 'ru'
+    ? {
+        kicker: 'Калькулятор',
+        title: 'Выбор hasher',
+        label: 'Строка',
+        placeholder: 'default  ·  Character.CivilianFemaleAverage  ·  base\\…\\gate.ent',
+        guess: 'Вероятный hasher',
+        copy: 'Копировать',
+        copied: 'Скопировано',
+        note: 'TweakDBID — CRC32 + длина имени. CName / ResRef — FNV-1a64. Те же алгоритмы, что у mp.hashes на сервере.',
+        chips: 'Примеры',
+        server: 'сервер',
+      }
+    : {
+        kicker: 'Calculator',
+        title: 'Select hasher',
+        label: 'String',
+        placeholder: 'default  ·  Character.CivilianFemaleAverage  ·  base\\…\\gate.ent',
+        guess: 'Suggested',
+        copy: 'Copy',
+        copied: 'Copied',
+        note: 'TweakDBID is CRC32 + name length. CName / ResRef are FNV-1a64. Same algorithms as mp.hashes on the server.',
+        chips: 'Examples',
+        server: 'server',
+      };
+
+const chips = [
+  { label: 'default', value: 'default' },
+  { label: 'Character.*', value: 'Character.CivilianFemaleAverage' },
+  { label: 'Vehicle.*', value: 'Vehicle.v_standard2_archer_hella' },
+  {
+    label: '.ent',
+    value: 'base\\gameplay\\devices\\doors\\gates\\appearances\\w300_h250_mall_metal.ent',
+  },
+];
+
+const kinds = ['cname', 'tweakdbid', 'resref'] as const;
+---
+
+<div class="cmp-widget cmp-hash" data-hash-playground data-lang={lang}>
+  <header class="cmp-hash__head">
+    <div>
+      <p class="cmp-hash__kicker">{t.kicker}</p>
+      <p class="cmp-hash__title">{t.title}</p>
+    </div>
+    <span class="cmp-hash__runtime">{t.server}</span>
+  </header>
+
+  <div class="cmp-hash__body">
+    <label class="cmp-widget__label">
+      {t.label}
+      <input
+        class="cmp-widget__input"
+        type="text"
+        spellcheck="false"
+        autocomplete="off"
+        placeholder={t.placeholder}
+        value="default"
+      />
+    </label>
+
+    <p class="cmp-hash__guess">
+      <span>{t.guess}</span>
+      <code data-guess>cname</code>
+      <span data-guess-why></span>
+    </p>
+
+    <div class="cmp-hash-grid">
+      {
+        kinds.map((kind) => (
+          <article class="cmp-hash-card" data-kind={kind}>
+            <header>
+              <p class="cmp-hash-card__fn">
+                <span>mp.hashes</span>
+                {kind}
+              </p>
+              <button type="button" data-copy>
+                {t.copy}
+              </button>
+            </header>
+            <p class="cmp-hash-card__dec" data-dec>—</p>
+            <p class="cmp-hash-card__hex" data-hex>—</p>
+          </article>
+        ))
+      }
+    </div>
+
+    <p class="cmp-hash__label">{t.chips}</p>
+    <div class="cmp-chips">
+      {
+        chips.map((chip) => (
+          <button type="button" class="cmp-chip" data-chip={chip.value}>
+            {chip.label}
+          </button>
+        ))
+      }
+    </div>
+  </div>
+
+  <p class="cmp-hash__note">{t.note}</p>
+</div>
+
+<script>
+  import { hashAll, formatHash } from '../lib/red-hashes';
+
+  const WHY = {
+    en: {
+      cname: 'engine name / appearance',
+      tweakdbid: 'TweakDB record',
+      resref: 'archive path',
+    },
+    ru: {
+      cname: 'имя движка / внешность',
+      tweakdbid: 'запись TweakDB',
+      resref: 'путь в архиве',
+    },
+  } as const;
+
+  function bind(root: HTMLElement) {
+    const input = root.querySelector<HTMLInputElement>('.cmp-widget__input');
+    const guessEl = root.querySelector<HTMLElement>('[data-guess]');
+    const whyEl = root.querySelector<HTMLElement>('[data-guess-why]');
+    const lang = (root.getAttribute('data-lang') === 'ru' ? 'ru' : 'en') as 'en' | 'ru';
+    if (!input || !guessEl || !whyEl) return;
+
+    const render = () => {
+      const value = input.value;
+      const result = hashAll(value);
+      guessEl.textContent = result.guess;
+      whyEl.textContent = WHY[lang][result.guess];
+      root.querySelectorAll<HTMLElement>('.cmp-hash-card').forEach((card) => {
+        const kind = card.dataset.kind as 'cname' | 'tweakdbid' | 'resref';
+        const formatted = formatHash(result[kind]);
+        const dec = card.querySelector('[data-dec]');
+        const hex = card.querySelector('[data-hex]');
+        if (dec) dec.textContent = formatted.dec;
+        if (hex) hex.textContent = formatted.hex;
+        card.toggleAttribute('data-suggested', kind === result.guess);
+        card.dataset.copyValue = formatted.dec;
+      });
+      root.querySelectorAll<HTMLButtonElement>('[data-chip]').forEach((btn) => {
+        btn.toggleAttribute('data-active', btn.dataset.chip === value);
+      });
+    };
+
+    input.addEventListener('input', render);
+    root.querySelectorAll<HTMLButtonElement>('[data-chip]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        input.value = btn.dataset.chip ?? '';
+        render();
+        input.focus();
+      });
+    });
+    root.querySelectorAll<HTMLButtonElement>('[data-copy]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const card = btn.closest<HTMLElement>('.cmp-hash-card');
+        const text = card?.dataset.copyValue;
+        if (!text) return;
+        await navigator.clipboard.writeText(text);
+        const prev = btn.textContent;
+        btn.textContent = lang === 'ru' ? 'Скопировано' : 'Copied';
+        setTimeout(() => {
+          btn.textContent = prev;
+        }, 1200);
+      });
+    });
+    render();
+  }
+
+  document.querySelectorAll<HTMLElement>('[data-hash-playground]').forEach(bind);
+</script>

@@ -1,0 +1,157 @@
+---
+title: Vehicles
+description: mp.vehicles.create, event-loop turns, appearance, and meta.
+slug: guides/server/vehicles
+---
+import { Steps } from '@astrojs/starlight/components';
+import ExampleDownload from '../../../../components/ExampleDownload.astro';
+
+A vehicle visible to all players is created on the server with `mp.vehicles.create`. Nearby clients in the same `dimension` receive it.
+
+## Create options
+
+```ts
+type CreateVehicleOptions = {
+  model: GameHash;       // tweakdbid of Vehicle.*
+  appearance: CName;     // required — cname('default') unless you have a specific look
+  position: Vector3;     // [x, y, z]
+  yaw?: number;          // default 0
+  health?: number;       // default 300
+  dimension?: number;    // default 0
+};
+```
+
+`model` is a TweakDB record (`Vehicle.*`) via `tweakdbid`. `appearance` is a CName. Do not hash the vehicle record with `cname`, and do not pass `appearance: 0` — clients will not agree on the look. Details: [hashes](/guides/general/hashes), [appearances](/guides/general/appearances), [resource types](/guides/general/resource-types).
+
+```js
+mp.hashes.tweakdbid('Vehicle.v_standard2_archer_hella');
+mp.hashes.cname('default');
+```
+
+`position` on the server is a **tuple** `[x, y, z]`, not `{ x, y, z }`.
+
+:::caution[Synchronous create]
+Spawn runs in the **current** turn of the event loop. After `await` the originating event is already finished — `create` is still synchronous, but it is a different turn.
+:::
+
+:::caution[appearance]
+`appearance: 0` is not default. Use `mp.hashes.cname('default')` or clients will not agree on the look.
+:::
+
+## Spawn and the event loop
+
+`mp.vehicles.create` is a **synchronous** native call. When it returns, the vehicle exists on the server: the call returns an `MpVehicle` with an assigned `id`. There is no Promise. The platform does not defer the spawn.
+
+Server scripts run on the Node.js **event loop**. The platform drives that loop and invokes handlers (`mp.events.on`, `onClient`, `resourceStart`) as callbacks. Until the callback returns, execution remains in the same turn — the same interaction with the platform that delivered the event.
+
+`await` ends that turn. Code after `await` runs later: a microtask, or a later phase of the loop (timers, the poll phase after I/O, `setImmediate` in the check phase). `create` there is still synchronous, but it is a **new** entry into the platform, not a continuation of the original event.
+
+If spawn follows async work (database, Redis, `fetch`), the later turn is the relevant one. `create` does not wait for the Promise and is not bound to it. The platform does not pause its own work across the Promise: when the continuation runs, native sees another JS callback.
+
+`setImmediate` is Node's check-phase callback. It is not a CyberMP API and not a special spawn mode. From the platform's point of view it is another turn of the loop, like `setTimeout` or a resolved Promise.
+
+```js
+mp.events.onClient('requestVehicleSpawn', (player) => {
+  // this stack is the turn in which the platform delivered the packet
+  const vehicle = mp.vehicles.create({
+    model: mp.hashes.tweakdbid('Vehicle.v_standard2_archer_hella'),
+    appearance: mp.hashes.cname('default'),
+    position: player.position,
+  });
+});
+```
+
+```js
+mp.events.onClient('requestVehicleSpawn', async (player, id) => {
+  const row = await db.findVehicle(id);
+  // await already yielded; create below is a different turn
+  const vehicle = mp.vehicles.create({
+    model: mp.hashes.tweakdbid(row.model),
+    appearance: mp.hashes.cname('default'),
+    position: player.position,
+  });
+});
+```
+
+Same call for objects, peds, and pickups: [world entities](/guides/server/world-entities).
+
+## Synced meta
+
+After create, write gameplay keys with [`setMeta`](/reference/server/api/entities/mpentity/#setmeta). Pass `sync = true` so clients can read the same keys through `mp.meta.getEntityMeta`.
+
+```js
+vehicle.setMeta('locked', true, true);
+vehicle.setMeta('engine', false, true);
+vehicle.setMeta('ownerId', String(player.id), true);
+```
+
+Clients receive those keys once the vehicle streams in (`vehicleStreamIn`). See [Sync, dimensions, and meta](/guides/general/sync-and-meta).
+
+## Seats and lifetime
+
+```js
+mp.events.on('enterVehicle', (playerId, data) => {
+  const [vehicleId, seat] = data; // payload is an array
+  const vehicle = mp.vehicles.at(vehicleId);
+  const driver = vehicle?.seats.driver;
+  console.log('seat', seat, 'driver', driver?.id);
+});
+
+mp.events.on('vehicleDespawn', (id) => {
+  console.log('gone', id);
+});
+
+// later
+if (mp.vehicles.exists(vehicle.id)) {
+  vehicle.destroy();
+}
+```
+
+`VehicleSeat`: `Driver = 0`, `Passenger = 1`, `RearLeft = 2`, `RearRight = 3`.
+
+Check `exists` before `at` — `at` returns `undefined` if the id is gone.
+
+The server emits the enter event as `enterVehicle` with `(playerId, [vehicleId, seat])` and leaving as `exitVehicle` with `(playerId, [vehicleId])`; there is no `playerEnterVehicle` event in the server code.
+
+## Example resource
+
+Complete resource demonstrating the F8 command `car`: [recipe](/guides/recipes/spawn-vehicle).
+
+<ExampleDownload href="/examples/spawn-car.zip" />
+
+<Steps>
+
+1. ## Server: create the vehicle
+
+   ```js title="server.js"
+   mp.events.onClient('requestVehicleSpawn', (player, modelName) => {
+     const vehicle = mp.vehicles.create({
+       model: mp.hashes.tweakdbid(modelName),
+       appearance: mp.hashes.cname('default'),
+       position: player.position,
+       yaw: player.yaw,
+       health: 5000,
+       dimension: player.dimension,
+     });
+
+     vehicle.setMeta('ownerId', String(player.id), true);
+     mp.events.emitClient(player, 'vehicleSpawned', vehicle.id);
+   });
+   ```
+
+2. ## Client: request and watch stream-in
+
+   ```js title="client.js"
+   mp.commands.add('car', () => {
+     mp.events.emitServer('requestVehicleSpawn', 'Vehicle.v_standard2_archer_hella');
+   });
+
+   mp.events.on('vehicleStreamIn', (netID, gameID) => {
+     const ownerId = mp.meta.getEntityMeta(netID, 'ownerId');
+     console.log('vehicle in range', netID, gameID, ownerId);
+   });
+   ```
+
+</Steps>
+
+If the vehicle does not appear, see [troubleshooting](/guides/general/troubleshooting).

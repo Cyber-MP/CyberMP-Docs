@@ -1,0 +1,73 @@
+---
+title: Пулы и объекты сущностей (Lua)
+description: mp.players, mp.vehicles, mp.objects, mp.peds, mp.pickups и поля сущностей в Lua.
+---
+
+## Пулы
+
+`mp.players`, `mp.vehicles`, `mp.objects`, `mp.peds`, `mp.pickups`.
+
+| Вызов | Описание |
+| --- | --- |
+| `pool.exists(entityOrId)` | `true`, если сущность существует. |
+| `pool.at(entityOrId)` | Объект сущности по id. Если её нет — ошибка `Entity does not exist`, поэтому сначала вызывайте `exists`. |
+| `pool.toArray()` | Все сущности пула как объекты. |
+| `pool.create(options)` | Создаёт синхронизируемую сущность и возвращает её объект. Нет у `mp.players`. См. [транспорт](/ru/lua/server/vehicles) и [объекты, педы, пикапы](/ru/lua/server/world-entities). |
+| `pool.destroy(entityOrId)` | Удаляет сущность. Нет у `mp.players`. |
+| `mp.players.kick(playerOrId, reason)` | Кикает игрока. |
+
+```lua title="server.lua"
+for _, player in ipairs(mp.players.toArray()) do
+  player:trigger('announce', 'Round starting')
+end
+
+if mp.vehicles.exists(id) then
+  mp.vehicles.at(id).dimension = 0
+end
+```
+
+## Объекты сущностей
+
+Объект сущности — таблица `{ id = <сетевой id> }` с метатаблицей. Каждое чтение поля запрашивает у сервера текущее значение. Два объекта одной сущности — разные таблицы: сравнивайте `id`, а не объекты.
+
+**Все сущности**
+
+| Поле | Описание |
+| --- | --- |
+| `id` | Сетевой id. |
+| `type` | `1` игрок, `2` транспорт, `3` объект, `4` пед, `5` пикап, `6` дверь, `0` не найдена. |
+| `exist` | `true`, пока сущность существует. |
+| `position` | `vector3`. Только чтение. |
+| `rotation` | `vector3`: `x` — roll, `y` — pitch, `z` — yaw. Только чтение. |
+| `yaw` | Направление. Только чтение. |
+| `dimension` | Чтение и запись. [Измерения](/ru/lua/server/entities#dimensions). |
+| `streamingRadius` | Чтение и запись. |
+| `owner` | Объект игрока, чей клиент владеет сущностью, или `-1`, если клиент-владелец не назначен. Для не-игроков доступен на запись: присвойте объект игрока или id. |
+| `firstOwner` | Первый владелец или `-1`. |
+| `entity:getMeta(key)` | То же, что `mp.meta.getPlayer` / `mp.meta.getEntity`. |
+| `entity:setMeta(key, value)` | Ставит мету **без** синхронизации с клиентами. Для синхронизации используйте [`mp.meta`](/ru/lua/shared/meta) с `sync = true`. |
+
+Присвоить можно только `dimension`, `streamingRadius` и `owner`. Присваивание любого другого поля, включая `position`, только сохраняет его в этой таблице Lua. Сущность не двигается и не меняется.
+
+**Игроки:** `nickname`, `ping`, `ip`, `health`, `velocity`, `vehicle` и `lastVehicle` (объект транспорта или `nil`), методы `player:kick(reason)`, `player:trigger(eventName, ...)` (отправляет клиентское событие), `player:mute(enable)` ([голос](/ru/lua/shared/voice)).
+
+**Транспорт:** `model`, `appearance`, `health`, `velocity`, `angularVelocity`, `seats`, `lastSeats`, `getPlayerInSeat`, `getLastPlayerInSeat`, `destroy`: см. [транспорт](/ru/lua/server/vehicles#места-и-время-жизни).
+
+**Педы:** `model`, `appearance`, `health`, `ped:destroy()`. **Объекты:** `model`, `object:destroy()`. **Пикапы:** `model`, `pickupType`, `pickup:destroy()`.
+
+## `mp.v1`
+
+Низкоуровневые вызовы по числовому id, на которых построены пулы и объекты сущностей. Лучше используйте пулы. У нескольких нет обёртки: `mp.v1.getPlayersCount()` возвращает число игроков, `mp.v1.getEntityMaxHealth(id)` — максимальное здоровье сущности.
+
+<a id="dimensions"></a>
+## Измерения
+
+У каждой синхронизируемой сущности есть `dimension`; `0` — общий мир. Клиенты стримят сущности только в том же измерении и в пределах радиуса стриминга. Отрицательные измерения игнорируются. Смена измерения сохраняет сетевой id.
+
+```lua title="server.lua"
+player.dimension = houseId + 1000000
+vehicle.dimension = player.dimension
+mp.meta.setPlayer(player, 'dimension', player.dimension, true)
+```
+
+На клиенте нет прямого свойства измерения локального игрока; при необходимости передавайте его через синхронизируемую мету игрока. У локальных сущностей `mp.client.spawn*` нет измерения: удаляйте их сами при смене мира. Для телепорта в другое измерение обычно нужен экран загрузки.

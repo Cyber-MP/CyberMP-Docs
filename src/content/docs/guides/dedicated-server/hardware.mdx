@@ -1,0 +1,26 @@
+---
+title: Hardware and OS
+description: Host requirements for CyberMP Server.
+---
+
+CyberMP Server is a network process. Resource code determines extra CPU, RAM, and bandwidth.
+
+## Operating system
+
+| Host | Notes |
+| --- | --- |
+| Windows | `cybermp-server.exe -run` from the server root |
+| Linux | `./cybermp-server -run` from the server root. Primary test target: Ubuntu |
+| Docker | `ghcr.io/cyber-mp/server:latest`. Publish TCP and UDP |
+
+## Network
+
+Default port **2077**, TCP and UDP. `tcp_host` / `udp_host` bind locally. `connection_host_addr` is the client-facing address. Forward both protocols.
+
+`http://<host>:2077/` returns JSON with the server version (liveness).
+
+## Capacity
+
+`max_players` in [`server.toml`](/reference/server/configuration) limits the number of players.
+
+Load scales with script work, streamed entities, [voice](/guides/general/voice), and [custom assets](/guides/resources/adding-resource-files). Place archives on the [CDN](/guides/dedicated-server/cdn) for public downloads.

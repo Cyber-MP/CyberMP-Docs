@@ -1,0 +1,74 @@
+---
+const route = Astro.locals.starlightRoute;
+const id = String(route.id ?? route.slug ?? '').replace(/\/$/, '').toLowerCase();
+const isRu = Astro.currentLocale === 'ru';
+const prefix = isRu ? '/ru' : '';
+
+const RULES: { test: RegExp; href: string; en: string; ru: string }[] = [
+  {
+    test: /reference\/server\/api\/entities\/vehicles/,
+    href: '/guides/server/vehicles',
+    en: 'Vehicles — event loop, tweakdbid, cname(\'default\')',
+    ru: 'Транспорт — event loop, tweakdbid, cname(\'default\')',
+  },
+  {
+    test: /reference\/server\/api\/entities\/(objects|peds|pickups|mpentities|mpentity)/,
+    href: '/guides/server/world-entities',
+    en: 'Objects, peds, pickups',
+    ru: 'Объекты, педы, пикапы',
+  },
+  {
+    test: /reference\/server\/api\/(global\/mphashes|hashes)/,
+    href: '/guides/general/hashes',
+    en: 'Hashes: cname / tweakdbid / resref',
+    ru: 'Хеши: cname / tweakdbid / resref',
+  },
+  {
+    test: /reference\/server\/api\/events\//,
+    href: '/guides/server/events',
+    en: 'Server events',
+    ru: 'События',
+  },
+  {
+    test: /reference\/client\/api\/natives\/mpgamehashes/,
+    href: '/guides/general/hashes',
+    en: 'Client hashes (toCname / toTweakdbid / toResref)',
+    ru: 'Клиентские хеши (toCname / toTweakdbid / toResref)',
+  },
+  {
+    test: /reference\/client\/api\/global\/mplocalstorage/,
+    href: '/guides/scripting/local-storage',
+    en: 'Local storage — strings on this machine, call save()',
+    ru: 'Локальное хранилище — строки на этой машине, не забудьте save()',
+  },
+  {
+    test: /reference\/client\/api\/(global\/mpgame|natives\/)/,
+    href: '/reference/client/working-with-game-natives',
+    en: 'Working with game natives',
+    ru: 'Игровые нативы',
+  },
+  {
+    test: /reference\/client\/api\/events\//,
+    href: '/guides/client/events',
+    en: 'Client events',
+    ru: 'События на клиенте',
+  },
+  {
+    test: /reference\/browser\/api\//,
+    href: '/guides/client/first-cef-ui',
+    en: 'First CEF UI',
+    ru: 'Первый CEF-интерфейс',
+  },
+];
+
+const hit = RULES.find((r) => r.test.test(id));
+---
+
+{
+  hit ? (
+    <p class="cmp-related">
+      <span>{isRu ? 'Гайд' : 'Guide'}</span>
+      <a href={`${prefix}${hit.href}`}>{isRu ? hit.ru : hit.en}</a>
+    </p>
+  ) : null
+}

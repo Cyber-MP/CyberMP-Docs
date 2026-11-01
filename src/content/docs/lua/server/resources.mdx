@@ -1,0 +1,48 @@
+---
+title: Managing resources (Lua)
+description: Start, stop, and refresh resources from a Lua server script.
+---
+
+Console commands (`refresh`, `start`, `stop`, `restart`) are the same for every runtime: [managing resources](/lua/server/resources#console). From a Lua server script use `mp.resources`.
+
+| Call | Returns |
+| --- | --- |
+| `mp.resources.getCurrentName()` | Name of this resource. |
+| `mp.resources.getState(name)` | Number: `0` not found, `1` starting, `2` started, `3` stopped (or found but never started). |
+| `mp.resources.start(name)` / `stop(name)` / `restart(name)` | Starts, stops or restarts a resource. |
+| `mp.resources.refreshAll()` | Rescans the resources folder, like the `refresh` console command. |
+| `mp.resources.getTomlFile(name)` | The resource's `resource.toml` as a JSON string. |
+| `mp.resources.loadFile(name, path)` | Content of a file of that resource as a string. |
+| `mp.getServerTomlFile()` | `server.toml` as a JSON string. |
+
+```lua title="server.lua"
+mp.commands.add('rs', function(player, args)
+  if player ~= 0 then return end -- server console only
+
+  local name = args[1]
+  if not name or mp.resources.getState(name) == 0 then
+    print('unknown resource', name)
+    return
+  end
+
+  mp.resources.restart(name)
+end)
+```
+
+## What stop releases
+
+On `stop` and `restart` the platform closes the resource's Lua state. Event handlers, tasks, timeouts and `mp.onUpdateLoop` callbacks of the old instance are gone, and its server commands are removed. Entities created with `mp.*.create` stay on the server: destroy them in `resourceStop` ([example](/lua/shared/hotreload#clean-up-before-restart)).
+
+Script edits need `restart`: [live updates](/lua/server/live-updates).
+
+<a id="console"></a>
+## Server console
+
+| Command | Action |
+| --- | --- |
+| `refresh` | Rescan resource folders and manifests. |
+| `start hello_world` | Start the named resource. |
+| `stop hello_world` | Stop the named resource. |
+| `restart hello_world` | Stop and start the resource to reload its scripts. |
+
+Run these in the dedicated server console. A new folder needs `refresh` before `start`. `restart` does not reread the manifest: after changing `resource.toml`, run `refresh` first. From a server script, `mp.commands.execute('restart hello_world')` runs the same command.

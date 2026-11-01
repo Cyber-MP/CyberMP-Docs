@@ -1,0 +1,40 @@
+---
+title: cybermp_core
+description: "[core], [core.overrides], порядок загрузки ресурсов."
+---
+
+CyberMP отдаёт каждому подключающемуся клиенту **core runtime** — встроенный ресурс `cybermp_core` из папки `data/` сервера. Таблица `[core]` его настраивает.
+
+Настройка — в [`server.toml`](/ru/reference/server/configuration).
+
+## `[core]`
+
+Неймтеги, автоподъём после смерти, ограничения по умолчанию, смена мест, точки дропа, квесты, гараж, дополнительные архивы через `core.files`. `delete_map_objects` в текущей версии ни на что не влияет. Что делает каждый ключ и что ресурс делает всегда: [ключи `[core]`](/ru/reference/server/configuration#core--игровой-рантайм). Каждая запись `core.files` — имя файла в `files/` ресурса `cybermp_core`; отправляются только файлы, которые этот ресурс перечисляет в `file`. Особые записи: `ArchiveXL` (всё из `files/ArchiveXL/`) и `final.redscript` (отправляет `files/final.redscripts`).
+
+:::caution
+Не удаляйте таблицу `[core]` из `server.toml`. Без неё клиентская часть `cybermp_core` не запускается.
+:::
+
+## `[core.overrides]`
+
+Точные ключи `CoreConfigOverrides` (`cybermp_core`). Применяются при значении `true`.
+
+| Флаг | Эффект |
+| --- | --- |
+| `change_player_on_death_logic` | Перехватывает `PlayerPuppet.OnDeath`. Режим владеет `playerDeath` и респауном. |
+| `disable_side_quests_notifications` | Блокирует обновления tracked-mappin в трекере квестов и очереди журнала. |
+| `change_vehicles_logic` | Перехватывает ограничение вызова, посадку, визуальную кастомизацию и выход при угоне. |
+| `disable_player_inventory_encumbrance` | `PlayerPuppet.EvaluateEncumbrance` — no-op. |
+| `player_extended_customization` | Открывает кастомизацию персонажа (CCO-зеркало) в режиме NewGame. |
+| `disable_time_skip` | `GameTimeUtils.CanPlayerTimeSkip` возвращает false. |
+| `disable_turrets` | Турели нельзя сорвать или включить. `TurnOnDevice` применяет смерть. |
+| `disable_surveillance_cameras` | `SurveillanceCamera.TurnOnDevice` применяет смерть. |
+| `disable_vending_machines` | `VendingMachine` и `WeaponVendingMachine` остаются выключенными. |
+| `disable_generic_devices` | `NetrunnerControlPanel`, `NumericDisplay`, `SecurityGateLock`, `SecurityLocker` остаются выключенными. |
+| `disable_no_combat` | Игнорирует вход в `SecurityArea`. Снимает `GameplayRestriction.NoCombat`. |
+
+## Ресурс `cybermp_core`
+
+При запуске из `server.toml` сервер сам выполняет `start cybermp_core` до списка `resources`, поэтому его [экспорты](/ru/guides/general/exports) доступны без записи в списке. Хуки `[core.overrides]` — часть этого ресурса (`dist/main.lua`). Чтобы заменить хук, архив или redscript, отключите его в `server.toml` и реализуйте в своём ресурсе: [изменение cybermp_core](/ru/reference/server/configuration#изменение-cybermp_core).
+
+Глобальные архивы: `core.files`. Файлы ресурса: [`file`](/ru/guides/resources/adding-resource-files).

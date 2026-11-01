@@ -1,0 +1,160 @@
+---
+title: Sync, dimensions, and meta
+description: How CyberMP streams entities and replicates metadata.
+slug: guides/general/sync-and-meta
+---
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+The server decides what exists. Clients render entities that are nearby and in the same `dimension`. Extra fields (name, lock, wanted level) go in **meta**.
+
+## Entities and streaming
+
+Players, vehicles, peds, objects, and pickups are [`MpEntity`](/reference/server/api/entities/mpentity/) instances:
+
+| Field | Meaning |
+| --- | --- |
+| `id` | Network id. Stable while the entity exists. |
+| `dimension` | Virtual world. Entities in different dimensions do not see each other. Default `0`. |
+| `streamingRadius` | Distance at which remote clients start receiving the entity. |
+| `position` / `rotation` / `yaw` | Transform. Server `position` is `[x, y, z]`. |
+| `exist` | `false` after destroy / disconnect. |
+
+On the client, stream events fire when an entity crosses the local radius:
+
+- `vehicleStreamIn` / `vehicleStreamOut`
+- `remotePlayerStreamIn` / `remotePlayerStreamOut`
+- `pedStreamIn` / `pedStreamOut`
+- `objectStreamIn` / `objectStreamOut`
+
+Each callback receives `(netID, gameID)`. `netID` is what you pass to `mp.meta.getEntityMeta` / `getPlayerMeta`. `gameID` is the local REDengine handle. Convert with [`mp.network`](/guides/client/network-and-local) (`getVehicleGameId`, `getPlayerId`, …).
+
+<Tabs syncKey="lang">
+<TabItem label="JavaScript">
+
+```js title="client.js"
+mp.events.on('vehicleStreamIn', (netID, gameID) => {
+  const locked = mp.meta.getEntityMeta(netID, 'locked');
+  console.log('streamed vehicle', netID, gameID, locked);
+});
+```
+
+</TabItem>
+<TabItem label="Lua">
+
+```lua title="client.lua"
+mp.events.add('vehicleStreamIn', function(netID, gameID)
+  local locked = mp.meta.getEntity(netID, 'locked')
+  print('streamed vehicle', netID, gameID, locked)
+end)
+```
+
+</TabItem>
+</Tabs>
+
+Do not keep a client-side cache of every vehicle. Drop state on `*StreamOut` or the next `resourceStop`.
+
+## Meta
+
+Three scopes:
+
+| API | Scope |
+| --- | --- |
+| `mp.meta.setGlobalMeta(key, value, sync?)` | Process-wide. |
+| `mp.meta.setPlayerMeta(player, key, value, sync?)` | One player. |
+| `mp.meta.setEntityMeta(entity, key, value, sync?)` | Vehicle / ped / object / pickup. |
+| `entity.setMeta(key, value, sync?)` | Same as entity meta, on the instance. |
+
+The table is the server JavaScript API. Lua uses `mp.meta.setGlobal` / `setPlayer` / `setEntity`, and its `entity:setMeta` never syncs: [meta in Lua](/lua/shared/meta). On the JavaScript client the global setter is named `mp.meta.setGlobal(key, value, sync?)` (there is no client `setGlobalMeta`; the getter is still `getGlobalMeta`), and you also have `setLocalPlayerMeta` / `getLocalPlayerMeta`.
+
+The last argument **`sync`** replicates the key to interested clients. On the JavaScript server it defaults to **`true`** when omitted; in Lua an omitted `sync` means not synced. Pass `false` explicitly for server-only bookkeeping. On the client it defaults to `false` (local only); with `true` the value is sent to the server, which drops it when the key belongs to someone else (global meta, another player, an entity owned by another client).
+
+<Tabs syncKey="lang">
+<TabItem label="JavaScript">
+
+```js title="server.js"
+player.setMeta('characterName', 'V', true);
+mp.meta.setPlayerMeta(player, 'wantedLevel', 2, true);
+
+vehicle.setMeta('locked', true, true);
+```
+
+</TabItem>
+<TabItem label="Lua">
+
+```lua title="server.lua"
+mp.meta.setPlayer(player, 'characterName', 'V', true)
+mp.meta.setPlayer(player, 'wantedLevel', 2, true)
+
+mp.meta.setEntity(vehicle, 'locked', true, true)
+```
+
+</TabItem>
+</Tabs>
+
+<Tabs syncKey="lang">
+<TabItem label="JavaScript">
+
+```js title="client.js"
+const name = mp.meta.getPlayerMeta(netId, 'characterName');
+const wanted = mp.meta.getPlayerMeta(netId, 'wantedLevel') ?? 0;
+const locked = mp.meta.getEntityMeta(vehicleNetId, 'locked');
+```
+
+</TabItem>
+<TabItem label="Lua">
+
+```lua title="client.lua"
+local name = mp.meta.getPlayer(netId, 'characterName')
+local wanted = mp.meta.getPlayer(netId, 'wantedLevel') or 0
+local locked = mp.meta.getEntity(vehicleNetId, 'locked')
+```
+
+</TabItem>
+</Tabs>
+
+Change events:
+
+- `playerMetaChange(id, key, newValue, oldValue)`
+- `entityMetaChange(id, key, newValue, oldValue)`
+- `globalMetaChange(key, newValue, oldValue)`
+
+Meta is **not** a replacement for [RPC](/guides/general/rpc). It is a replicated key-value store. Large or high-frequency payloads (inventory diffs, every ammo tick) belong on targeted events.
+
+## Collections
+
+<Tabs syncKey="lang">
+<TabItem label="JavaScript">
+
+```js title="server.js"
+if (mp.vehicles.exists(id)) {
+  const vehicle = mp.vehicles.at(id);
+  vehicle.dimension = 0;
+}
+
+for (const p of mp.players.toArray()) {
+  mp.events.emitClient(p, 'announce', 'Round starting');
+}
+```
+
+</TabItem>
+<TabItem label="Lua">
+
+```lua title="server.lua"
+if mp.vehicles.exists(id) then
+  local vehicle = mp.vehicles.at(id)
+  vehicle.dimension = 0
+end
+
+for _, p in ipairs(mp.players.toArray()) do
+  p:trigger('announce', 'Round starting')
+end
+```
+
+</TabItem>
+</Tabs>
+
+In JavaScript `at` returns `undefined` when the id is stale (types say it throws); in Lua it raises an error. Call `exists` first.
+
+## Local-only entities
+
+`spawnPed` / `spawnVehicle` / `spawnObject` (`mp.local` in JavaScript, `mp.client` in Lua) create **unsynced** engine entities. Other players never see them. Use them for decorations, client-side checkpoints, or preview models. Do not use them as the source of truth for gameplay. See [network ids and local spawn](/guides/client/network-and-local).

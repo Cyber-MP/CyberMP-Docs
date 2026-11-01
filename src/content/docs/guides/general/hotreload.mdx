@@ -1,0 +1,178 @@
+---
+title: Hotreload
+description: Automatically restart CyberMP resources when scripts change.
+slug: guides/general/hotreload
+---
+import { FileTree, Steps } from '@astrojs/starlight/components';
+
+For infrequent edits, run `restart` in the [server console](/reference/server/console). For continuous editing, add a resource that watches files and calls `mp.resources.restart`.
+
+Hotreload reloads **that resource** only. Connected clients re-download its client script. The previous instance's script runtime is destroyed, so its `mp.events` handlers, ticks, commands, and native observers do not carry over.
+
+:::note[Freeroam]
+[Freeroam](/guides/freeroam) ships a ready watcher in `resources/hotreload`. It reads the key `hotreload = true` (not `hot_reload`), runs only with `NODE_ENV=development`, watches the `client_script` and `server_script` files and looks for resources in `./resources` of the working directory. With `IS_DOCKER=true` it polls files instead of using file system events.
+:::
+
+## Enable it on the resource
+
+Set `hot_reload` in the target `resource.toml`. The platform does not read this key; the watcher below reads it from the file and skips folders that do not opt in:
+
+```toml title="resources/hello_world/resource.toml"
+client_script = './client.js'
+server_script = './server.js'
+hot_reload = true
+```
+
+## Watcher resource
+
+<Steps>
+
+1. ## Create the watcher folder
+
+   Next to the target resource, add a dedicated resource (for example `hotreload`). Keep it out of the folder it watches so a restart does not stop the watcher.
+
+   <FileTree>
+       - resources
+           - hello_world
+               - client.js
+               - server.js
+               - resource.toml
+           - hotreload
+               - server.js
+               - resource.toml
+       - server.toml
+   </FileTree>
+
+2. ## Manifest
+
+   The watcher is server-only:
+
+   ```toml title="resources/hotreload/resource.toml"
+   server_script = ['./server.js']
+   ```
+
+   List it **before** the resources it restarts:
+
+   ```toml title="server.toml" ins={3}
+   resources = [
+     'hotreload',
+     'hello_world',
+   ]
+   ```
+
+3. ## Watch opted-in scripts
+
+   The example below uses Node's `fs.watchFile`. Run it with `NODE_ENV=development`. Do not enable this watcher on production servers.
+
+   ```js title="resources/hotreload/server.js"
+   const fs = require('fs');
+   const path = require('path');
+
+   const debounce = (fn, delay) => {
+     let timer;
+     return (...args) => {
+       clearTimeout(timer);
+       timer = setTimeout(() => fn(...args), delay);
+     };
+   };
+
+   const watchFile = (filePath, onChange) => {
+     const run = debounce(onChange, 600);
+     fs.watchFile(filePath, { interval: 500 }, () => run());
+   };
+
+   const parseHotReload = (content) => {
+     const match = content.match(/^hot_reload\s*=\s*(.+)$/m);
+     if (!match) return false;
+     const raw = match[1].trim().replace(/^["']|["']$/g, '');
+     return raw === 'true' || raw === '1';
+   };
+
+   const resourcesDir = path.resolve('./resources');
+
+   // Watch only when the server was started with NODE_ENV=development
+   const entries = process.env.NODE_ENV === 'development'
+     ? fs.readdirSync(resourcesDir, { withFileTypes: true })
+     : [];
+
+   for (const entry of entries) {
+     if (!entry.isDirectory()) continue;
+
+     const resourcePath = path.join(resourcesDir, entry.name);
+     const tomlPath = path.join(resourcePath, 'resource.toml');
+     if (!fs.existsSync(tomlPath)) continue;
+
+     const toml = fs.readFileSync(tomlPath, 'utf8');
+     if (!parseHotReload(toml)) continue;
+
+     const clientMatch = toml.match(/^client_script\s*=\s*['"](.+)['"]/m);
+     const serverMatch = toml.match(/^server_script\s*=\s*(.+)$/m);
+
+     const files = [];
+     if (clientMatch) files.push(path.resolve(resourcePath, clientMatch[1]));
+
+     if (serverMatch) {
+       const raw = serverMatch[1].trim();
+       const list = raw.startsWith('[')
+         ? JSON.parse(raw.replace(/'/g, '"'))
+         : [raw.replace(/^["']|["']$/g, '')];
+       for (const script of list) {
+         files.push(path.resolve(resourcePath, script));
+       }
+     }
+
+     for (const file of files) {
+       if (!fs.existsSync(file)) continue;
+       console.log(`Hotreload watching ${entry.name}: ${file}`);
+       watchFile(file, () => {
+         console.log(`[Hotreload] ${file} changed → restart ${entry.name}`);
+         mp.resources.restart(entry.name);
+       });
+     }
+   }
+   ```
+
+4. ## Run in development
+
+   ```shell
+   NODE_ENV=development ./cybermp-server.exe -run
+   ```
+
+   On Windows PowerShell:
+
+   ```powershell
+   $env:NODE_ENV = 'development'
+   .\cybermp-server.exe -run
+   ```
+
+</Steps>
+
+## Clean up before restart
+
+`restart` stops the resource and starts a new instance. On stop the platform tears down the script runtime: `mp.events` handlers, `mp.setTick` loops, commands, and `mp.game.observe*` / `override` hooks of the old instance are released. State that lives outside the runtime is not: for example entities created with `mp.*.create` stay on the server, and a restart that creates them again duplicates them. Release that state in `resourceStop`:
+
+```js title="server.js"
+const spawned = [];
+
+mp.events.on('resourceStart', () => {
+  spawned.push(mp.vehicles.create({
+    model: mp.hashes.tweakdbid('Vehicle.v_standard2_archer_hella'),
+    appearance: mp.hashes.cname('default'),
+    position: [-1392.6, 1271.5, 123.1],
+  }));
+});
+
+mp.events.on('resourceStop', () => {
+  for (const vehicle of spawned) vehicle.destroy();
+});
+```
+
+On the client, drop CEF focus if your UI held the cursor.
+
+## What hotreload does not cover
+
+- New resource **folders** still need [`refresh`](/guides/resources/interacting-with-resources) (or a server restart) before `start`.
+- Changes to `resource.toml` itself — `file`, `cef_url`, `use_game_natives` — are not re-read by `restart`. Run `refresh` (it re-reads the manifests), then `restart`.
+- Game archives and `.redscripts` listed in `file` are injected when the game launches. Players must relaunch the game to pick them up.
+
+See [Live updates](/guides/resources/live-updates) for the manual `restart` flow.

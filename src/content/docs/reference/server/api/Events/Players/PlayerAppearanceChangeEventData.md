@@ -9,6 +9,10 @@ title: "PlayerAppearanceChangeEventData"
 
 Defined in: events.ts:145
 
+:::caution
+The current server sends this payload as an **array**, not as an object with named fields. Read the values by index in this order: `[skinneds, garments, morphs, weights]`.
+:::
+
 ## Properties
 
 <a id="garments"></a>

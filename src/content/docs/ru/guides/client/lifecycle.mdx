@@ -1,0 +1,173 @@
+---
+title: Жизненный цикл клиента
+description: Порядок resourceStart, onTweak, onInit, onGameLoaded и спавна.
+---
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import LifecycleTimeline from '../../../../../components/LifecycleTimeline.astro';
+
+Клиентский скрипт стартует до готовности мира. Получение игрока и телепорт недопустимы до `onGameLoaded`.
+
+## Порядок
+
+<LifecycleTimeline lang="ru" />
+
+| Этап | JavaScript | Lua | Допустимо | Недопустимо |
+| --- | --- | --- | --- | --- |
+| `resourceStart` | `mp.events.on('resourceStart', fn)` | `mp.events.add('resourceStart', fn)` | События, RPC, команды | Любой игровой натив |
+| `onTweak` | `mp.game.onTweak(fn)` | `mp.registerGameState('onTweak', fn)` | Чтение и запись TweakDB | Рассчитывать на локального игрока |
+| `onInit` | `mp.game.onInit(fn)` | `mp.registerGameState('onInit', fn)` | Ранняя подготовка рантайма | Запросы к миру |
+| `onGameLoaded` | `mp.game.onGameLoaded(fn)` / `onceGameLoaded(fn)` | `mp.registerGameState('onGameLoaded', fn)` / `'onceGameLoaded'` | Игрок, системы, observe/override, спавн | — |
+| `onLocalPlayerSpawned` | `mp.game.onLocalPlayerSpawned(fn)` | — (только JavaScript) | Внешность, здоровье, UI после спавна | Пол и кукла могут быть не финальными. Дождитесь готовности. |
+| `resourceStop` | `mp.events.on('resourceStop', fn)` | `mp.events.add('resourceStop', fn)` | Освободить состояние вне скрипта, фокус CEF | Запускать новую долгую работу |
+
+В JavaScript и Lua игровые классы и функции доступны только после `onInit` ([игровые нативы в Lua](/ru/lua/client/game-natives#стадии)).
+
+Каждый обработчик стадии ставится в очередь и выполняется на следующем тике скрипта после наступления стадии. Если стадия уже наступила к старту ресурса (игра уже загружена, например после рестарта), обработчики, зарегистрированные при старте скрипта, всё равно выполнятся на первом тике.
+
+<Tabs syncKey="lang">
+<TabItem label="JavaScript">
+
+```js title="client.js" del={2} ins={6-8}
+mp.events.on('resourceStart', () => {
+  mp.game.GetPlayer(); // рано
+  mp.events.onServer('serverNotification', console.log);
+});
+
+mp.game.onGameLoaded(() => {
+  const player = mp.game.GetPlayer();
+  mp.local.spawnPlayer(-1392.637329, 1271.536865, 123.082397, 1);
+});
+```
+
+</TabItem>
+<TabItem label="Lua">
+
+```lua title="client.lua" del={2} ins={6-8}
+mp.events.add('resourceStart', function()
+  Game.GetPlayer() -- рано
+  mp.events.addServer('serverNotification', print)
+end)
+
+mp.registerGameState('onGameLoaded', function()
+  local player = Game.GetPlayer()
+  mp.client.spawnPlayer(-1392.637329, 1271.536865, 123.082397, 1)
+end)
+```
+
+</TabItem>
+</Tabs>
+
+## Кукла ещё не готова
+
+Вызов спавна вернул `true` — спавн только **начался**. Несколько кадров получение игрока может ничего не вернуть. Ждите с таймаутом:
+
+<Tabs syncKey="lang">
+<TabItem label="JavaScript">
+
+```js title="client.js"
+const waitForPlayer = async (timeoutMs = 10_000) => {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    const player = mp.game.GetPlayer();
+    if (player) return player;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  return null;
+};
+```
+
+</TabItem>
+<TabItem label="Lua">
+
+```lua title="client.lua"
+-- вызывать внутри задачи или обработчика: mp.wait работает только в корутине
+local function waitForPlayer(timeoutMs)
+  local started = mp.getTimer()
+  while mp.getTimer() - started < (timeoutMs or 10000) do
+    local player = Game.GetPlayer()
+    if player then return player end
+    mp.wait(50)
+  end
+  return nil
+end
+```
+
+</TabItem>
+</Tabs>
+
+Пока куклы нет:
+
+- Нативы внешности, инвентаря и телепорта не срабатывают или бросают ошибку.
+- `GetGender()` (если он есть у куклы) может вернуть служебное / неполное значение. Не применяйте меши под конкретного персонажа. Сначала спавн, затем ожидание, затем кастомизация.
+
+Перед спавном и телепортом закройте меню паузы и настроек. Зависший `MenuScenario_PauseMenu` блокирует ввод после перемещения. Observer'ы: телепорт ([JavaScript](/ru/guides/client/teleporting-player), [Lua](/ru/lua/client/teleporting-player)).
+
+## Сеть и мир
+
+Адрес сессии (`mp.network.getServerAddress()` в JavaScript, `mp.getServerAddress()` в Lua) появляется, когда сессия подключена. Это может случиться раньше `onGameLoaded`. Запросы точек спавна при старте повторяют, пока не готовы и адрес, и игра.
+
+Сетевой id без куклы: `mp.network.getLocalPlayerId()`.
+
+## Id в стриме
+
+Когда в стриме есть игроки и транспорт, переводите сетевые id в id движка и обратно:
+
+<Tabs syncKey="lang">
+<TabItem label="JavaScript">
+
+```js title="client.js"
+const gameId = mp.network.getVehicleGameId(netId);
+const vehicleNetId = mp.network.getVehicleId(gameId);
+const players = mp.network.getStreamedPlayers();
+const vehicles = mp.network.getStreamedPool('CVehicle');
+```
+
+</TabItem>
+<TabItem label="Lua">
+
+```lua title="client.lua"
+local gameId = mp.network.getVehicleGameId(netId)
+local vehicleNetId = mp.network.getVehicleId(gameId)
+local players = mp.network.getStreamedPlayers()
+local vehicles = mp.network.getStreamedPool('CVehicle')
+```
+
+</TabItem>
+</Tabs>
+
+Это для обработчиков `vehicleStreamIn` / `remotePlayerStreamIn`, не для `resourceStart`. Полная таблица: сетевые id ([JavaScript](/ru/guides/client/network-and-local), [Lua](/ru/lua/client/network-and-local)).
+
+## Выгрузка ресурса
+
+<Tabs syncKey="lang">
+<TabItem label="JavaScript">
+
+```js title="client.js"
+const onStreamIn = (netID, gameID) => console.log(netID, gameID);
+let previewHandle = 0; // из mp.local.spawnVehicle(...)
+
+mp.events.on('vehicleStreamIn', onStreamIn);
+
+mp.events.on('resourceStop', () => {
+  mp.events.off('vehicleStreamIn', onStreamIn);
+  if (previewHandle) mp.local.despawnVehicle(previewHandle); // клиентские сущности сами не удаляются
+});
+```
+
+</TabItem>
+<TabItem label="Lua">
+
+```lua title="client.lua"
+local previewHandle = nil -- из mp.client.spawnVehicle(...)
+
+mp.events.add('resourceStop', function()
+  if previewHandle then
+    mp.client.despawnVehicle(previewHandle) -- клиентские сущности сами не удаляются
+  end
+end)
+```
+
+</TabItem>
+</Tabs>
+
+В JavaScript `off` снимает только обработчики `on`; обработчики `onServer` / `onCef` им не снять ([события на клиенте](/ru/guides/client/events)). При остановке клиент уничтожает рантайм скрипта ресурса (контекст JavaScript или состояние Lua) и снимает его игровые хуки, поэтому обработчики скрипта не переживают [hotreload](/ru/guides/general/hotreload). `resourceStop` нужен для состояния вне скрипта: клиентские сущности, изменённые игровые объекты.

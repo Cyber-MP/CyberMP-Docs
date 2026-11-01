@@ -9,6 +9,10 @@ title: "ThrowGrenadeEventData"
 
 Defined in: events.ts:67
 
+:::caution
+The current server sends this payload as an **array**, not as an object with named fields. Read the values by index in this order: `[weaponHash, type, isQuickThrow, accelerationZ, initialVelocity, forwardX, forwardY, forwardZ, aimposX, aimposY, aimposZ]`.
+:::
+
 ## Properties
 
 <a id="accelerationz"></a>

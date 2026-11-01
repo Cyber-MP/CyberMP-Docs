@@ -1,0 +1,47 @@
+---
+title: Экспорты (Lua)
+description: Вызов функций другого ресурса через mp.exports в Lua.
+---
+
+## Регистрация
+
+В ресурсе, которому принадлежит код:
+
+```lua title="resources/notify/server.lua"
+mp.exports('show', function(message)
+  print('notify', message)
+  return true
+end)
+```
+
+Глобальную функцию можно экспортировать и по имени из `resource.toml`. Значение должно быть массивом:
+
+```toml title="resource.toml"
+server_script = 'server.lua'
+export = ['show']
+```
+
+`export` читается на сервере и на клиенте, `server_export` — только на сервере.
+
+## Вызов из другого ресурса
+
+Вызывайте через `:`:
+
+```lua title="resources/gamemode/server.lua"
+local ok = mp.exports.notify:show('Welcome')
+```
+
+Прокси экспорта передаёт себя первым аргументом, поэтому вызывайте через `:` (или пишите `mp.exports.notify.show(nil, 'Welcome')`).
+
+- Отсутствующий экспорт или остановленный ресурс — ошибка `Cant find <name> in <resource>`.
+- Ошибка внутри экспорта — ошибка `failed emit export <name> in resource <resource>`.
+
+## Порядок загрузки и стороны
+
+```toml title="server.toml"
+resources = ['notify', 'gamemode']
+```
+
+Если `gamemode` вызывает `mp.exports.notify:show(...)` до запуска `notify`, вызов падает с ошибкой. Ставьте общие ресурсы первыми. После `stop` / `start` на ходу проверяйте `mp.resources.getState('notify') == 2`.
+
+Экспорты локальны для одной стороны: экспорт, зарегистрированный в серверном скрипте, вызывается из серверных скриптов, зарегистрированный в клиентском — из клиентских.

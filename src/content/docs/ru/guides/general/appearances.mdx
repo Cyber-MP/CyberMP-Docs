@@ -1,0 +1,116 @@
+---
+title: Внешность (appearance)
+description: "По умолчанию appearance — CName 'default', иначе клиенты получают разный вид."
+---
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+`appearance` обязателен в `mp.vehicles.create` и `mp.peds.create` ([JavaScript](/ru/guides/server/vehicles), [Lua](/ru/lua/server/vehicles)). Это **CName**, не запись TweakDB и не `.ent`.
+
+На сервере его собирают через `mp.hashes.cname` (JavaScript) или `mp.hashes.toCname` (Lua). Для локального спавна на клиенте: `mp.game.hashes.toCname` (JavaScript) или `mp.hashes.toCname` (Lua). См. [хеши](/ru/guides/general/hashes).
+
+## По умолчанию: `'default'`
+
+Если передать `0`, не указать поле или оставить пустым, движок берёт внешность из `.app` сущности. Выбор **не общий для клиентов**: один игрок видит куртку A, другой B, третий другой окрас.
+
+Задайте CName явно — все клиенты разрешат один и тот же вид:
+
+:::caution
+`appearance: 0` (или отсутствие поля) не задаёт внешность по умолчанию. Клиенты могут получить разный вид. Передавайте хеш `'default'`.
+:::
+
+`default` — обычная первая внешность в `.app` персонажей и машин. Используйте его, пока нет конкретного имени, которое есть у **этой** сущности.
+
+<Tabs syncKey="lang">
+<TabItem label="JavaScript">
+
+```js title="server.js"
+mp.vehicles.create({
+  model: mp.hashes.tweakdbid('Vehicle.v_standard2_archer_hella'),
+  appearance: mp.hashes.cname('default'),
+  position: player.position,
+  yaw: player.yaw,
+  dimension: player.dimension,
+});
+
+mp.peds.create({
+  model: mp.hashes.tweakdbid('Character.CivilianFemaleAverage'),
+  appearance: mp.hashes.cname('default'),
+  position: [x, y, z],
+  yaw: heading,
+});
+```
+
+</TabItem>
+<TabItem label="Lua">
+
+```lua title="server.lua"
+local function hash(str) return tonumber(str, 10) end
+
+mp.vehicles.create({
+  model = hash(mp.hashes.toTweakdbid('Vehicle.v_standard2_archer_hella')),
+  appearance = hash(mp.hashes.toCname('default')),
+  position = player.position,
+  yaw = player.yaw,
+  dimension = player.dimension,
+})
+
+mp.peds.create({
+  model = hash(mp.hashes.toTweakdbid('Character.CivilianFemaleAverage')),
+  appearance = hash(mp.hashes.toCname('default')),
+  position = vector3(x, y, z),
+  yaw = heading,
+})
+```
+
+</TabItem>
+</Tabs>
+
+## Конкретный вид
+
+Имена заданы внутри `.app` сущности (цвета, варианты кузова, одежда NPC). Хешируйте имя, не путь к `.app`:
+
+<Tabs syncKey="lang">
+<TabItem label="JavaScript">
+
+```js title="server.js"
+const appearance = mp.hashes.cname('player_01');
+```
+
+</TabItem>
+<TabItem label="Lua">
+
+```lua title="server.lua"
+local appearance = tonumber(mp.hashes.toCname('player_01'), 10)
+```
+
+</TabItem>
+</Tabs>
+
+Имени нет в этом `.app` — тот же эффект, что у `0`: вид отсутствует или не совпадает между клиентами. Перед выпуском проверьте строку в WolvenKit.
+
+## Где appearance нет
+
+У `mp.objects.create` и `mp.pickups.create` поля `appearance` нет. Вид объекта задан в его `.ent`; пикап создаётся из записи предмета TweakDB.
+
+У уже созданной машины или педа нет сеттера внешности. Сменить вид — уничтожить и создать заново с новым CName.
+
+## Спавн только у себя
+
+`spawnVehicle` / `spawnPed` (`mp.local` в JavaScript, `mp.client` в Lua) ждут внешность сырым хешем CName. То же правило. Клиентские хелперы возвращают строку, поэтому переведите её:
+
+<Tabs syncKey="lang">
+<TabItem label="JavaScript">
+
+```js title="client.js"
+const appHash = BigInt(mp.game.hashes.toCname('default'));
+```
+
+</TabItem>
+<TabItem label="Lua">
+
+```lua title="client.lua"
+local appHash = tonumber(mp.hashes.toCname('default'), 10)
+```
+
+</TabItem>
+</Tabs>

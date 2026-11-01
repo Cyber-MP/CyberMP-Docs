@@ -1,23 +1,21 @@
 ---
-title: Working with Events
-description: Learn how to manage platform lifecycles, handle client packets, and sync network data on the server side.
+title: Events
+description: Platform events, onClient, emitClient, and cancelling the default action.
 slug: guides/server/events
 ---
-The server-side [`mp.events`](/reference/server/api/events/mpevents/) API manages game world lifecycles and coordinates communication across the network. It allows you to monitor player connections, track state changes like combat and vehicles, catch incoming client-side payloads, and broadcast data back out to network players.
+import EventFilter from '../../../../components/EventFilter.astro';
 
-In this guide, you will learn how to structure and manage events on your server.
+Server scripts receive platform and network traffic through `mp.events`. Connections, deaths, vehicle interaction, and client packets arrive here.
 
-## Platform & Custom Server Events
+## Platform and custom events
 
-Use [`mp.events.on`](/reference/server/api/events/mpevents#on) to hook into built-in game platform lifecycle events (such as players connecting, dying, or interacting with vehicles) as well as custom server-to-server events.
+[`mp.events.on`](/reference/server/api/events/mpevents#on) registers handlers for platform lifecycle events (connect, death, vehicles) and for custom events emitted inside the server process.
 
 ```js title="server.js"
-// 1. Platform Event: Handle new incoming player connections
 mp.events.on('playerConnected', (playerId, tempId) => {
     console.log(`Player connected - assigned Network ID: ${playerId}`);
 });
 
-// 2. Platform Event: Track player deaths and log combat analytics
 mp.events.on('playerDeath', (playerId, data) => {
     if (data.killerId) {
       console.log(`Player ${playerId} was flatlined by Killer ID: ${data.killerId}`);
@@ -26,64 +24,84 @@ mp.events.on('playerDeath', (playerId, data) => {
     }
 });
 
-// 3. Custom Server Event: Triggered internally within server scripts
 mp.events.on('logServerActivity', (action, details) => {
     console.log(`[Activity Log] Action: ${action} | ${details}`);
 });
 
-// Emit the custom event inside your server environment
 mp.events.emit('logServerActivity', 'Database', 'Initial connection established.');
-
 ```
 
-## Handling Packets from Clients
+## Client packets
 
-When a client code transmits an event over the network socket using [`emitServer`](/reference/client/api/events/mpevents#emitserver), the server catches it using [`mp.events.onClient`](/reference/server/api/events/mpevents#onclient).
-> **Note:** The server-side callback automatically injects the sending **`player` context object** as the first argument, ensuring you always securely know which client initiated the request.
+A client script sends a packet with [`emitServer`](/reference/client/api/events/mpevents#emitserver). The server receives it on [`mp.events.onClient`](/reference/server/api/events/mpevents#onclient). For a return value, use [RPC](/guides/general/rpc) instead of a pair of events.
 
+The handler receives the sending **`player`** (`MpPlayer`) as the first argument. Do not take the player id from payload data: the client can spoof it.
 
 ```js title="server.js"
-// Catching a vehicle spawn request from a client script
 mp.events.onClient('requestVehicleSpawn', (player, modelHash, x, y, z) => {
   console.log(`Player ${player.nickname} (${player.id}) requested to spawn: ${modelHash}`);
-
-  // Your vehicle creation logic goes here...
 });
-
 ```
 
-## Emitting Events to Clients
+## Events to clients
 
-To push messages, UI updates, or state sync packets back down across the network to the players, use [`mp.events.emitClient`](/reference/server/api/events/mpevents#emitclient). This function requires you to specify the target player (either via their active [`MpPlayer`](/reference/server/api/entities/players/mpplayer/) instance object or their raw numerical `playerId`) as the very first parameter.
+[`mp.events.emitClient`](/reference/server/api/events/mpevents#emitclient) sends an event to one client. The first argument is the target: an [`MpPlayer`](/reference/server/api/entities/players/mpplayer/) instance or a numeric `playerId`. `-1` sends the event to all players; `0`, `null` and `undefined` are rejected with an error log.
+
 ```js title="server.js"
-// Listen for a player spawning into the world
 mp.events.on('playerSpawn', (playerId) => {
-  // Direct a welcome alert exclusively to the player who just spawned
   mp.events.emitClient(playerId, 'serverNotification', 'Welcome back to Night City.');
 });
 
-// Example: Notifying a vehicle owner when their car is damaged
-mp.events.on('vehicleHittedByPlayer', (vehicleId, data) => {
-  if (data.byOwner) {
-    // Send an event back down to the driver's client application context
-    mp.events.emitClient(data.instigatorID, 'uiNotification', 'You damaged your own vehicle!');
+mp.events.on('vehicleHittedByPlayer', (playerId, data) => {
+  // data is an array: [vehicleID, componentNameHash, weaponHash, byOwner]
+  const [vehicleId, , , byOwner] = data;
+  if (byOwner) {
+    mp.events.emitClient(playerId, 'uiNotification', `You damaged your own vehicle ${vehicleId}!`);
   }
 });
-
 ```
 
-## Cleaning Up Event Handlers
+## Removing handlers
 
-To prevent memory leaks or repeating execution routines inside dynamic or hot-reloaded modules, detach your active event listeners using [`mp.events.off`](/reference/server/api/events/mpevents#off). This cleanup method works interchangeably for both [`mp.events.on`](/reference/server/api/events/mpevents#on) and custom [`mp.events.onClient`](/reference/server/api/events/mpevents#onclient) network listeners.
+[`mp.events.off`](/reference/server/api/events/mpevents#off) unregisters a named function previously passed to [`mp.events.on`](/reference/server/api/events/mpevents#on). It does not remove [`mp.events.onClient`](/reference/server/api/events/mpevents#onclient) handlers: they are stored under an internal prefixed event name, and `off(name, fn)` looks under the plain name. Use this when a module unloads.
+
 ```js title="server.js"
-// Define a named tracking handler function
 const trackExplosions = (playerId, data) => {
   console.log(`Explosion tracked at coordinate cluster: [${data.posX}, ${data.posY}]`);
 };
 
-// Register the active event listener hook
 mp.events.on('explosion', trackExplosions);
-
-// Unregister the handler loop later when it is no longer required
 mp.events.off('explosion', trackExplosions);
 ```
+
+## Cancelling the default action
+
+Some platform events are typed `void | boolean`. Return `false` from the handler so the engine skips its own action (vanilla heal, knockdown, door, explosion). Any other return value, or none, lets the action run.
+
+```js title="server.js"
+mp.events.on('playerHealing', (playerId) => {
+  return false;
+});
+
+mp.events.on('doorStateChange', (playerId, data) => {
+  if (restrictedDoors.has(data.hashObject)) {
+    return false;
+  }
+});
+```
+
+- Only a value returned synchronously counts. An `async` handler returns a Promise and cannot cancel.
+- With several handlers, one `false` is enough. All handlers still run.
+- `mp.cancelEvent()` was removed. Replace it with `return false`.
+
+Cancelling without matching client state leaves the player inconsistent (a door appears open while the state is still closed). Verify on a single case first.
+
+`mp.isServer()` returns `true` on the server process.
+
+## Event catalog
+
+Names from `@cybermp/server-types`. The first argument is often a numeric `playerId`, not an `MpPlayer` — except `onClient`. Filter below; full payload fields are in the [API reference](/reference/server/api/events/mpevents/).
+
+<EventFilter />
+
+Voice and Discord: [voice](/guides/general/voice), [Discord](/guides/client/discord).

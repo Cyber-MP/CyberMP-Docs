@@ -1,0 +1,35 @@
+---
+title: Voice
+description: Built-in voice chat, mute, and how to disable the voice server.
+slug: guides/general/voice
+---
+
+CyberMP can run an in-game voice server next to the game server. Configure it in `server.toml`. Mute players from scripts.
+
+## Turn it off
+
+```toml title="server.toml"
+disable_voice = true
+```
+
+When `true`, the voice server does not start. Use that if you run Discord-only voice or no voice at all. See [configuration](/reference/server/configuration).
+
+## Mute a player
+
+```js title="server.js"
+player.mute();
+```
+
+That is the typed mute API on [`MpPlayer`](/reference/server/api/entities/players/mpplayer/). There is no `unmute` on current server types. To restore voice, check whether the build added it, or kick / reconnect.
+
+:::caution
+In the current server runtime `player.mute()` calls the `mutePlayer` native without its second argument (`toggle`). A missing argument is read as `false`, so the call sets the player to **not muted**. The untyped `mp.voiceChat.mutePlayer(player)` behaves the same way. Check `mp.voiceChat.isPlayerMuted(player)` before relying on it.
+:::
+
+The runtime also has an untyped `mp.voiceChat` with `mutePlayer(player)`, `isPlayerMuted(player)` and `createChannel(id)`.
+
+## Client `voiceChat`
+
+`MpClient` in current `@cybermp/client-types` **comments out** `voiceChat`. The `voice-chat` module is not part of the public export. Do not copy RageMP-style `mp.voiceChat` snippets. They are not on this surface. The client runtime still defines `mp.voiceChat.*` wrappers, but the natives behind them are commented out in the client build, so the calls do not work.
+
+If a future types drop re-enables it, the API will show up under [client API](/reference/client/api/readme/). Until then, treat proximity voice as engine-built-in plus `mute()` / the toml flag.

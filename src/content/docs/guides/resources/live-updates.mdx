@@ -1,23 +1,22 @@
 ---
 title: Live updates
-description: CyberMP Server Configuration
+description: Restart a resource after editing a script, without stopping the server.
 slug: guides/resources/live-updates
 ---
 import { Steps } from '@astrojs/starlight/components';
 
-One of the most powerful features of the CyberMP Server is the ability to update your scripts without restarting the entire server process. This is essential for fast iteration and debugging.
+After editing `server.js` or `client.js`, restart that resource. The process stays running.
 
-### Prerequisites
-- A running CyberMP Server.
-- Access to the Server Console.
-- An active resource (e.g., the `hello_world` resource from the [previous](/guides/resources/creating-resource) guide).
+Requirements:
 
-### Steps
+- running server
+- [server console](/reference/server/console)
+- a resource, for example `hello_world` from [creating a resource](/guides/resources/creating-resource)
 
 <Steps>
-    1. #### Modify the Script
+    1. #### Edit the script
 
-        Open `resources/hello_world/server.js` and add a new line of code:
+        In `resources/hello_world/server.js`:
 
         ```js title="server.js" ins={2-3}
         console.log('Hello World from CyberMP Server!');
@@ -25,32 +24,30 @@ One of the most powerful features of the CyberMP Server is the ability to update
         console.log("The resource has been updated live!");
         ```
 
-    2. #### Issue the Restart Command
-        In your Server Console, execute the restart command followed by your resource folder name:
+    2. #### Restart the resource
+
+        Console:
+
         ```shell
         restart hello_world
         ```
 
-    3. #### Verify the Output
-        The server will immediately stop the old instance and initialize the new code. You should see the updated logs appear:
+        From code: `mp.resources.restart('hello_world')`.
 
-        The following content should be in your console:
+    3. #### Verify logs
+
+        The previous instance stops; the new instance starts with the updated text:
+
         ```ansi
-        [38;2;179;133;0m[00:00:00] [Resources][0m Stopped resource hello_world
-        [38;2;179;133;0m[00:00:00] [script:hello_world][0m Hello World from CyberMP Server!
-        [38;2;179;133;0m[00:00:00] [script:hello_world][0m The resource has been updated live!
-        [38;2;179;133;0m[00:00:00] [Resources][0m Loaded resource hello_world
+        [38;2;179;133;0m[00:00:00] [resources][0m Stopped resource hello_world
+        [38;2;179;133;0m[00:00:00] [hello_world][0m Hello World from CyberMP Server!
+        [38;2;179;133;0m[00:00:00] [hello_world][0m The resource has been updated live!
+        [38;2;179;133;0m[00:00:00] [resources][0m Loaded resource hello_world
         >
         ```
 
 </Steps>
 
-## Client-Side Updates
+`restart` reloads the client script. Connected clients download it again.
 
-The restart command also applies to Client Scripts. When you restart a resource on the server, all connected clients will automatically re-download and restart that specific resource's client-side logic.
-
-## Automated Updates
-
-If you find manually typing restart inconvenient during heavy development, you can automate this process.
-
-Check out the [Hotreload](/guides/resources/hotreload) Guide to learn how to set up an automated development environment.
+File watching instead of manual `restart`: [Hotreload](/guides/general/hotreload).

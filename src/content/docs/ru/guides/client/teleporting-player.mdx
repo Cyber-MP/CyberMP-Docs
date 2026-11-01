@@ -1,0 +1,88 @@
+---
+title: Телепорт игрока
+description: Перемещение игрока. Перед вызовом закройте меню паузы и настроек.
+---
+import { Steps } from '@astrojs/starlight/components';
+
+Перед телепортом закройте меню паузы и настроек. Иначе после перемещения UI часто зависает.
+
+<Steps>
+1. ## Отслеживание меню
+
+   ```js title="client.js"
+    let MenuScenario_PauseMenu = null;
+    let SettingsMainGameController = null;
+    
+    mp.game.onGameLoaded(() => {
+        mp.game.observe('SettingsMainGameController', 'OnMenuChanged', (self) => {
+            SettingsMainGameController = self;
+        });
+        
+        mp.game.observe('SettingsMainGameController', 'RequestClose', () => {
+            SettingsMainGameController = null;
+        });
+        
+        mp.game.observe('MenuScenario_PauseMenu', 'OnSwitchToSettings', (self) => {
+            MenuScenario_PauseMenu = self;
+        });
+        
+        mp.game.observe('MenuScenario_PauseMenu', 'OnEnterScenario', (self) => {
+            MenuScenario_PauseMenu = self;
+        });
+    });
+   ```
+
+    Закрытие:
+
+    ```js title="client.js"
+    const closeAllMenus = () => {
+        const player = mp.game.GetPlayer();
+        
+        player.QueueEvent(new mp.game.ForceCloseHubMenuEvent());
+        
+        MenuScenario_PauseMenu?.OnClosePauseMenu();
+        SettingsMainGameController?.RequestClose();
+    };
+    ```
+
+2. ## Телепорт
+
+    Перемещение через `TeleportationFacility`:
+
+    ```js title="client.js"
+    const teleportPlayer = (x, y, z, yaw = 1) => {
+        closeAllMenus();
+        
+        const teleportFacility =
+            mp.game.ScriptGameInstance.GetTeleportationFacility();
+        
+        const playerObj = mp.game.GetPlayerObject();
+        
+        teleportFacility.Teleport(
+            playerObj,
+            Object.assign(new mp.game.Vector4(), { x, y, z, w: 1 }),
+            Object.assign(new mp.game.EulerAngles(), {
+            roll: 0,
+            pitch: 0,
+            yaw,
+            }),
+        );
+    };
+    ```
+
+3. ## Команды консоли
+
+    ```js title="client.js"
+    mp.commands.add('afterlife', () => {
+        teleportPlayer(-1456.893433, 1038.277222, 16.825035, 1);
+    });
+    
+    mp.commands.add('close-menu', () => {
+        closeAllMenus();
+    });
+    ```
+</Steps>
+
+Перезапустите ресурс. Откройте консоль (`F8`) и введите `afterlife`. Цель — клуб Afterlife.
+
+Если цель в другом [dimension](/ru/guides/general/sync-and-meta), смените `player.dimension` на сервере и покажите загрузку. В том же dimension телепорт часто мгновенный: интерьер уже в стриме.

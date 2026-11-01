@@ -1,0 +1,40 @@
+---
+title: Кастомные ассеты
+description: Транспорт, оружие, одежда, UI и архивы в ресурсе.
+---
+
+Клиент получает только пути из `file` в `resource.toml`. Кастомный транспорт, оружие и одежда используют тот же механизм: архивы в `file`, затем спавн или экипировка соответствующим [хешем](/ru/guides/general/hashes).
+
+```toml title="resource.toml"
+file = [
+  "./assets/in_world_navigation.archive",
+  "./assets/de_dust2/*",
+  "./ui/*",
+  "./ui/assets/*"
+]
+```
+
+## Маска `*`
+
+`./ui/*` включает все файлы в этом каталоге. Вложенные каталоги не включаются; добавьте `./ui/assets/*` отдельно или используйте `**` (`./ui/**`), чтобы включить все вложенные каталоги.
+
+## Допустимо в `file`
+
+Загружается при старте клиента:
+
+- игровые файлы: `.archive`, `.xl`, `.tweak`, `.yaml`, `.yml`, `.redscripts`
+- CEF: HTML, CSS, JS
+
+Игровые скрипты указывают в `client_script` / `server_script` (JavaScript или Lua). Игра загружает один скомпилированный бандл redscript — `final.redscripts`. Чтобы отдать свой, уберите `"final.redscript"` из `core.files` и укажите свой `final.redscripts` здесь, см. [redscript](/ru/reference/server/configuration#redscript).
+
+## Паки
+
+| Ассет | Файлы | Скрипт |
+| --- | --- | --- |
+| Транспорт | `.archive`, ArchiveXL / TweakXL при необходимости | `mp.vehicles.create`: model — `tweakdbid` от `Vehicle.…`, appearance — `cname` от `default` — [хеши](/ru/guides/general/hashes) |
+| Оружие | `.archive`, tweak-записи (`Items.Preset_…`) | `tweakdbid` в логике инвентаря |
+| Одежда / внешность | `.archive`, имена appearance | `cname` от имени внешности — [внешность](/ru/guides/general/appearances) |
+| Проп | `.ent` из игры или из архива | `mp.objects.create`: model — `resref` от пути `.ent` — [типы ресурсов](/ru/guides/general/resource-types) |
+| Пикап | запись предмета TweakDB (`Items.…`) | `mp.pickups.create`: model — `tweakdbid` от записи — [типы ресурсов](/ru/guides/general/resource-types) |
+| CEF UI | HTML, CSS, JS, изображения | `cef_url` и `file` — [CEF](/ru/guides/client/first-cef-ui) |
+

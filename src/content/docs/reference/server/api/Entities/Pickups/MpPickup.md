@@ -19,7 +19,7 @@ Defined in: pickups.ts:16
 
 > **dimension**: `number`
 
-Defined in: entities.ts:60
+Defined in: entities.ts:58
 
 Virtual world dimension this entity belongs to
 
@@ -35,29 +35,13 @@ Virtual world dimension this entity belongs to
 
 > `readonly` **exist**: `boolean`
 
-Defined in: entities.ts:57
+Defined in: entities.ts:55
 
 Whether the entity still exists in the world
 
 #### Inherited from
 
 [`MpEntity`](/reference/server/api/entities/mpentity/).[`exist`](/reference/server/api/entities/mpentity/#exist)
-
-***
-
-<a id="firstowner"></a>
-
-### firstOwner
-
-> `readonly` **firstOwner**: [`MpPlayer`](/reference/server/api/entities/players/mpplayer/)
-
-Defined in: entities.ts:44
-
-First player who synced this entity
-
-#### Inherited from
-
-[`MpEntity`](/reference/server/api/entities/mpentity/).[`firstOwner`](/reference/server/api/entities/mpentity/#firstowner)
 
 ***
 
@@ -119,7 +103,7 @@ Defined in: pickups.ts:18
 
 > `readonly` **position**: [`Vector3`](/reference/server/api/global/vector3/)
 
-Defined in: entities.ts:45
+Defined in: entities.ts:43
 
 #### Inherited from
 
@@ -133,7 +117,7 @@ Defined in: entities.ts:45
 
 > `readonly` **rotation**: [`Rotation`](/reference/server/api/global/rotation/)
 
-Defined in: entities.ts:46
+Defined in: entities.ts:44
 
 #### Inherited from
 
@@ -147,7 +131,7 @@ Defined in: entities.ts:46
 
 > **streamingRadius**: `number`
 
-Defined in: entities.ts:63
+Defined in: entities.ts:61
 
 Distance at which this entity streams in/out
 
@@ -163,7 +147,7 @@ Distance at which this entity streams in/out
 
 > `readonly` **type**: [`Pickup`](/reference/server/api/entities/entitytype/#pickup)
 
-Defined in: entities.ts:54
+Defined in: entities.ts:52
 
 Type of entity (see [EntityType](/reference/server/api/entities/entitytype/)).
 
@@ -179,7 +163,7 @@ Type of entity (see [EntityType](/reference/server/api/entities/entitytype/)).
 
 > `readonly` **yaw**: `number`
 
-Defined in: entities.ts:49
+Defined in: entities.ts:47
 
 Yaw angle in degrees
 
@@ -209,7 +193,7 @@ Defined in: pickups.ts:20
 
 > **getMeta**\<`T`\>(`key`): `T`
 
-Defined in: entities.ts:75
+Defined in: entities.ts:73
 
 Retrieves metadata stored on this entity.
 
@@ -233,7 +217,7 @@ Metadata key
 
 `T`
 
-Stored value or undefined if not set
+Stored value, or `null` if not set
 
 #### Example
 
@@ -253,7 +237,7 @@ const health = entity.getMeta<number>("health");
 
 > **setMeta**(`key`, `value`, `sync?`): `void`
 
-Defined in: entities.ts:84
+Defined in: entities.ts:82
 
 Sets metadata on this entity.
 
@@ -275,7 +259,7 @@ Value to store
 
 `boolean`
 
-Whether to synchronize with clients immediately
+Whether the value is replicated to clients. Defaults to `true`
 
 #### Returns
 

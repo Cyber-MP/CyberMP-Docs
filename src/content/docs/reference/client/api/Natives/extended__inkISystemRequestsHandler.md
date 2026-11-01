@@ -5,7 +5,7 @@ prev: false
 title: "extended__inkISystemRequestsHandler"
 ---
 
-Defined in: game.d.ts:338
+Defined in: game.d.ts:391
 
 Extended by CyberMP `inkISystemRequestsHandler` class
 
@@ -17,7 +17,7 @@ Extended by CyberMP `inkISystemRequestsHandler` class
 
 > **StartMainMenu**(): `void`
 
-Defined in: game.d.ts:342
+Defined in: game.d.ts:395
 
 Forces the UI context architecture to navigate back out into the main landing splash screen.
 

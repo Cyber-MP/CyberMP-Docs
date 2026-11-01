@@ -1,0 +1,75 @@
+---
+title: Игровые нативы (Lua)
+description: Вызов систем REDengine из клиентских скриптов Lua через слой Cyber Engine Tweaks.
+---
+
+Клиентские скрипты Lua обращаются к системам Cyberpunk через игровой слой: игрок, статы, телепорт, TweakDB, хуки методов.
+
+:::tip[NativeDB]
+Все игровые классы, функции и енумы перечислены в [NativeDB](https://nativedb.red4ext.com/). Имена там совпадают с теми, что вызываются из скриптов.
+:::
+
+Задайте `use_game_natives = true` в `resource.toml`. Тогда состояние Lua ресурса получает игровой слой. Это форк Cyber Engine Tweaks (CET), имена совпадают с CET: `Game`, `GetSingleton`, `NewObject`, `TweakDB` и другие. Без этого ключа вызовов ниже нет или они вызывают ошибку. С ним `print` заменяется логгером игрового слоя, который не добавляет имя ресурса.
+
+| Имя | Доступно | Описание |
+| --- | --- | --- |
+| `mp.registerGameState(stage, fn)` | Сразу | Вызывает `fn`, когда игра доходит до `stage`. |
+| `mp.isOnTweakCalled()`, `mp.isOnInitCalled()`, `mp.isOnGameLoadedCalled()` | Сразу | `true`, когда игра уже прошла эту стадию. |
+| `mp.hashes.toCname` / `toTweakdbid` / `toResref` | Сразу | Имя в хэш, десятичной строкой. |
+| `mp.hashes.fromCname` / `fromTweakdbid` / `fromResref` | Сразу | Хэш (десятичная строка) в имя. |
+| `Game`, `GetSingleton(name)`, `NewObject(name)`, `NewProxy`, `IsDefined`, `EnumInt`, `ToCName`, `ToTweakDBID`, `ToItemID`, `ToEulerAngles`, `ToQuaternion`, `Vector4.new`, `EulerAngles.new` | После `onInit` | Игровые классы и функции. |
+| `mp.observe` / `mp.observeBefore` / `mp.observeAfter`, `mp.observeRaw` / `mp.observeBeforeRaw` / `mp.observeAfterRaw`, `mp.override` | После `onInit` | [Хуки методов](/ru/lua/client/observes). |
+| `TweakDB` | После `onTweak` | Записи и флэты TweakDB. |
+
+<a id="stages"></a>
+## Стадии
+
+| Стадия | Когда | Аргументы |
+| --- | --- | --- |
+| `onTweak` | TweakDB готова. | — |
+| `onInit` | Игровая среда инициализирована. Игровые классы и функции доступны. | — |
+| `onGameLoaded` | Мир загружен; срабатывает при каждой загрузке. | — |
+| `onceGameLoaded` | Только первая загрузка мира. | — |
+| `onUpdate` | Каждый тик после `onInit`. | `dt` |
+| `onInputKeyEvent` | Событие клавиши. | `action, key` |
+
+Обработчики выполняются на следующем тике скриптов после стадии. Если стадия уже пройдена к старту ресурса, они выполняются на первом тике. Регистрируйте события и команды при запуске ресурса; перед обращением к игровым системам дождитесь нужной стадии.
+
+Нативы вызывайте только после загрузки мира: `resourceStart` значит лишь, что скрипт запущен.
+
+## Игрок и системы
+
+`Game.X` находит метод игрового инстанса или глобальную игровую функцию, поэтому работают `Game.GetPlayer()` и `Game.GetTeleportationFacility()`. Методы игровых объектов вызываются через `:`.
+
+```lua title="client.lua"
+mp.registerGameState('onGameLoaded', function()
+  local player = Game.GetPlayer()
+  local stats = Game.GetStatsSystem()
+  local pools = Game.GetStatPoolsSystem()
+  local teleport = Game.GetTeleportationFacility()
+
+  print('player ready', player ~= nil)
+end)
+```
+
+Сразу после `mp.client.spawnPlayer` `Game.GetPlayer()` ещё может вернуть `nil`. Дождитесь пупета перед здоровьем, внешностью или телепортом.
+
+`NewObject(name)` создаёт игровой объект по имени класса, `Vector4.new(x, y, z, w)` и `EulerAngles.new(roll, pitch, yaw)` создают структуры. Пример: [телепорт](/ru/lua/client/teleporting-player).
+
+## Observe и Override
+
+[Observe](/ru/lua/client/observes) описывает наблюдатели, аргументы и отложенные/Raw-вызовы. [Override](/ru/lua/client/overrides) описывает замену метода, продолжение цепочки и возвращаемые значения.
+
+## Хэши
+
+Клиентские `mp.hashes` идут из этого слоя: без `use_game_natives = true` их вызов приводит к ошибке. Они возвращают десятичные строки; переводите через `tonumber(str, 10)` перед передачей хэша в `mp.client.spawn*` ([числа и хэши](/ru/lua/shared/hashes)).
+
+```lua title="client.lua"
+local item = mp.hashes.toTweakdbid('Items.Preset_Nue_Default')
+local name = mp.hashes.fromTweakdbid(item)
+local look = mp.hashes.toCname('default')
+```
+
+## Где искать метод
+
+Ищите класс или метод в [NativeDB](https://nativedb.red4ext.com/). Обращайтесь к игровым классам через `Game.X` и вызывайте методы объектов через `:`.

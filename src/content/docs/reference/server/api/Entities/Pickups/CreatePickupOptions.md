@@ -58,3 +58,5 @@ Defined in: pickups.ts:28
 > `optional` **yaw?**: `number`
 
 Defined in: pickups.ts:30
+
+Default: `0`

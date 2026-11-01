@@ -1,0 +1,51 @@
+---
+title: Live updates (Lua)
+description: Restart a Lua resource after editing a script, without stopping the server.
+---
+import { Steps } from '@astrojs/starlight/components';
+
+After editing `server.lua` or `client.lua`, restart that resource. The process stays running.
+
+Requirements:
+
+- running server
+- [server console](/lua/server/resources#console)
+- a resource with a Lua script, for example `hello_world` with `server_script = 'server.lua'`
+
+<Steps>
+    1. #### Edit the script
+
+        In `resources/hello_world/server.lua`:
+
+        ```lua title="server.lua" ins={2-3}
+        print('Hello World from CyberMP Server!')
+        -- New test log:
+        print('The resource has been updated live!')
+        ```
+
+    2. #### Restart the resource
+
+        Console:
+
+        ```shell
+        restart hello_world
+        ```
+
+        From code: `mp.resources.restart('hello_world')`.
+
+    3. #### Verify logs
+
+        The previous instance stops; the new instance starts with the updated text:
+
+        ```text
+        [resources] Stopped resource hello_world
+        [hello_world] Hello World from CyberMP Server!
+        [hello_world] The resource has been updated live!
+        [resources] Loaded resource hello_world
+        ```
+
+</Steps>
+
+`restart` creates a new Lua state: globals of the old instance are lost. `restart` also reloads the client scripts. Connected clients download them again.
+
+File watching instead of manual `restart`: [hotreload](/lua/shared/hotreload).

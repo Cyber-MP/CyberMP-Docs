@@ -1,0 +1,81 @@
+---
+title: События на клиенте
+description: События игры, сервера и CEF.
+---
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+На клиенте `mp.events` связывает три стороны: локальный скрипт, сервер и HTML.
+
+<Tabs syncKey="client-events-side">
+<TabItem label="Локально">
+
+`on` / `emit` остаются на этом клиенте.
+
+```js title="client.js"
+mp.events.on('resourceStart', () => {
+  console.log('The client resource has successfully started.');
+});
+
+mp.events.on('vehicleStreamIn', (netID, gameID) => {
+  console.log(`Vehicle streamed in - NetID: ${netID}, GameID: ${gameID}`);
+});
+
+mp.events.emit('myCustomLocalEvent', 'Hello local script!');
+```
+
+`vehicleStreamIn`: `netID` для meta, `gameID` для нативов.
+
+</TabItem>
+<TabItem label="Сервер">
+
+На сервер — `emitServer`. С сервера — `onServer`. Для возвращаемого значения — [RPC](/ru/guides/general/rpc).
+
+```js title="client.js"
+mp.events.emitServer(
+  'requestVehicleSpawn',
+  'Vehicle.v_standard2_archer_hella',
+);
+
+mp.events.onServer('serverNotification', (message) => {
+  console.log(`[Server]: ${message}`);
+});
+```
+
+</TabItem>
+<TabItem label="CEF">
+
+Страница отправляет через `mp.events.emit`. Клиент принимает `onCef`, ответ — `emitCef`. Документация: [интерфейс CEF](/ru/guides/client/first-cef-ui).
+
+Кроме того, что страница отправляет через `mp.events.emit`, CEF-процесс (`CEFSubProcess.exe`) сам шлёт в каждом фрейме два события: `domReady` по `DOMContentLoaded` (аргумент — `window.name` фрейма) и `loadingFailed` при любой неперехваченной JS-ошибке или необработанном reject промиса на странице ([`CefLoadingFailedError`](/ru/reference/client/api/events/cefloadingfailederror)). `loadingFailed` — не ошибка сетевой загрузки страницы.
+
+```js title="client.js"
+mp.events.onCef('domReady', (frameName) => {
+  mp.events.emitCef('initializeDashboard', { playerName: 'V', initialHealth: 300 });
+});
+
+mp.events.onCef('loadingFailed', (error) => {
+  console.error(`CEF Load Failed in ${error.frameName}: ${error.message}`);
+});
+```
+
+</TabItem>
+</Tabs>
+
+## Снятие слушателя
+
+```js title="client.js"
+const handlePlayerStream = (netID, gameID) => {
+  console.log(`Player ${netID} streamed in.`);
+};
+
+mp.events.on('remotePlayerStreamIn', handlePlayerStream);
+mp.events.off('remotePlayerStreamIn', handlePlayerStream);
+```
+
+`off` снимает только обработчики, зарегистрированные через `on`. `onServer` и `onCef` хранят обработчик под внутренним именем с префиксом (`onCef` ещё и оборачивает его), поэтому `off(name, fn)` их не находит; `offCef` обработчики `onCef` тоже не снимает. Такие обработчики отключайте флагом; при остановке ресурса они удаляются. Удаление команды консоли: `mp.commands.remove('spawn')`.
+
+**Стрим:** `vehicleStreamIn` / `Out`, `remotePlayerStreamIn` / `Out`, `pedStreamIn` / `Out`, `objectStreamIn` / `Out` — `(netID, gameID)`. Перевод id: [`mp.network`](/ru/guides/client/network-and-local).
+
+**Ресурсы:** `resourceStart`, `resourceStop` (этот ресурс), `anyResourceStart`, `anyResourceStop`, `anyClientResourceStart`, `anyClientResourceStop` (аргумент — имя ресурса). `resourcesRefresh` и `anyServerResourceStart` / `anyServerResourceStop` — только на сервере.
+
+Discord: [mp.discord](/ru/guides/client/discord).

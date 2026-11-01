@@ -1,0 +1,100 @@
+---
+title: Hashes
+description: "cname, tweakdbid, and resref: which hasher goes into which field."
+slug: guides/general/hashes
+---
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import HashPlayground from '../../../../components/HashPlayground.astro';
+
+The engine does not look up models and appearances by string. It requires a **hash**. `mp.hashes` (server JavaScript, server and client Lua) and `mp.game.hashes` (client JavaScript) build those hashes.
+
+There are two algorithms. `tweakdbid` uses CRC32 plus the string length; `cname` and `resref` both use FNV-1a 64, so the same string gives the same number through them. What differs is the input string each field expects (record name, archive path, or engine name). The wrong hasher or the wrong kind of string fails silently: the entity does not spawn, or an unrelated entity appears.
+
+<HashPlayground />
+
+## Which hasher
+
+| Hasher | Input | Typical field |
+| --- | --- | --- |
+| `tweakdbid` | TweakDB record: `Character.*`, `Vehicle.*`, `Items.*` | `model` on peds and vehicles; `model` on pickups (`Items.*` — the client spawns a pickup as an item drop) |
+| `resref` | Archive path ending in `.ent` | `model` on objects |
+| `cname` | Engine name: `default`, appearance / color names | `appearance` |
+
+String formats: [resource types](/guides/general/resource-types). Why `appearance` cannot be `0`: [appearances](/guides/general/appearances).
+
+<Tabs syncKey="lang">
+<TabItem label="JavaScript">
+
+```js title="server.js"
+mp.hashes.tweakdbid('Character.CivilianFemaleAverage');
+mp.hashes.tweakdbid('Vehicle.v_standard2_archer_hella');
+mp.hashes.resref('base\\gameplay\\devices\\doors\\gates\\appearances\\w300_h250_mall_metal.ent');
+mp.hashes.cname('default');
+```
+
+</TabItem>
+<TabItem label="Lua">
+
+```lua title="server.lua"
+mp.hashes.toTweakdbid('Character.CivilianFemaleAverage')
+mp.hashes.toTweakdbid('Vehicle.v_standard2_archer_hella')
+mp.hashes.toResref('base\\gameplay\\devices\\doors\\gates\\appearances\\w300_h250_mall_metal.ent')
+mp.hashes.toCname('default')
+```
+
+</TabItem>
+</Tabs>
+
+Do not run a TweakDB id through `cname`. Do not run an `.ent` path through `tweakdbid`.
+
+## Server vs client
+
+On the **server**, JavaScript helpers return a `GameHash`: `tweakdbid` returns a `number`, `cname` and `resref` return a `bigint`. Lua helpers return the hash as a decimal **string**: convert it with `tonumber(str, 10)` ([why](/lua/shared/hashes)). Pass the result into `mp.vehicles.create`, `mp.peds.create`, `mp.objects.create`, `mp.pickups.create`.
+
+<Tabs syncKey="lang">
+<TabItem label="JavaScript">
+
+```js title="server.js"
+const model = mp.hashes.tweakdbid('Vehicle.v_standard2_archer_hella');
+const look = mp.hashes.cname('default');
+```
+
+</TabItem>
+<TabItem label="Lua">
+
+```lua title="server.lua"
+local model = tonumber(mp.hashes.toTweakdbid('Vehicle.v_standard2_archer_hella'), 10)
+local look = tonumber(mp.hashes.toCname('default'), 10)
+```
+
+</TabItem>
+</Tabs>
+
+On the **client**, the helpers return the 64-bit hash as a decimal **string**; `from*` turns such a string back into the name. In JavaScript they are on `mp.game.hashes`; in Lua on `mp.hashes`, with `use_game_natives = true` in `resource.toml`. Game natives themselves take TweakDBID / CName / ResRef arguments as plain names and hash them internally, so pass `'Items.Preset_Nue_Default'`, not its hash.
+
+<Tabs syncKey="lang">
+<TabItem label="JavaScript">
+
+```js title="client.js"
+const item = mp.game.hashes.toTweakdbid('Items.Preset_Nue_Default');
+const name = mp.game.hashes.fromTweakdbid(item);
+
+const look = mp.game.hashes.toCname('default');
+const ent = mp.game.hashes.toResref('base\\quest\\secondary_characters\\judy.ent');
+```
+
+</TabItem>
+<TabItem label="Lua">
+
+```lua title="client.lua"
+local item = mp.hashes.toTweakdbid('Items.Preset_Nue_Default')
+local name = mp.hashes.fromTweakdbid(item)
+
+local look = mp.hashes.toCname('default')
+local ent = mp.hashes.toResref('base\\quest\\secondary_characters\\judy.ent')
+```
+
+</TabItem>
+</Tabs>
+
+Client-only spawn takes raw 64-bit hashes, not text: a string argument reaches the native as a pointer, not as a number. In JavaScript wrap the string in `BigInt(...)` for `mp.local.spawnPed` / `spawnVehicle` / `spawnObject`. In Lua convert it with `tonumber(str, 10)` for `mp.client.spawnPed` / `spawnVehicle` / `spawnObject`. Client JavaScript has no `mp.hashes`.

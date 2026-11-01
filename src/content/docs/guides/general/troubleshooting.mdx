@@ -1,0 +1,42 @@
+---
+title: Troubleshooting
+description: "Nothing spawned, entity not found, CEF is white — check this list first."
+slug: guides/general/troubleshooting
+---
+import SpawnDoctor from '../../../../components/SpawnDoctor.astro';
+
+Most reports of a “broken API” match one of five causes. The first unchecked item is typically the cause.
+
+<SpawnDoctor />
+
+## Spawn / stream
+
+| Symptom | Check |
+| --- | --- |
+| `create` returns an id, nobody sees it | event loop (create after `await` / `mp.wait` is another turn), hasher, `dimension`, radius |
+| Vehicle/ped look differs per client | `appearance` is the `cname` hash of `'default'` — [appearances](/guides/general/appearances) |
+| Client `entity not found` | A **netId** was passed into a native. Use `gameID` from the stream event or `mp.network.get*GameId` |
+| `at(id)` throws (Lua) or returns `undefined` (JavaScript) | Call `exists` first — the entity is already gone |
+| Local preview car is invisible to others | `mp.local.spawn*` (JavaScript) / `mp.client.spawn*` (Lua) is this client only |
+
+## Client natives
+
+| Symptom | Check |
+| --- | --- |
+| `GetPlayer()` empty | Wait for `onGameLoaded`, then poll after `spawnPlayer` |
+| TweakDB no-op | `onTweak` |
+| `SetTranslation(x, y)` does nothing (JavaScript) | Pass `{ x, y }` — [JS bridge](/guides/general/js-bridge) |
+| observe/override silent | REDscript name typo |
+
+## CEF white / dead
+
+1. HTML path is in `resource.toml` `file = [...]`.
+2. `cef_url` / `mp.cef.setUrl` points at that file.
+3. Events: page `mp.events.emit` → client `mp.events.onCef` (JavaScript) or `mp.events.addCef` (Lua). Do not `emitServer` from HTML unless the client forwards.
+4. `cef_debug = true` in `server.toml`, attach Chromium remote debugger.
+
+RPC from CEF to the server requires `RpcClient` on the game client with the same `name`: [RPC](/guides/general/rpc).
+
+## Duplicates after hotreload
+
+`restart` destroys the resource's script runtime (JavaScript context or Lua state), so its event handlers, ticks, and commands do not stack. Duplicates come from state outside the runtime, such as entities created with `mp.*.create`: destroy them on `resourceStop`. See [hotreload](/guides/general/hotreload#clean-up-before-restart).

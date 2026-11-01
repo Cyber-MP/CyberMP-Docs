@@ -1,0 +1,42 @@
+---
+title: Create a server in Server Manager
+description: Create a Master List listing for a running process.
+---
+
+import { Steps } from '@astrojs/starlight/components';
+
+<Steps>
+
+1. ## Address
+
+   Set `connection_host_addr` to a public IP or DNS name and port. Use `127.0.0.1` only for local tests.
+
+2. ## Listing
+
+   Sign in to [Server Manager](https://manager.cyber.mp) with Discord. Press **Create new...** → **Server** and enter a name (3–32 characters). The number of servers depends on the [plan](/guides/server-manager/subscriptions): 2 without a plan, then 4, 6, 8 or unlimited.
+
+3. ## Details
+
+   On the server's **Settings** tab fill in the fields and save:
+
+   | Field | Limit |
+   | --- | --- |
+   | Description | Up to 256 characters. |
+   | Game Mode, Language | Up to 16 characters each. |
+   | Tags | Up to 5 tags, 2–12 characters each. |
+   | Website | URL. |
+   | Avatar, Banner | Up to 15 MB per image. Banners and animated images depend on the plan. |
+
+   Player count and `max_players` are not set here. The backend reads them from the server's `/info`.
+
+4. ## Token
+
+   On the **Manage** tab copy the **Private token** into `private_token` in `server.toml` (or set the `CYBERMP_PRIVATE_TOKEN` environment variable). Restart the process. See [tokens](/guides/server-manager/tokens).
+
+5. ## Verify
+
+   Within about 2 minutes the server appears in the [server list](/guides/server-manager/server-list) with its player count. If it does not, check [why a server is not in the list](/guides/server-manager/server-list#the-server-is-not-in-the-list). Joining by [direct connect](/guides/game-client/direct-connect) works without the list.
+
+</Steps>
+
+Resources remain on disk under `resources/`.

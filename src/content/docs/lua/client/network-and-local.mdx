@@ -1,0 +1,88 @@
+---
+title: Network ids, local spawn, ticks (Lua)
+description: Map netId to gameId, spawn client-only entities, and run code every tick in Lua.
+---
+
+The server uses **network ids**. Natives require **game ids** (REDengine handles). Passing the wrong kind produces `entity not found` on the client.
+
+## `mp.network`
+
+| Call | Direction |
+| --- | --- |
+| `mp.network.getVehicleGameId(netId)` / `getVehicleId(gameId)` | Vehicle |
+| `mp.network.getPedGameId(netId)` / `getPedId(gameId)` | Ped |
+| `mp.network.getObjectGameId(netId)` / `getObjectId(gameId)` | Object |
+| `mp.network.getPlayerGameId(netId)` / `getPlayerId(gameId)` | Player |
+| `mp.network.getLocalPlayerId()` | Local player's network id. |
+| `mp.network.getStreamedPlayers()` | Game ids of remote players in range. |
+| `mp.network.getStreamedPool(name)` | Game ids in a pool: `'CVehicle'`, `'CPed'`, `'CPickup'`, `'CObject'`. |
+| `mp.getServerAddress()` | Session endpoint, e.g. `127.0.0.1:2077`. In Lua it is on `mp`, not on `mp.network`. |
+
+```lua title="client.lua"
+mp.events.add('vehicleStreamIn', function(netID, gameID)
+  local locked = mp.meta.getEntity(netID, 'locked')
+  local back = mp.network.getVehicleId(gameID) -- same as netID while streamed
+  print(netID, gameID, locked, back)
+end)
+
+local me = mp.network.getLocalPlayerId()
+local nearby = mp.network.getStreamedPlayers()
+```
+
+Use the conversions in stream callbacks, not in `resourceStart`: an entity that is not streamed has no game id.
+
+## Local-only spawn (`mp.client`)
+
+`spawnPed` / `spawnVehicle` / `spawnObject` create entities **only on this client**. Other players do not see them. Use for preview vehicles, decorations, checkpoints.
+
+| Call | Returns |
+| --- | --- |
+| `mp.client.spawnPlayer(x, y, z, yaw)` | `true` when the spawn started. See [spawn the player](/lua/client/spawning-player). |
+| `mp.client.spawnPed(model, appearance, x, y, z, yaw, streaming)` | Handle (integer). |
+| `mp.client.spawnVehicle(model, appearance, x, y, z, roll, pitch, yaw, streaming)` | Handle (integer). |
+| `mp.client.spawnObject(model, appearance, x, y, z, roll, pitch, yaw, streaming)` | Handle (integer). |
+| `mp.client.despawnPed(handle)` / `despawnVehicle(handle)` / `despawnObject(handle)` | `true` when removed. |
+
+```lua title="client.lua"
+local function hash(str) return tonumber(str, 10) end
+
+local handle = mp.client.spawnVehicle(
+  hash(mp.hashes.toTweakdbid('Vehicle.v_standard2_archer_hella')),
+  hash(mp.hashes.toCname('default')),
+  x, y, z,
+  0, 0, yaw,
+  true -- streaming
+)
+
+mp.client.despawnVehicle(handle)
+```
+
+Pass `model` and `appearance` as integers: `tonumber(hashString, 10)` ([why](/lua/shared/hashes)). The client `mp.hashes` helpers need `use_game_natives = true`. For a stable look pass `toCname('default')` as the appearance: [appearances](/lua/shared/hashes#models-and-appearances). Local entities have no dimension: despawn them yourself when the player changes dimension.
+
+## Ticks
+
+| Call | Description |
+| --- | --- |
+| `mp.onUpdateLoop(fn)` | Calls `fn` on every script tick. It cannot be removed, and an error inside `fn` is dropped without a message. |
+| `mp.registerGameState('onUpdate', fn)` | Calls `fn(dt)` every tick after `onInit`. Needs `use_game_natives = true`. |
+
+Neither returns an id to stop it. Guard the body with a flag and keep it cheap:
+
+```lua title="client.lua"
+local hudEnabled = false
+
+mp.onUpdateLoop(function()
+  if not hudEnabled then return end
+  -- distance checks, HUD, animation helpers
+end)
+```
+
+For periodic work, a task with `mp.wait` is often simpler: [scheduler](/lua/shared/scheduler).
+
+## Local storage
+
+String key-value store on this machine: [local storage](/lua/client/local-storage).
+
+## Timer and launcher
+
+`mp.getTimer()` is a millisecond counter. `mp.getLauncherSettings()` returns the launcher options as a JSON string: `json.decode(mp.getLauncherSettings())`. Treat the result as untyped. Fields change between launcher builds.

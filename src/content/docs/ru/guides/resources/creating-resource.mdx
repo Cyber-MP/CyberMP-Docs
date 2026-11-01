@@ -1,0 +1,89 @@
+---
+title: Создание ресурса
+description: "Ресурс Hello World: каталог, resource.toml и два скрипта."
+---
+import { FileTree } from '@astrojs/starlight/components';
+import { Steps } from '@astrojs/starlight/components';
+
+Минимальный ресурс, который при старте пишет Hello World в консоли сервера и клиента.
+
+<Steps>
+
+1. ## Каталог ресурса
+
+    Сервер загружает каталоги из `resources`. Имя каталога — имя ресурса.
+
+    - Откройте `resources`.
+    - Создайте каталог `hello_world`.
+
+2. ## `resource.toml`
+
+    Объявляет, какие скрипты запускать.
+
+    ```toml title="resource.toml"
+    client_script = './client.js'
+    server_script = './server.js'
+    ```
+
+    Дополнительные поля: [`resource.toml`](/ru/guides/resources/resource-toml).
+
+    | Поле | Описание |
+    | --- | --- |
+    | `file` | Файлы клиента: UI, архивы, моды. [Кастомные ассеты](/ru/guides/resources/adding-resource-files). |
+    | `cef_url` | HTML-вход CEF. [CEF UI](/ru/guides/client/first-cef-ui). |
+    | `use_game_natives` | `true`, если клиент вызывает `mp.game`. |
+    | `hot_reload` | Платформа его не читает; флаг для примера [hotreload](/ru/guides/general/hotreload)-вотчера. |
+
+3. ## Скрипты
+
+    Рядом с `resource.toml`:
+
+    ```js title="server.js" ins={1}
+    console.log('Hello World from CyberMP Server!');
+    ```
+
+    ```js title="client.js" ins={1}
+    console.log('Hello World from CyberMP Client!');
+    ```
+
+4. ## Включение на сервере
+
+    Добавьте имя каталога в корневой `server.toml`:
+
+    ```toml title="server.toml" ins={7}
+    tcp_host = "0.0.0.0:2077"
+    udp_host = "0.0.0.0:2077"
+
+    connection_host_addr = "127.0.0.1:2077"
+    max_players = 20
+
+    resources = ['hello_world']
+
+    disable_voice = false
+    ```
+
+5. ## Проверка
+
+    Раскладка:
+
+    <FileTree>
+        - resources
+            - hello_world
+                - server.js
+                - client.js
+                - resource.toml
+        - server.toml
+    </FileTree>
+
+    Запустите сервер. Ожидаемый лог:
+
+    ```ansi {3}
+    [38;2;179;133;0m[00:00:00] [server][0m CyberMP server starting...
+    [38;2;179;133;0m[00:00:00] [server][0m Resources initializing...
+    [38;2;179;133;0m[00:00:00] [hello_world][0m Hello World from CyberMP Server!
+    [38;2;179;133;0m[00:00:00] [resources][0m Loaded resource hello_world
+    ```
+
+    Войдите и нажмите `F8`. В [консоли клиента](/ru/reference/client/console) появится `Hello World from CyberMP Client!`.
+
+</Steps>

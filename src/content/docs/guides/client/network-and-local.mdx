@@ -1,0 +1,108 @@
+---
+title: Network ids, local spawn, ticks
+description: Map netId to gameId, spawn client-only entities, setTick, and localStorage.
+slug: guides/client/network-and-local
+---
+
+The server uses **network ids**. Natives require **game ids** (REDengine handles). Passing the wrong kind produces `entity not found` on the client.
+
+## `mp.network`
+
+| Call | Direction |
+| --- | --- |
+| `getVehicleGameId(netId)` / `getVehicleId(gameId)` | Vehicle |
+| `getPedGameId(netId)` / `getPedId(gameId)` | Ped |
+| `getObjectGameId(netId)` / `getObjectId(gameId)` | Object |
+| `getPlayerGameId(netId)` / `getPlayerId(gameId)` | Player |
+| `getLocalPlayerId()` | Local player's net id (no puppet required) |
+| `getStreamedPlayers()` | Game ids of remote players in range |
+| `getStreamedPool('CVehicle' \| 'CPed' \| 'CPickup' \| 'CObject')` | Game ids in that pool |
+| `getServerAddress()` | Session endpoint, e.g. `127.0.0.1:2077` |
+
+```js title="client.js"
+mp.events.on('vehicleStreamIn', (netID, gameID) => {
+  const locked = mp.meta.getEntityMeta(netID, 'locked');
+  const back = mp.network.getVehicleId(gameID); // same as netID while streamed
+  console.log(netID, gameID, locked, back);
+});
+
+const me = mp.network.getLocalPlayerId();
+const nearby = mp.network.getStreamedPlayers();
+```
+
+Use these in stream callbacks, not in `resourceStart`. Older type packages exposed the same functions on `mp` (`getVehicleGameIdByNetworkId`). Use `mp.network.*`.
+
+```js title="client.js" del={1-3} ins={5-8}
+mp.events.on('resourceStart', () => {
+  mp.network.getVehicleGameId(1); // not streamed yet
+});
+
+mp.events.on('vehicleStreamIn', (netID, gameID) => {
+  const locked = mp.meta.getEntityMeta(netID, 'locked');
+  console.log(netID, gameID, locked);
+});
+```
+
+`gameID` from `GetEntityID().hash` is a native handle. Pass it to `getPlayerId` / `getVehicleId` when the source is a puppet, not a stream event.
+
+## Local-only spawn (`mp.local`)
+
+`spawnPed` / `spawnVehicle` / `spawnObject` create entities **only on this client**. Other players do not see them. Use for preview vehicles, decorations, checkpoints.
+
+```js
+const skinHash = BigInt(mp.game.hashes.toTweakdbid('Vehicle.v_standard2_archer_hella'));
+const appHash = BigInt(mp.game.hashes.toCname('default'));
+const handle = mp.local.spawnVehicle(
+  skinHash,
+  appHash,
+  x, y, z,
+  roll, pitch, yaw,
+  true, // streaming
+);
+
+mp.local.despawnVehicle(handle);
+```
+
+Same pattern for `spawnPed` / `despawnPed` and `spawnObject` / `despawnObject`. Model and appearance are raw 64-bit hashes: pass a `bigint` (a plain number is exact only below 2^53). [`mp.game.hashes`](/guides/general/hashes) returns a decimal string, so wrap it in `BigInt(...)`: a string reaches the native as a pointer, not as a number. Client JavaScript has no `mp.hashes`. For a stable look pass `toCname('default')` as `appHash` — same rule as [appearances](/guides/general/appearances).
+
+Player spawn is `mp.local.spawnPlayer(x, y, z, yaw)` — see [lifecycle](/guides/client/lifecycle).
+
+## `setTick`
+
+Runs every render frame. Keep the callback cheap. Always `clearTick` on `resourceStop` or when the feature turns off.
+
+```js title="client.js"
+let tickId = null;
+
+const start = () => {
+  if (tickId !== null) return;
+  tickId = mp.setTick(() => {
+    // distance checks, HUD, animation helpers
+  });
+};
+
+const stop = () => {
+  if (tickId === null) return;
+  mp.clearTick(tickId);
+  tickId = null;
+};
+
+mp.events.on('resourceStop', stop);
+```
+
+Do not start a new tick on every stream-in without clearing the previous one.
+
+## `mp.localStorage`
+
+String key-value store on this machine. Full API and excluded data: [local storage](/guides/scripting/local-storage).
+
+```js
+mp.localStorage.set('keybinds', JSON.stringify(bindings));
+mp.localStorage.save();
+```
+
+## Timer and launcher
+
+`mp.getTimer()` is milliseconds since the engine shell started (older types: `mp.getGameTimer()`).
+
+`mp.getLauncherSettingsJSON()` / `mp.getLauncherSettings()` read client launcher options. Treat the parsed object as untyped. Fields change between launcher builds. [Launcher settings](/guides/game-client/launcher).

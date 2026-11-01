@@ -47,7 +47,7 @@ The entity type (see [EntityType](/reference/server/api/entities/entitytype/))
 
 ### entityMetaChange()
 
-> **entityMetaChange**(`id`, `key`, `oldValue`, `newValue`): `void`
+> **entityMetaChange**(`id`, `key`, `newValue`, `oldValue`): `void`
 
 Defined in: events.ts:547
 
@@ -57,17 +57,19 @@ Triggered when any entity meta changed
 
 ##### id
 
-`string`
+`number`
+
+Entity ID
 
 ##### key
 
 `string`
 
-##### oldValue
+##### newValue
 
 `any`
 
-##### newValue
+##### oldValue
 
 `any`
 
