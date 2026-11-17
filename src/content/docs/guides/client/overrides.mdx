@@ -1,30 +1,36 @@
 ---
 title: Overriding Game Methods
-description: Learn how to intercept, replace, or chain REDengine method calls using method overrides in JavaScript and Lua.
+description: Replace, block or wrap one of the game's script methods with your own function, in JavaScript and Lua.
 ---
 
 import { Tabs, TabItem } from '@astrojs/starlight/components';
 import { SCRIPT_LANG_TAB_SYNC_KEY } from '../../../../lib/const';
 
-Unlike passive observers, method overrides (`mp.override` in Lua / `mp.game.override` in JS) completely intercept REDengine method invocations. An override function has full control over execution: it can invoke the original method, modify incoming parameters, return a custom result, or prevent the vanilla game method from executing entirely.
+An **override** puts your function in place of one of the game's own methods. Whenever the game calls that method, your function runs instead and decides what happens: let the original run, run it with different arguments, return a different result, or not run it at all.
 
-For complete type signatures, see [`OverrideFunction`](/reference/client/api/global/overridefunction/) and the [Lua Client Reference](/reference/lua/client/#method-hooks-observe--override).
+This is how you switch off single-player behaviour that doesn't fit a multiplayer server, such as the vanilla death sequence, the weight limit or the vehicle summoning rules. If you only need to be told that a method was called, use an [observer](/guides/client/observes/): it is simpler and can't break the game's own logic.
 
----
+:::tip[Check `server.toml` first]
+The built-in core resource already ships overrides for the most common cases (death logic, vehicles, encumbrance, turrets, vending machines and more). You turn them on with flags in the `[core.overrides]` table of your [server configuration](/reference/server/configuration/), without writing any code.
+:::
 
-## Registering a Method Override
+Overrides hook into the game, so the resource needs `use_game_natives = true` in its `resource.toml` (see [Working with Game Natives](/reference/client/working-with-game-natives/)). Full signatures are in [`OverrideFunction`](/reference/client/api/global/overridefunction/) and the [Lua client reference](/reference/lua/client/#method-hooks-observe--override).
 
-Overrides are registered inside the `onInit` lifecycle stage when game classes become available:
+## Registering an override
+
+You pass a class name, a method name and a callback. Class and method names are the ones listed on [NativeDB](https://nativedb.red4ext.com/).
+
+Register overrides inside the `onInit` [lifecycle stage](/guides/client/lifecycle/), which is when the game's classes become available to scripts.
 
 <Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
   <TabItem label="JS">
     ```js title="client.js"
     mp.game.onInit(() => {
-      // Intercept the player death logic
+      // Runs in place of PlayerPuppet.OnDeath
       mp.game.override('PlayerPuppet', 'OnDeath', (self, evt, wrappedMethod) => {
         console.log('[Override] Intercepted PlayerPuppet.OnDeath');
 
-        // Call wrappedMethod to allow the original chain to continue:
+        // Hand over to the original method and pass its result back to the game
         return wrappedMethod(evt);
       });
     });
@@ -33,11 +39,11 @@ Overrides are registered inside the `onInit` lifecycle stage when game classes b
   <TabItem label="Lua">
     ```lua title="client.lua"
     mp.registerGameState('onInit', function()
-      -- Intercept the player death logic
+      -- Runs in place of PlayerPuppet.OnDeath
       mp.override('PlayerPuppet', 'OnDeath', function(self, evt, wrappedMethod)
         print("[Override] Intercepted PlayerPuppet.OnDeath")
 
-        -- Call wrappedMethod to allow the original chain to continue:
+        -- Hand over to the original method and pass its result back to the game
         return wrappedMethod(evt)
       end)
     end)
@@ -45,35 +51,57 @@ Overrides are registered inside the `onInit` lifecycle stage when game classes b
   </TabItem>
 </Tabs>
 
----
+The callback receives:
 
-## The Continuation Function (`wrappedMethod`)
+- **Instance method:** `(self, arg1, arg2, ..., wrappedMethod)`. `self` is the game object the method was called on.
+- **Static method:** `(arg1, arg2, ..., wrappedMethod)`, with no `self`.
+- **Overloaded method:** when a class has several methods with the same name, pick one by adding its parameter types after a `;`, for example `'IsSummoningVehiclesRestricted;GameInstance'`.
 
-The last parameter passed to your override callback is the continuation function `wrappedMethod`.
+Registering returns nothing, so there is no handle to remove an override later. Overrides are removed when the resource stops or restarts. To switch one off for a while, check a flag in the callback and call `wrappedMethod` when it is off.
 
-- **Chaining Execution:** Calling `wrappedMethod(...)` invokes the next registered override in the chain or the vanilla REDengine function.
-- **Do Not Pass `self`:** When calling `wrappedMethod(arg1, arg2)`, omit the `self` reference. The runtime bridge already retains the internal instance context.
-- **Blocking Execution:** Omitting the `wrappedMethod(...)` call completely cancels the vanilla method logic and skips further execution.
-- **Return Values and Out Parameters:** An override may replace the method's result and its `out` values instead of calling the original. A result that is not returned falls back to the type default (Lua) or keeps the current value (JS); an `out` value that is not returned keeps what `wrappedMethod(...)` (or the original call) produced. See [Handling Methods with Out Parameters](#handling-methods-with-out-parameters).
-- **Synchronous Execution Only:** Overrides run synchronously. Never mark the callback `async` or return a Promise; the game engine expects immediate C++ return values.
+## The continuation function (`wrappedMethod`)
 
----
+The last argument of every override callback is `wrappedMethod`. Calling it continues the chain: it runs the next override registered on the same method, or the game's original method if there is none.
 
-## Blocking Game Features (Example)
+- **Don't pass `self`.** Call `wrappedMethod(arg1, arg2)`, not `wrappedMethod(self, arg1, arg2)`. The runtime already knows which object the call belongs to.
+- **Not calling it blocks the method.** If your callback never calls `wrappedMethod`, the original method and any remaining overrides are skipped.
+- **You choose the result.** Return what `wrappedMethod(...)` returned to keep the vanilla result, or return your own value. A result that is not returned falls back to the type default (Lua) or keeps the current value (JS). Methods with `out` parameters are covered in [Handling methods with out parameters](#handling-methods-with-out-parameters).
+- **Only call it during the override.** `wrappedMethod` is valid while your callback is running. Don't store it or call it later.
 
-To disable or override specific vanilla gameplay mechanics (such as vehicle summoning restrictions or encumbrance), return custom values directly without invoking `wrappedMethod`:
+:::caution[Overrides are synchronous]
+The game waits for your callback to return and uses its return value right away. Never mark the callback `async`, return a Promise, or pause with `mp.wait` in Lua: by the time the delayed code runs, the game call is long over.
+:::
+
+## Blocking a game feature
+
+To switch a vanilla mechanic off, return your own value and leave `wrappedMethod` out.
+
+The game asks `VehicleSystem.IsSummoningVehiclesRestricted` before it lets the player call their own vehicle. Answer `true` and the summon is refused. You rarely want that forever, though: an override can't be removed once it is registered, so put a flag in front of it and let the original method answer whenever the flag is off. Here the server flips the flag, for example while a player is inside an event area.
 
 <Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
   <TabItem label="JS">
     ```js title="client.js"
+    let isSummoningBlocked = false;
+
+    // The server decides when players may call their vehicles
+    mp.events.onServer('setVehicleSummoningBlocked', (blocked) => {
+      isSummoningBlocked = blocked;
+    });
+
     mp.game.onInit(() => {
-      // Force vehicle summoning to always be permitted
-      // Signature suffix specifies overload: IsSummoningVehiclesRestricted;GameInstance
+      // Static method, so there is no `self`.
+      // The suffix after `;` selects the overload that takes a GameInstance.
       mp.game.override(
         'VehicleSystem',
         'IsSummoningVehiclesRestricted;GameInstance',
         (gameInstance, wrappedMethod) => {
-          return false; // Vehicle summoning is never restricted
+          if (isSummoningBlocked) {
+            // "Yes, summoning is restricted": the game refuses the summon
+            return true;
+          }
+
+          // Not blocked by us: let the game decide as it normally would
+          return wrappedMethod(gameInstance);
         }
       );
     });
@@ -81,14 +109,27 @@ To disable or override specific vanilla gameplay mechanics (such as vehicle summ
   </TabItem>
   <TabItem label="Lua">
     ```lua title="client.lua"
+    local isSummoningBlocked = false
+
+    -- The server decides when players may call their vehicles
+    mp.events.addServer('setVehicleSummoningBlocked', function(blocked)
+      isSummoningBlocked = blocked
+    end)
+
     mp.registerGameState('onInit', function()
-      -- Force vehicle summoning to always be permitted
-      -- Signature suffix specifies overload: IsSummoningVehiclesRestricted;GameInstance
+      -- Static method, so there is no `self`.
+      -- The suffix after `;` selects the overload that takes a GameInstance.
       mp.override(
         'VehicleSystem',
         'IsSummoningVehiclesRestricted;GameInstance',
         function(gameInstance, wrappedMethod)
-          return false -- Vehicle summoning is never restricted
+          if isSummoningBlocked then
+            -- "Yes, summoning is restricted": the game refuses the summon
+            return true
+          end
+
+          -- Not blocked by us: let the game decide as it normally would
+          return wrappedMethod(gameInstance)
         end
       )
     end)
@@ -96,11 +137,16 @@ To disable or override specific vanilla gameplay mechanics (such as vehicle summ
   </TabItem>
 </Tabs>
 
----
+Before you rely on an override like this one:
 
-## Handling Methods with Out Parameters
+- **It only changes the game on this client.** An override stops an honest player's game from doing something. It is not a server-side rule, and a modified client can skip it. Anything that must hold (who may own or spawn a vehicle) still has to be checked on the server.
+- **The flag starts over with the resource.** After a restart the script begins with `isSummoningBlocked = false` until the server sends the event again. If the state must survive, keep it in synced [metadata](/guides/server/meta/) and read it when the script starts.
+- **Other overrides share the method.** With `change_vehicles_logic` enabled in [`[core.overrides]`](/reference/server/configuration/), the core resource overrides this same method and always answers `true`, so summoning stays blocked whatever your flag says.
+- **Keep the body tiny.** The game waits for your answer every time it asks. Read a variable and return; don't call the server or search the world in here.
 
-For game methods with output parameters (`out` values in REDscript), return the primary result followed by the out values. The shape of the return value differs between the languages:
+## Handling methods with out parameters
+
+Some game methods hand back extra values through `out` parameters (as declared in REDscript) on top of their return value. An override of such a method returns the main result first, then the `out` values in the order they are declared. How you return them depends on the language:
 
 <Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
   <TabItem label="JS">
@@ -122,3 +168,10 @@ For game methods with output parameters (`out` values in REDscript), return the 
     A Lua table is treated as one value, not as a list of results: it fails the type conversion and is logged as `ignored returned value: expected <Type>`. A result that is not returned fills the return slot with the type default; an out value that is not returned keeps what `wrappedMethod(...)` returned; returning `nil` for an out value resets it to the default.
   </TabItem>
 </Tabs>
+
+## Next steps
+
+- [Observing Game Methods](/guides/client/observes/): watch a method without replacing it.
+- [Client Lifecycle & Stages](/guides/client/lifecycle/): what `onInit` is and what is safe to do in each stage.
+- [Server Configuration](/reference/server/configuration/): the ready-made `[core.overrides]` flags.
+- [Advanced game hooks](/guides/advanced/native-hooks/): wrapping the original method, and how the core resource builds its own overrides.

@@ -1,0 +1,416 @@
+---
+title: Reading synced data on the client
+description: Read the metadata the server syncs for players, entities and the whole server from a client script, notice when a value changes, and know what a client may write.
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import { SCRIPT_LANG_TAB_SYNC_KEY } from '../../../../lib/const';
+
+Metadata ("meta") is a key-value store that the server attaches to players, to entities and to the server as a whole: a faction on a player, a fuel level on a vehicle, the state of the current round. When the server sets a value with `sync = true`, CyberMP copies it to the clients. This page is about the receiving end: how a client script reads those values and what to do with them.
+
+The point of synced meta is that you don't write an event for every value. The server sets `fuel` on a vehicle once, and every client that can see the vehicle can read it whenever it wants, including a player who connected five minutes later.
+
+Setting values on the server is covered in [Entity Metadata & Synchronization](/guides/server/meta/). Read that page first if you haven't.
+
+## Reading a value
+
+The client has its own `mp.meta`. The getters mirror the three scopes of the server, plus one for the local player:
+
+| Scope | JavaScript | Lua |
+| :--- | :--- | :--- |
+| Global | `mp.meta.getGlobalMeta(key)` | `mp.meta.getGlobal(key)` |
+| A player | `mp.meta.getPlayerMeta(netId, key)` | `mp.meta.getPlayer(netId, key)` |
+| A vehicle, ped, object or pickup | `mp.meta.getEntityMeta(netId, key)` | `mp.meta.getEntity(netId, key)` |
+| The local player | `mp.meta.getLocalPlayerMeta(key)` | `mp.meta.getLocalPlayer(key)` |
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="client.js"
+    // Set on the server with mp.meta.setGlobalMeta('activeWeather', 'Rain', true)
+    const activeWeather = mp.meta.getGlobalMeta('activeWeather');
+    console.log(`Weather on this server: ${activeWeather}`);
+
+    // Set on the server with player.setMeta('faction', 'Moxes', true)
+    const myNetId = mp.network.getLocalPlayerId();
+    const myFaction = mp.meta.getPlayerMeta(myNetId, 'faction');
+    console.log(`My faction: ${myFaction}`);
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="client.lua"
+    -- Set on the server with mp.meta.setGlobal('activeWeather', 'Rain', true)
+    local activeWeather = mp.meta.getGlobal('activeWeather')
+    print(string.format("Weather on this server: %s", tostring(activeWeather)))
+
+    -- Set on the server with mp.meta.setPlayer(player, 'faction', 'Moxes', true)
+    local myNetId = mp.network.getLocalPlayerId()
+    local myFaction = mp.meta.getPlayer(myNetId, 'faction')
+    print(string.format("My faction: %s", tostring(myFaction)))
+    ```
+  </TabItem>
+</Tabs>
+
+Three things decide whether you get a value back:
+
+- **The server must have synced it.** A value set without `sync = true` never leaves the server. On the client that key simply doesn't exist.
+- **The ID must be a network ID.** Players and entities are addressed by the ID the server gave them, the same number as `player.id` or `vehicle.id` in a server script. The game's own entity ID is a different number. [Network IDs](/guides/client/network-ids/) explains both and how to convert.
+- **A missing key gives you nothing, not an error.** You get `nil` in Lua and an empty value in JavaScript (`null` or `undefined`, so test for both). Always decide what your code does when the value isn't there yet.
+
+Values are plain data: strings, numbers, booleans, and objects or arrays made of those.
+
+:::tip[A value you get for free: `nickname`]
+The built-in core resource syncs every player's name as the player meta key `nickname`. `mp.meta.getPlayerMeta(netId, 'nickname')` (Lua: `mp.meta.getPlayer(netId, 'nickname')`) works on any server without server code of your own. The core nametags use it.
+:::
+
+## There is no change event on the client
+
+On the server, `globalMetaChange`, `playerMetaChange` and `entityMetaChange` fire when a value changes. The client has no such events: they are not in the client typings, not in the Lua client reference, and the core resource doesn't use any. A client script finds out about a change by reading the value again.
+
+That leaves three patterns, and the examples below use each one:
+
+1. **Read when you need it.** If you only use the value at one moment (the player presses a key, an entity streams in), read it at that moment. Nothing to keep up to date.
+2. **Poll and compare.** If something on screen has to follow the value, read it a few times per second with a [timer](/guides/client/tick-and-timers/), compare with the last value you saw, and act when it differs.
+3. **Send an event as well.** If the client must react at the exact moment of the change, have the server send an event next to setting the meta. Meta holds the state for anyone who asks later; the event marks the moment.
+
+Reading meta is a local lookup, not a request to the server, so polling a handful of keys a few times per second costs next to nothing. Don't do it on every frame for every entity, though.
+
+## Example: a title on nearby players
+
+The server syncs a `faction` on each player. The client builds a line of text per nearby player, such as `[12] Judy - Moxes`, and hands it to the UI whenever it changes. Drawing the label is up to your UI; this example covers the data.
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="client.js"
+    // The text we last sent to the page for each player, by network ID
+    const sentTitleByPlayer = new Map();
+
+    function buildTitle(playerNetId) {
+      const nickname = mp.meta.getPlayerMeta(playerNetId, 'nickname') || 'Unknown';
+      const faction = mp.meta.getPlayerMeta(playerNetId, 'faction') || 'No faction';
+
+      return `[${playerNetId}] ${nickname} - ${faction}`;
+    }
+
+    function refreshTitles() {
+      for (const playerGameId of mp.network.getStreamedPlayers()) {
+        const playerNetId = mp.network.getPlayerId(playerGameId);
+
+        // No network ID yet: this player is still being set up, try again next round
+        if (!playerNetId) continue;
+
+        const title = buildTitle(playerNetId);
+
+        // Only talk to the page when the text really changed
+        if (sentTitleByPlayer.get(playerNetId) === title) continue;
+
+        sentTitleByPlayer.set(playerNetId, title);
+        mp.events.emitCef('titles:set', playerNetId, title);
+      }
+    }
+
+    setInterval(refreshTitles, 1000);
+
+    // The player went out of range: forget them and remove their label
+    mp.events.on('remotePlayerStreamOut', (playerNetId) => {
+      sentTitleByPlayer.delete(playerNetId);
+      mp.events.emitCef('titles:remove', playerNetId);
+    });
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="client.lua"
+    -- The text we last sent to the page for each player, by network ID
+    local sentTitleByPlayer = {}
+
+    local function buildTitle(playerNetId)
+      local nickname = mp.meta.getPlayer(playerNetId, 'nickname') or 'Unknown'
+      local faction = mp.meta.getPlayer(playerNetId, 'faction') or 'No faction'
+
+      return string.format("[%s] %s - %s", playerNetId, nickname, faction)
+    end
+
+    local function refreshTitles()
+      for _, playerGameId in ipairs(mp.network.getStreamedPlayers()) do
+        local playerNetId = mp.network.getPlayerId(playerGameId)
+
+        -- No network ID yet: this player is still being set up, try again next round.
+        -- 0 counts as true in Lua, so it has to be compared.
+        local hasNetId = playerNetId ~= nil and playerNetId ~= 0
+
+        if hasNetId then
+          local title = buildTitle(playerNetId)
+
+          -- Only talk to the page when the text really changed
+          if sentTitleByPlayer[playerNetId] ~= title then
+            sentTitleByPlayer[playerNetId] = title
+            mp.events.triggerCef('titles:set', playerNetId, title)
+          end
+        end
+      end
+    end
+
+    mp.spawnTask(function()
+      while true do
+        refreshTitles()
+        mp.wait(1000)
+      end
+    end)
+
+    -- The player went out of range: forget them and remove their label
+    mp.events.add('remotePlayerStreamOut', function(playerNetId)
+      sentTitleByPlayer[playerNetId] = nil
+      mp.events.triggerCef('titles:remove', playerNetId)
+    end)
+    ```
+  </TabItem>
+</Tabs>
+
+When the server changes a player's faction, the next round builds a different text, sees that it differs from the one it sent, and updates the page. You wrote no event for it. `titles:set` and `titles:remove` are names chosen for this example.
+
+The cleanup on `remotePlayerStreamOut` matters. Without it the map grows with every player you ever met, and a player who comes back later with the same title would not be sent to the page again. More on that in [Streaming: what the client can see](/guides/client/streaming/).
+
+## Example: fuel and lock state of the current vehicle
+
+The server keeps `fuel` and `isLocked` on each vehicle as synced entity meta. The client shows them for the vehicle the player sits in. This uses game natives to find that vehicle, so the resource needs `use_game_natives = true`.
+
+The chain is: the player's character, the vehicle they are mounted in, that vehicle's game ID, its network ID, and finally the meta.
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="client.js"
+    // Returns the network ID of the vehicle the player sits in, or null
+    function getCurrentVehicleNetId() {
+      const player = mp.game.GetPlayer();
+      if (!player) return null;
+
+      const vehicle = mp.game.GetMountedVehicle(player);
+      if (!vehicle) return null;
+
+      const vehicleGameId = vehicle.GetEntityID().hash;
+      const vehicleNetId = mp.network.getVehicleId(vehicleGameId);
+
+      // A vehicle spawned locally on this client has no network ID and no meta
+      if (!vehicleNetId) return null;
+
+      return vehicleNetId;
+    }
+
+    function refreshVehicleHud() {
+      const vehicleNetId = getCurrentVehicleNetId();
+
+      if (vehicleNetId === null) {
+        mp.events.emitCef('vehicleHud:hide');
+        return;
+      }
+
+      // Fall back to sensible values while the server has not set them
+      const fuel = mp.meta.getEntityMeta(vehicleNetId, 'fuel') || 0;
+      const isLocked = mp.meta.getEntityMeta(vehicleNetId, 'isLocked') === true;
+
+      mp.events.emitCef('vehicleHud:show', fuel, isLocked);
+    }
+
+    mp.game.onceGameLoaded(() => {
+      setInterval(refreshVehicleHud, 500);
+    });
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="client.lua"
+    -- Returns the network ID of the vehicle the player sits in, or nil
+    local function getCurrentVehicleNetId()
+      local player = Game.GetPlayer()
+      if not player then return nil end
+
+      local vehicle = Game.GetMountedVehicle(player)
+      if not vehicle then return nil end
+
+      local vehicleGameId = vehicle:GetEntityID().hash
+      local vehicleNetId = mp.network.getVehicleId(vehicleGameId)
+
+      -- A vehicle spawned locally on this client has no network ID and no meta
+      if not vehicleNetId or vehicleNetId == 0 then return nil end
+
+      return vehicleNetId
+    end
+
+    local function refreshVehicleHud()
+      local vehicleNetId = getCurrentVehicleNetId()
+
+      if vehicleNetId == nil then
+        mp.events.triggerCef('vehicleHud:hide')
+        return
+      end
+
+      -- Fall back to sensible values while the server has not set them
+      local fuel = mp.meta.getEntity(vehicleNetId, 'fuel') or 0
+      local isLocked = mp.meta.getEntity(vehicleNetId, 'isLocked') == true
+
+      mp.events.triggerCef('vehicleHud:show', fuel, isLocked)
+    end
+
+    mp.registerGameState('onceGameLoaded', function()
+      mp.spawnTask(function()
+        while true do
+          refreshVehicleHud()
+          mp.wait(500)
+        end
+      end)
+    end)
+    ```
+  </TabItem>
+</Tabs>
+
+This one sends to the page twice per second without comparing first. For two small values that is cheap, and the code stays short. If your page does real work on every update, remember the last values and send only when they change, as the title example does.
+
+:::note
+`mp.game.GetMountedVehicle` is what the core resource itself uses in JavaScript. The Lua tab calls the same game function through `Game`, where Lua keeps the game's global functions. If your build doesn't have it there, look the function up on [NativeDB](https://nativedb.red4ext.com/).
+:::
+
+## Example: reacting when a global value changes
+
+The server keeps the state of the round in global meta: `mp.meta.setGlobalMeta('roundState', 'warmup', true)`, later `'live'`, then `'ended'`. The client wants to run code once each time it changes.
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="client.js"
+    let lastRoundState = null;
+
+    function onRoundStateChanged(newState, previousState) {
+      console.log(`Round state: ${previousState} -> ${newState}`);
+      mp.events.emitCef('round:stateChanged', newState);
+    }
+
+    function checkRoundState() {
+      const roundState = mp.meta.getGlobalMeta('roundState');
+
+      // The server has not set it yet
+      const isMissing = roundState === null || roundState === undefined;
+      if (isMissing) return;
+
+      if (roundState === lastRoundState) return;
+
+      const previousState = lastRoundState;
+      lastRoundState = roundState;
+
+      onRoundStateChanged(roundState, previousState);
+    }
+
+    setInterval(checkRoundState, 500);
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="client.lua"
+    local lastRoundState = nil
+
+    local function onRoundStateChanged(newState, previousState)
+      print(string.format("Round state: %s -> %s", tostring(previousState), newState))
+      mp.events.triggerCef('round:stateChanged', newState)
+    end
+
+    local function checkRoundState()
+      local roundState = mp.meta.getGlobal('roundState')
+
+      -- The server has not set it yet
+      if roundState == nil then return end
+
+      if roundState == lastRoundState then return end
+
+      local previousState = lastRoundState
+      lastRoundState = roundState
+
+      onRoundStateChanged(roundState, previousState)
+    end
+
+    mp.spawnTask(function()
+      while true do
+        checkRoundState()
+        mp.wait(500)
+      end
+    end)
+    ```
+  </TabItem>
+</Tabs>
+
+The first check after joining sees a value while `lastRoundState` is still empty, so `onRoundStateChanged` also runs once for the state the player joined into. That is usually what you want: a late joiner's UI ends up in the right state without special code.
+
+Two limits of this pattern:
+
+- **Comparing with `===` / `==` only works for simple values**: strings, numbers, booleans. An object or table read twice is two different objects even when the content is equal. Keep polled values simple, or compare the one field that matters.
+- **You can miss a value that changes twice between two checks.** If the round goes `live` and `ended` within half a second, the client only sees `ended`. When every step matters, send an event from the server for each one.
+
+## Writing meta from the client
+
+The client `mp.meta` also has setters. Their last argument is the same `sync` flag as on the server:
+
+| Scope | JavaScript | Lua |
+| :--- | :--- | :--- |
+| Global | `mp.meta.setGlobalMeta(key, value, sync)` | `mp.meta.setGlobal(key, value, sync)` |
+| A player | `mp.meta.setPlayerMeta(netId, key, value, sync)` | `mp.meta.setPlayer(netId, key, value, sync)` |
+| An entity | `mp.meta.setEntityMeta(netId, key, value, sync)` | `mp.meta.setEntity(netId, key, value, sync)` |
+| The local player | `mp.meta.setLocalPlayerMeta(key, value, sync)` | `mp.meta.setLocalPlayer(key, value, sync)` |
+
+- **`sync` omitted or `false`**: the value stays on this client. Nobody else sees it.
+- **`sync = true`**: the value is sent out through the server, and other clients can read it.
+
+A typical use of a synced client-side write is a small piece of state that only this client knows and others want to display. For example, telling everyone that this player is typing in the chat:
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="client.js"
+    function setTyping(isTyping) {
+      const myNetId = mp.network.getLocalPlayerId();
+      mp.meta.setPlayerMeta(myNetId, 'isTyping', isTyping, true);
+    }
+
+    // The page reports when its chat input opens and closes
+    mp.events.onCef('chat:inputOpened', () => {
+      setTyping(true);
+    });
+
+    mp.events.onCef('chat:inputClosed', () => {
+      setTyping(false);
+    });
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="client.lua"
+    local function setTyping(isTyping)
+      local myNetId = mp.network.getLocalPlayerId()
+      mp.meta.setPlayer(myNetId, 'isTyping', isTyping, true)
+    end
+
+    -- The page reports when its chat input opens and closes
+    mp.events.addCef('chat:inputOpened', function()
+      setTyping(true)
+    end)
+
+    mp.events.addCef('chat:inputClosed', function()
+      setTyping(false)
+    end)
+    ```
+  </TabItem>
+</Tabs>
+
+Other clients then read `mp.meta.getPlayerMeta(netId, 'isTyping')` for the players near them, exactly like `faction` in the title example.
+
+:::danger[Never trust meta a client wrote]
+A value written by a client comes from the player's machine, and a modified client can write whatever it likes. Use client-written meta for cosmetic state only: typing indicators, an "away" flag. Anything that grants something (admin status, money, a faction, a lock state) must be set by the server, and server code must not make decisions based on a key that clients write.
+:::
+
+## Notes for experienced developers
+
+- **Local player: two ways to address it.** `getLocalPlayerMeta(key)` exists in the typings and the Lua reference, described as metadata of the local player. The [official Freeroam gamemode](https://github.com/Cyber-MP/CyberMP-Freeroam) addresses the local player like any other: it writes its own `spectating` flag with `setPlayerMeta(localNetId, 'spectating', true, true)` and other clients read it with `getPlayerMeta`. That form is the one with real-world usage behind it, and nothing in the typings or the reference states that the two read the same store. Use it for values the server synced.
+- **Players and entities out of range.** The examples only read meta for players and vehicles that are streamed in. Whether a client holds meta for an entity that is not streamed is not documented, so don't count on it. For data about far-away players (a scoreboard, a player list), send an event from the server.
+- **Timing at stream-in.** Reading meta inside a `...StreamIn` handler usually works and is shown in other guides. If a value matters and comes back empty there, read it again a moment later instead of treating it as final.
+- **Meta is not a message bus.** It holds the latest value. It doesn't queue, and an intermediate value can be overwritten before a client reads it. Use [events](/guides/client/events/) for things that happen, meta for things that are.
+- **Keep keys few and values small.** Every synced value travels to clients. A position that changes every frame doesn't belong in meta; the game already syncs it.
+- **Client-side writes and the server.** The typings say a synced client write is relayed "to the server and other clients". It is not documented whether such a write fires the server's `playerMetaChange` / `entityMetaChange` events, or whether the server restricts which keys or which players a client may write. Test this on your build before you depend on it, and see the warning above.
+
+## Next steps
+
+- [Entity Metadata & Synchronization](/guides/server/meta/): setting values on the server, the `sync` flag and the server's change events.
+- [Network IDs](/guides/client/network-ids/): the IDs that meta is keyed by, and converting from game IDs.
+- [Streaming: what the client can see](/guides/client/streaming/): which players and entities the client has around it.
+- [Ticks and timers](/guides/client/tick-and-timers/): the loops used here for polling.
+- [`MpMeta`](/reference/client/api/global/mpmeta/) and the [Lua client reference](/reference/lua/client/#shared-metadata-mpmeta): full signatures.

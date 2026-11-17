@@ -1,0 +1,353 @@
+---
+title: Ticks and timers
+description: Run client code every frame, after a delay or on a schedule in JavaScript and Lua, measure elapsed time, and keep per-frame work cheap.
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import { SCRIPT_LANG_TAB_SYNC_KEY } from '../../../../lib/const';
+
+Most client code reacts to an event and is done. Some of it has to keep running: a marker that follows an entity, a distance check, a countdown on screen. For that you have two kinds of tools. A **tick** runs your function once per frame. A **timer** runs it later, or again and again at an interval you choose.
+
+The rule of thumb: use a tick only when the result has to keep up with the picture. For everything else a timer is cheaper and just as good.
+
+## What exists in each language
+
+JavaScript and Lua don't offer the same functions here, so this table is worth a look before you start:
+
+| You want to | JavaScript | Lua |
+| :--- | :--- | :--- |
+| Run every frame | `mp.setTick(fn)` | `mp.onUpdateLoop(fn)`, or `mp.registerGameState('onUpdate', fn)` |
+| Stop running every frame | `mp.clearTick(tickId)` | Not possible. Use a flag inside the callback. |
+| Run once after a delay | `setTimeout(fn, ms)` | `mp.setTimeout(fn, ms)` |
+| Cancel a delayed call | `clearTimeout(id)` | Not possible. Use a flag inside the callback. |
+| Run repeatedly | `setInterval(fn, ms)` / `clearInterval(id)` | A task with a loop: `mp.spawnTask(fn)` and `mp.wait(ms)` |
+| Pause in the middle of a function | `await` a promise built on `setTimeout` | `mp.wait(ms)` inside a task |
+| Measure elapsed time | `mp.getTimer()` | `mp.getTimer()` |
+
+In JavaScript, `setTimeout`, `setInterval`, `clearTimeout` and `clearInterval` are the usual globals. They are not part of `mp`. In Lua everything is on `mp`.
+
+Signatures are in the [`MpClient`](/reference/client/api/global/mpclient/) reference and the [Lua client reference](/reference/lua/client/#per-frame-tick-loop).
+
+## Running code every frame
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    `mp.setTick` registers a function that runs on every frame and returns an ID. Give that ID to `mp.clearTick` to stop it.
+
+    ```js title="client.js"
+    let frameCount = 0;
+
+    const tickId = mp.setTick(() => {
+      frameCount = frameCount + 1;
+    });
+
+    // Later, when the work is no longer needed
+    mp.clearTick(tickId);
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    `mp.onUpdateLoop` registers a function that runs on every script tick. It returns nothing and there is no function to remove it, so you switch the work on and off with a flag.
+
+    ```lua title="client.lua"
+    local frameCount = 0
+    local isCounting = true
+
+    mp.onUpdateLoop(function()
+      if not isCounting then return end
+
+      frameCount = frameCount + 1
+    end)
+
+    -- Later, when the work is no longer needed
+    isCounting = false
+    ```
+
+    Resources that set `use_game_natives = true` have a second option: `mp.registerGameState('onUpdate', function(dt) ... end)`. It starts after the `onInit` [stage](/guides/client/lifecycle/) and passes `dt` to your function. It cannot be removed either.
+  </TabItem>
+</Tabs>
+
+:::caution[Lua: errors in `mp.onUpdateLoop` are silent]
+An error inside an `mp.onUpdateLoop` callback is dropped without any message. If a per-frame function seems to do nothing, wrap its body in `pcall` and print the error while you debug.
+:::
+
+### What a tick costs
+
+A game running at 60 frames per second has about 16 milliseconds to produce each frame, and your tick shares that time with the game itself. A tick that takes 2 ms costs every player on your server 2 ms of every frame, all the time. Ten resources doing the same add up.
+
+So keep the body of a tick short:
+
+- Return as early as you can when there is nothing to do.
+- Don't loop over every streamed entity on every frame unless you really draw something for each of them.
+- Don't send events to the server or to the CEF page on every frame. Send when a value changes.
+- Don't build large tables, parse JSON or format long strings in it.
+
+Positioning something on screen has to happen every frame. Checking whether the player entered a zone does not: nobody notices if that check runs four times per second instead of sixty.
+
+## Doing work every 250 ms instead of every frame
+
+`mp.getTimer()` returns a counter in milliseconds. One reading tells you nothing; the difference between two readings is the time that passed between them. That is all you need to skip most frames:
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="client.js"
+    const CHECK_EVERY_MS = 250;
+    let lastCheckAt = 0;
+
+    mp.setTick(() => {
+      const now = mp.getTimer();
+      const elapsed = now - lastCheckAt;
+
+      // Not time yet: leave right away so this frame costs almost nothing
+      if (elapsed < CHECK_EVERY_MS) return;
+      lastCheckAt = now;
+
+      const nearbyPlayers = mp.network.getStreamedPlayers();
+      console.log(`${nearbyPlayers.length} players nearby`);
+    });
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="client.lua"
+    local CHECK_EVERY_MS = 250
+    local lastCheckAt = 0
+
+    mp.onUpdateLoop(function()
+      local now = mp.getTimer()
+      local elapsed = now - lastCheckAt
+
+      -- Not time yet: leave right away so this frame costs almost nothing
+      if elapsed < CHECK_EVERY_MS then return end
+      lastCheckAt = now
+
+      local nearbyPlayers = mp.network.getStreamedPlayers()
+      print(string.format("%d players nearby", #nearbyPlayers))
+    end)
+    ```
+  </TabItem>
+</Tabs>
+
+This pattern is useful when one tick does two jobs: something small on every frame and something heavier a few times per second. If the whole function only needs to run every 250 ms, skip the tick and use a repeating timer, shown next.
+
+## Delays and repeating timers
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="client.js"
+    // Once, three seconds from now
+    const hintTimeoutId = setTimeout(() => {
+      console.log('Press F8 to open the console.');
+    }, 3000);
+
+    // Again and again, every 250 ms
+    const zoneCheckIntervalId = setInterval(() => {
+      const nearbyVehicles = mp.network.getStreamedPool('CVehicle');
+      console.log(`${nearbyVehicles.length} vehicles nearby`);
+    }, 250);
+
+    // Both can be cancelled with the ID they returned
+    clearTimeout(hintTimeoutId);
+    clearInterval(zoneCheckIntervalId);
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="client.lua"
+    -- Once, three seconds from now. It cannot be cancelled once scheduled.
+    mp.setTimeout(function()
+      print('Press F8 to open the console.')
+    end, 3000)
+
+    -- Again and again, every 250 ms: a task that loops and waits
+    local isZoneCheckRunning = true
+
+    mp.spawnTask(function()
+      while isZoneCheckRunning do
+        local nearbyVehicles = mp.network.getStreamedPool('CVehicle')
+        print(string.format("%d vehicles nearby", #nearbyVehicles))
+
+        mp.wait(250)
+      end
+    end)
+
+    -- Setting the flag to false ends the loop after its current wait
+    isZoneCheckRunning = false
+    ```
+  </TabItem>
+</Tabs>
+
+Things to know about the Lua side:
+
+- **The argument order of `mp.setTimeout` is `(fn, ms)`**, the same as in JavaScript.
+- **`mp.wait(ms)` only works inside a coroutine.** A coroutine is a function that can pause and continue later. You are inside one in a function started with `mp.spawnTask`, in an `mp.setTimeout` callback and in an event handler. You are not inside one at the top level of your script or in an `mp.onUpdateLoop` callback, so don't call `mp.wait` there.
+- **`mp.wait(0)`** pauses until the next scheduler pass, which is a way to spread heavy work over several frames.
+- **`mp.spawnTask(fn)`** starts the task on the next scheduler pass. `mp.spawnTaskImmediatly(fn)` (spelled this way in the API) starts it right now and runs it up to its first `mp.wait`.
+- **`mp.setImmediate(fn, ...)`** calls `fn` with the given arguments on a later tick, without a delay you choose. Up to 256 of these callbacks run per tick. Use it to get out of a hook or a callback quickly and do the real work a moment later.
+
+In JavaScript, the way to pause inside a function is to `await` a promise that a timer resolves. The built-in core resource does exactly that:
+
+```js title="client.js"
+// Resolves after the given time, so "await sleep(500)" pauses for half a second
+function sleep(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+```
+
+:::note[Timers are not exact]
+A timer never fires early, but it can fire late: your callback runs when the script runtime gets to it, and a long frame or a loading screen pushes it back. For anything that must match real time, compare `mp.getTimer()` readings instead of counting how many times a timer fired.
+:::
+
+## Example: a countdown shown in the UI
+
+A countdown changes once per second, so a tick would be wasted on it. The client script counts and sends each new value to the resource's CEF page (the HTML UI drawn over the game, see [Creating Your First CEF UI](/guides/client/first-cef-ui/)).
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="client.js"
+    let countdownIntervalId = null;
+
+    function stopCountdown() {
+      if (countdownIntervalId === null) return;
+
+      clearInterval(countdownIntervalId);
+      countdownIntervalId = null;
+    }
+
+    function startCountdown(totalSeconds) {
+      // Starting a second countdown replaces the first one
+      stopCountdown();
+
+      let secondsLeft = totalSeconds;
+      mp.events.emitCef('countdown:update', secondsLeft);
+
+      countdownIntervalId = setInterval(() => {
+        secondsLeft = secondsLeft - 1;
+        mp.events.emitCef('countdown:update', secondsLeft);
+
+        if (secondsLeft <= 0) {
+          stopCountdown();
+        }
+      }, 1000);
+    }
+
+    // The server decides when a countdown starts and how long it is
+    mp.events.onServer('countdown:start', (totalSeconds) => {
+      startCountdown(totalSeconds);
+    });
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="client.lua"
+    -- Each countdown gets a number. A loop stops as soon as its number is no longer the current one.
+    local currentCountdown = 0
+
+    local function stopCountdown()
+      currentCountdown = currentCountdown + 1
+    end
+
+    local function startCountdown(totalSeconds)
+      -- Starting a second countdown replaces the first one
+      stopCountdown()
+      local thisCountdown = currentCountdown
+
+      mp.spawnTask(function()
+        local secondsLeft = totalSeconds
+        mp.events.triggerCef('countdown:update', secondsLeft)
+
+        while secondsLeft > 0 do
+          mp.wait(1000)
+          if thisCountdown ~= currentCountdown then return end
+
+          secondsLeft = secondsLeft - 1
+          mp.events.triggerCef('countdown:update', secondsLeft)
+        end
+      end)
+    end
+
+    -- The server decides when a countdown starts and how long it is
+    mp.events.addServer('countdown:start', function(totalSeconds)
+      startCountdown(totalSeconds)
+    end)
+    ```
+  </TabItem>
+</Tabs>
+
+The Lua version needs the counter because a waiting task cannot be cancelled from outside. `stopCountdown` changes the number, and the old loop notices after its next `mp.wait` and returns.
+
+The page only displays what it receives:
+
+```html title="index.html"
+<div id="countdown"></div>
+
+<script>
+  mp.events.on('countdown:update', (secondsLeft) => {
+    const countdownElement = document.getElementById('countdown');
+
+    // Hide the number when the countdown is over
+    countdownElement.textContent = secondsLeft > 0 ? String(secondsLeft) : '';
+  });
+</script>
+```
+
+`countdown:start` and `countdown:update` are names chosen for this example, not built-in events. On the server you would start it with `player.emit('countdown:start', 10)` (Lua: `player:trigger('countdown:start', 10)`), see [Working with Events](/guides/server/events/#sending-events-to-clients).
+
+## Stopping when the resource stops
+
+A resource can be stopped or restarted while players are connected. Stop what you started in the `resourceStop` handler, so a restarted resource doesn't end up with a second copy of every loop next to an old one.
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="client.js"
+    const markerTickId = mp.setTick(() => {
+      // Per-frame work
+    });
+
+    const zoneCheckIntervalId = setInterval(() => {
+      // Periodic work
+    }, 250);
+
+    mp.events.on('resourceStop', () => {
+      mp.clearTick(markerTickId);
+      clearInterval(zoneCheckIntervalId);
+    });
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="client.lua"
+    local isResourceRunning = true
+
+    mp.onUpdateLoop(function()
+      if not isResourceRunning then return end
+      -- Per-frame work
+    end)
+
+    mp.spawnTask(function()
+      while isResourceRunning do
+        -- Periodic work
+        mp.wait(250)
+      end
+    end)
+
+    mp.events.add('resourceStop', function()
+      isResourceRunning = false
+    end)
+    ```
+  </TabItem>
+</Tabs>
+
+The built-in core resource clears its nametag tick in `resourceStop` in the same way. Write the stop code even if the runtime would clean up for you: you need it anyway the day you want to switch a feature off without stopping the resource.
+
+## Notes for experienced developers
+
+- **Don't touch the game too early.** A tick or timer registered at the top of the script can start running before the world is loaded. `mp.game.GetPlayer()` (Lua: `Game.GetPlayer()`) returns nothing until then, so check the result on every run or start the loop from `onGameLoaded`. See [Client Lifecycle & Stages](/guides/client/lifecycle/).
+- **A JavaScript tick callback is not awaited.** If you pass an `async` function to `mp.setTick` or `setInterval`, the next run starts on schedule even when the previous one is still waiting. Guard with a flag if overlapping runs would be a problem.
+- **`mp.getTimer()` versus `Date.now()`.** Both work for measuring a duration in JavaScript. `Date.now()` follows the system clock, which the player can change; `mp.getTimer()` is the counter CyberMP provides for this job, and the one Lua has.
+- **One loop is better than many.** Several features that each need "every 250 ms" can share one interval that calls them in turn. Fewer wake-ups, and one place to stop.
+- **Lua per-frame callbacks stay registered** until the resource stops. Register each one once, at startup, not every time a feature is switched on.
+
+## Next steps
+
+- [Client Lifecycle & Stages](/guides/client/lifecycle/): when the game is ready for the code your loop runs.
+- [Streaming: what the client can see](/guides/client/streaming/): the entity lists a periodic check usually loops over.
+- [Creating Your First CEF UI](/guides/client/first-cef-ui/): build the page that displays the countdown.
+- [Local Entities](/guides/client/local-entities/): a common use of per-frame ticks.
+- [Timers and scheduled work](/guides/server/timers/): the same topic on the server.
+- [Performance](/guides/advanced/performance/): measuring what your per-frame code costs.

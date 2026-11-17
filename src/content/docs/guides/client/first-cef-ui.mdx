@@ -1,56 +1,55 @@
 ---
 title: Creating Your First CEF UI
-description: Learn how to create embedded HTML/CSS web interfaces using Chromium Embedded Framework (CEF) and establish two-way communication in JavaScript and Lua.
+description: Build an HTML page that is drawn over the game with CEF, declare it in resource.toml, and pass events between the page, your client script and the server, in JavaScript and Lua.
 ---
 
 import { Tabs, TabItem } from '@astrojs/starlight/components';
 import { SCRIPT_LANG_TAB_SYNC_KEY } from '../../../../lib/const';
 
-The Chromium Embedded Framework (CEF) allows you to build custom heads-up displays (HUDs), inventory screens, interactive menus, and speedometer gauges using standard web technologies (HTML, CSS, and JavaScript).
+CEF (Chromium Embedded Framework) is a web browser built into the CyberMP client. It draws a web page on top of the game, which means you build HUDs, menus, inventories and speedometers with plain HTML, CSS and JavaScript. This guide builds a small panel with a button, shows it from a client script, and passes events back and forth.
 
-For complete method signatures and options, see the [`MpCef`](/reference/client/api/global/mpcef/) reference and the browser-side [`MpEvents`](/reference/browser/api/global/mpevents/) reference.
+For the API details, see the [`MpCef`](/reference/client/api/global/mpcef/) reference and the browser-side [`MpEvents`](/reference/browser/api/global/mpevents/) reference.
 
----
+## How the pieces talk to each other
 
-## Resource Manifest Configuration
+A UI involves three programs, and each one only talks to its neighbour:
 
-All web assets (HTML, CSS, JavaScript, images, fonts) must be listed in the `file` array of your `resource.toml` manifest. Unlisted files will not be streamed to clients:
+```text
+server script  ⇄  client script  ⇄  CEF page
+     (network events)     (CEF events)
+```
+
+The page has no connection to the server. Whatever goes from the server to the UI, or from the UI to the server, passes through your client script.
+
+| From → to | Send with (JS / Lua) | Receive with (JS / Lua) |
+| :--- | :--- | :--- |
+| Page → client script | `mp.events.emit` in the page | `mp.events.onCef` / `mp.events.addCef` |
+| Client script → page | `mp.events.emitCef` / `mp.events.triggerCef` | `mp.events.on` in the page |
+| Client script → server | `mp.events.emitServer` / `mp.events.triggerServer` | `mp.events.onClient` / `mp.events.addClient` |
+| Server → client script | `mp.events.emitClient` / `mp.events.triggerClient` | `mp.events.onServer` / `mp.events.addServer` |
+
+The page is always written in JavaScript, whichever language your client script uses. Inside it, CyberMP provides a global `mp.events` object with just three methods: `on`, `off` and `emit`.
+
+## Step 1: Declare the page in `resource.toml`
+
+Two things are needed in the manifest. `cef_url` names the page to load when the resource starts. `file` lists every file the page needs (HTML, CSS, scripts, images, fonts), because only listed files are sent to players. A file you forget to list is simply missing on their machine.
 
 ```toml title="resource.toml"
 client_script = 'client.js' # or 'client.lua'
 cef_url = './ui/index.html'
 
 file = [
-  "./ui/index.html",
-  "./ui/style.css"
+  "./ui/index.html"
 ]
 ```
 
-### Static vs Dynamic URL Configuration
+If your UI has many files, a `*` wildcard covers one folder level: see [Adding resource files](/guides/resources/adding-resource-files).
 
-- **Static**: Specifying `cef_url` in `resource.toml` automatically loads the page when the resource starts.
-- **Dynamic**: You can load or change the page URL at runtime using `mp.cef.setUrl('./ui/index.html')` (the path must still be in the manifest's `file` array).
+## Step 2: Build the page
 
-<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
-  <TabItem label="JS">
-    ```js title="client.js"
-    // Sets or changes the CEF URL dynamically
-    mp.cef.setUrl('./ui/index.html');
-    ```
-  </TabItem>
-  <TabItem label="Lua">
-    ```lua title="client.lua"
-    -- Sets or changes the CEF URL dynamically
-    mp.cef.setUrl('./ui/index.html')
-    ```
-  </TabItem>
-</Tabs>
+Create `ui/index.html` in your resource folder.
 
----
-
-## Building the Web Page
-
-Inside your resource directory, create `ui/index.html`. CyberMP injects a global `mp.events` object into the browser window context:
+The page covers the whole screen and is drawn over the game from the moment it loads. So leave the `body` transparent, or it will hide the game, and keep your panel hidden until the client script asks for it.
 
 ```html title="ui/index.html"
 <!doctype html>
@@ -61,15 +60,19 @@ Inside your resource directory, create `ui/index.html`. CyberMP injects a global
   <style>
     body {
       margin: 0;
+      background: transparent; /* the game stays visible behind the page */
+      font-family: sans-serif;
+    }
+    #panel {
+      display: none; /* hidden until the client script shows it */
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
       padding: 24px;
       background: rgba(10, 10, 15, 0.85);
       color: #00f0ff;
-      font-family: sans-serif;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      height: 100vh;
+      text-align: center;
     }
     button {
       background: #ff003c;
@@ -78,11 +81,6 @@ Inside your resource directory, create `ui/index.html`. CyberMP injects a global
       padding: 12px 24px;
       font-size: 16px;
       cursor: pointer;
-      text-transform: uppercase;
-      letter-spacing: 1px;
-    }
-    button:hover {
-      background: #ff2b5d;
     }
     #status-text {
       margin-top: 16px;
@@ -92,20 +90,28 @@ Inside your resource directory, create `ui/index.html`. CyberMP injects a global
   </style>
 </head>
 <body>
-  <h2>CyberMP HUD Layer</h2>
-  <button id="send-btn">Send Data to Client</button>
-  <p id="status-text">Awaiting transmission...</p>
+  <div id="panel">
+    <h2>CyberMP panel</h2>
+    <button id="send-btn">Send Data to Client</button>
+    <p id="status-text">Nothing sent yet.</p>
+  </div>
 
   <script>
+    const panel = document.getElementById('panel');
     const btn = document.getElementById('send-btn');
     const status = document.getElementById('status-text');
 
-    // 1. Dispatch an event to the game client script when clicked
-    btn.addEventListener('click', () => {
-      mp.events.emit('uiClickEvent', 'Hello from the CEF browser context!');
+    // Client script -> page: show or hide the panel
+    mp.events.on('setPanelVisible', (visible) => {
+      panel.style.display = visible ? 'block' : 'none';
     });
 
-    // 2. Listen for response data transmitted from the client script
+    // Page -> client script: the button was clicked
+    btn.addEventListener('click', () => {
+      mp.events.emit('uiClickEvent', 'Hello from the CEF page!');
+    });
+
+    // Client script -> page: the reply
     mp.events.on('acknowledgeData', (message) => {
       status.textContent = message;
     });
@@ -114,78 +120,267 @@ Inside your resource directory, create `ui/index.html`. CyberMP injects a global
 </html>
 ```
 
-For more details on browser-side event emission and listeners, see the [Browser Events API](/reference/browser/api/global/mpevents/).
+:::caution[CEF is an older Chromium]
+The embedded browser is not as recent as the Chrome on your desktop, so some newer CSS and JavaScript features are missing. If something renders fine in your browser but not in game, suspect this first, and use the [remote debugger](#debugging-the-page) to see the error.
+:::
 
----
+## Step 3: Wire it up in the client script
 
-## Managing Input Focus & Event Routing
+The client script does two jobs here: it answers the page's events, and it decides who gets the keyboard and mouse.
 
-When an interactive menu opens, capture keyboard and mouse input so clicks and keystrokes route to CEF rather than character movement. Release focus when the menu closes:
+While the page doesn't have focus, input goes to the game. `mp.cef.setFocus(focus, cursor)` changes that: `focus` sends keyboard input to the page, `cursor` shows the mouse cursor. Pass `true, true` when a menu opens and `false, false` when it closes. `mp.cef.isInFocus()` tells you whether the page currently has focus.
 
 <Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
   <TabItem label="JS">
     ```js title="client.js"
-    // Open UI and capture input: mp.cef.setFocus(keyboardFocus, mouseCursor)
+    // Open the panel and hand keyboard and mouse to the page
     mp.commands.add('ui', () => {
+      mp.events.emitCef('setPanelVisible', true);
       mp.cef.setFocus(true, true);
       console.log('UI in focus:', mp.cef.isInFocus());
     });
 
-    // Close UI and return control to the game
+    // Close the panel and give control back to the game
     mp.commands.add('closeui', () => {
+      mp.events.emitCef('setPanelVisible', false);
       mp.cef.setFocus(false, false);
       console.log('UI in focus:', mp.cef.isInFocus());
     });
 
-    // Handle events coming from the CEF page
+    // Page -> client script
     mp.events.onCef('uiClickEvent', (message) => {
       console.log(`[Client Script] Received: ${message}`);
 
-      // Respond back into the CEF web view
+      // Client script -> page
       mp.events.emitCef('acknowledgeData', 'Data received by client script!');
+    });
+
+    // Don't leave the player with a stuck cursor if the resource stops
+    mp.events.on('resourceStop', () => {
+      mp.cef.setFocus(false, false);
     });
     ```
   </TabItem>
   <TabItem label="Lua">
     ```lua title="client.lua"
-    -- Open UI and capture input: mp.cef.setFocus(keyboardFocus, mouseCursor)
+    -- Open the panel and hand keyboard and mouse to the page
     mp.commands.add('ui', function()
+      mp.events.triggerCef('setPanelVisible', true)
       mp.cef.setFocus(true, true)
       print("UI in focus:", mp.cef.isInFocus())
     end)
 
-    -- Close UI and return control to the game
+    -- Close the panel and give control back to the game
     mp.commands.add('closeui', function()
+      mp.events.triggerCef('setPanelVisible', false)
       mp.cef.setFocus(false, false)
       print("UI in focus:", mp.cef.isInFocus())
     end)
 
-    -- Handle events coming from the CEF page
+    -- Page -> client script
     mp.events.addCef('uiClickEvent', function(message)
       print("[Client Script] Received: " .. message)
 
-      -- Respond back into the CEF web view
+      -- Client script -> page
       mp.events.triggerCef('acknowledgeData', 'Data received by client script!')
+    end)
+
+    -- Don't leave the player with a stuck cursor if the resource stops
+    mp.events.add('resourceStop', function()
+      mp.cef.setFocus(false, false)
     end)
     ```
   </TabItem>
 </Tabs>
 
-### Testing In-Game
+:::caution[Always release focus]
+Focus stays where you put it. Every path that closes your menu has to call `setFocus(false, false)`, otherwise the player is left with a cursor on screen and a character that doesn't respond.
+:::
+
+## Step 4: Try it in game
 
 1. Connect to your development server.
-2. Press `F8` to open the client developer console.
-3. Type `ui` and press Enter. The mouse cursor appears over the screen.
-4. Click **Send Data to Client**. The status text updates with the reply payload.
-5. Type `closeui` to release cursor control back to gameplay.
+2. Press `F8` to open the client console.
+3. Type `ui` and press Enter. The panel appears, with a mouse cursor.
+4. Click **Send Data to Client**. The text under the button changes to the client script's reply.
+5. Type `closeui` to hide the panel and return to the game.
 
----
+## Opening and closing the panel with a key
 
-## Remote Debugging CEF
+Console commands are fine while you test, but players expect a key, and a way out that doesn't involve the console. Three things have to change together every time: the panel's visibility, the keyboard focus and the cursor. Keep the state in one variable and change it through one function, so they can't get out of step.
 
-To inspect HTML/CSS elements and view the web console:
+First give the page its own way to close. Add a button to the panel and tell the client script when it is clicked:
+
+```html title="ui/index.html"
+<button id="close-btn">Close</button>
+
+<script>
+  document.getElementById('close-btn').addEventListener('click', () => {
+    mp.events.emit('closePanel');
+  });
+</script>
+```
+
+Then replace the `ui` and `closeui` commands from step 3 with this. Key events come from the game layer, so the resource needs `use_game_natives = true` in its `resource.toml`.
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="client.js"
+    // Values of the game enums EInputKey.IK_F2 and EInputAction.IACT_Release
+    const KEY_F2 = 113;
+    const KEY_RELEASED = 2;
+
+    let isPanelOpen = false;
+
+    const setPanelOpen = (open) => {
+      isPanelOpen = open;
+      mp.events.emitCef('setPanelVisible', open);
+
+      // Open: keyboard and mouse go to the page. Closed: they go back to the game.
+      mp.cef.setFocus(open, open);
+    };
+
+    mp.game.onInputKeyEvent((action, key) => {
+      // React when the key is released, so one push toggles the panel once
+      if (key !== KEY_F2 || action !== KEY_RELEASED) return;
+
+      setPanelOpen(!isPanelOpen);
+    });
+
+    // The Close button in the page
+    mp.events.onCef('closePanel', () => {
+      setPanelOpen(false);
+    });
+
+    // A reloaded page starts hidden again: tell it what it should be showing
+    mp.events.onCef('domReady', () => {
+      mp.events.emitCef('setPanelVisible', isPanelOpen);
+    });
+
+    // Don't leave the player with a stuck cursor if the resource stops
+    mp.events.on('resourceStop', () => {
+      mp.cef.setFocus(false, false);
+    });
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="client.lua"
+    -- Values of the game enums EInputKey.IK_F2 and EInputAction.IACT_Release
+    local KEY_F2 = 113
+    local KEY_RELEASED = 2
+
+    local isPanelOpen = false
+
+    local function setPanelOpen(open)
+      isPanelOpen = open
+      mp.events.triggerCef('setPanelVisible', open)
+
+      -- Open: keyboard and mouse go to the page. Closed: they go back to the game.
+      mp.cef.setFocus(open, open)
+    end
+
+    mp.registerGameState('onInputKeyEvent', function(action, key)
+      -- React when the key is released, so one push toggles the panel once
+      if key ~= KEY_F2 or action ~= KEY_RELEASED then return end
+
+      setPanelOpen(not isPanelOpen)
+    end)
+
+    -- The Close button in the page
+    mp.events.addCef('closePanel', function()
+      setPanelOpen(false)
+    end)
+
+    -- A reloaded page starts hidden again: tell it what it should be showing
+    mp.events.addCef('domReady', function()
+      mp.events.triggerCef('setPanelVisible', isPanelOpen)
+    end)
+
+    -- Don't leave the player with a stuck cursor if the resource stops
+    mp.events.add('resourceStop', function()
+      mp.cef.setFocus(false, false)
+    end)
+    ```
+  </TabItem>
+</Tabs>
+
+A few things to keep in mind:
+
+- **Pick a key neither the game nor your page needs.** A function key is a safer toggle than a letter the player may also type into a text field. The Close button stays the dependable way out while the page has the keyboard.
+- **Key numbers are the game's own.** `113` and `2` are the values of `EInputKey.IK_F2` and `EInputAction.IACT_Release`; [Keyboard Input](/guides/client/keyboard-input/) explains key events in full, including closing a focused page with Escape. In TypeScript you can import the enums instead of copying numbers: see [Setting Up TypeScript](/guides/recipes/typescript/#using-game-enums).
+- **The game's own menus still open on top.** If your panel should not stay open behind the pause menu or the map, close it when they open. [Observing Game Methods](/guides/client/observes/#example-hiding-your-ui-while-the-pause-menu-is-open) shows how to notice that.
+
+## Reaching the server from the page
+
+To involve the server, add the second hop in the client script: forward what the page sends to the server, and forward what the server sends to the page.
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="client.js"
+    // Page -> client script -> server
+    mp.events.onCef('buyItem', (itemId) => {
+      mp.events.emitServer('shop:buyItem', itemId);
+    });
+
+    // Server -> client script -> page
+    mp.events.onServer('browser:updateInventory', (inventoryData) => {
+      mp.events.emitCef('updateInventory', inventoryData);
+    });
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="client.lua"
+    -- Page -> client script -> server
+    mp.events.addCef('buyItem', function(itemId)
+      mp.events.triggerServer('shop:buyItem', itemId)
+    end)
+
+    -- Server -> client script -> page
+    mp.events.addServer('browser:updateInventory', function(inventoryData)
+      mp.events.triggerCef('updateInventory', inventoryData)
+    end)
+    ```
+  </TabItem>
+</Tabs>
+
+The server side of this exchange is described in the server [Working with Events](/guides/server/events) guide, and [A complete round trip](/guides/client/events/#a-complete-round-trip) follows one click through the page, the client script and the server, including the checks the server has to make. Once you have more than a few of these relays, the [RPC system](/guides/recipes/rpc) saves you from writing them by hand: it lets the server and the page call each other and await the result.
+
+:::tip[Resend state when the page reloads]
+A page that reloads starts from scratch and has forgotten everything you sent it. The client script receives the built-in `domReady` CEF event each time the page has loaded, so send the page its current state from that handler. See [Working with Events](/guides/client/events/#interacting-with-cef-browser-ui).
+:::
+
+## Changing the page at runtime
+
+`cef_url` loads a page when the resource starts. To load a different one later, call `mp.cef.setUrl` from the client script. A page from your resource must still be listed in `file`.
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="client.js"
+    mp.cef.setUrl('./ui/index.html');
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="client.lua"
+    mp.cef.setUrl('./ui/index.html')
+    ```
+  </TabItem>
+</Tabs>
+
+`setUrl` also accepts a full web address. That is useful during development: point it at a local dev server such as `http://localhost:5173` to get live reload while you work on the UI. Remove it before anyone else joins, though. That address only exists on your machine, so every other player would get an empty page.
+
+## Debugging the page
+
+To see the page's console and inspect its HTML and CSS, attach Chrome DevTools to it:
 
 1. Add `cef_debug = true` to your [`server.toml`](/reference/server/configuration).
 2. Connect to the server with the game client.
-3. Open a Chromium-based browser (Chrome, Edge, Brave) and navigate to `http://localhost:9222`.
-4. Select the target page to launch Chrome DevTools.
+3. Open a Chromium-based browser (Chrome, Edge, Brave) and go to `http://localhost:9222`.
+4. Pick your page in the list to open DevTools for it.
+
+## Next steps
+
+- [Working with Events](/guides/client/events): every event function on the client, including the built-in CEF events.
+- [Remote Procedure Calls (RPC)](/guides/recipes/rpc): call functions across server, client and CEF instead of relaying events.
+- [Adding resource files](/guides/resources/adding-resource-files): how the `file` list and its wildcards work.
+- [Local Storage](/guides/client/local-storage): keep UI settings between sessions.
+- [Client commands](/guides/client/commands/): open your UI from the F8 console.

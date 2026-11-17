@@ -1,82 +1,174 @@
 ---
 title: Local Entities
-description: Learn how to spawn client-only vehicles, peds, and objects, run per-frame ticks, and query engine timers in JavaScript and Lua.
+description: Spawn vehicles, peds and objects that exist on one client only, and run code every frame with tick loops and the client timer.
 ---
 
 import { Tabs, TabItem } from '@astrojs/starlight/components';
 import { SCRIPT_LANG_TAB_SYNC_KEY } from '../../../../lib/const';
 
-Local entities exist only in the client's game session: the server does not track them and other players cannot see or interact with them. The same client runtime also exposes per-frame tick loops and the engine timer.
+A **local entity** is a vehicle, ped or object that a client script spawns in that player's own game. The server doesn't know about it, it isn't synced, and no other player can see or touch it. That makes local entities a good fit for things only one player should see: a preview car in a dealership, props in a character creation scene, a dummy for a camera shot.
 
-For complete API signatures and types, see the [`MpLocal`](/reference/client/api/global/mplocal/) reference, or the [Lua Client API Reference](/reference/lua/client/#local-entities-mpclient). Converting server **Network IDs** into engine **Game IDs** is covered in [Network IDs](/guides/client/network-ids/).
+For anything players share (a car someone can drive, an NPC everyone sees), create the entity on the server instead: see [Working with Vehicles](/guides/server/vehicles/) and [World Entities](/guides/server/entities/).
 
----
+This page also covers two tools you often need next to local entities: per-frame tick loops and the client timer.
 
-## Client-Only Entities (Local Spawn)
+Full signatures are in the [`MpLocal`](/reference/client/api/global/mplocal/) reference and the [Lua client reference](/reference/lua/client/#local-entities-mpclient).
 
-You can spawn vehicles, peds, and props that exist **strictly on the local client**. Other connected players will not see or interact with them. This is ideal for dealership showcase rooms, cinematic camera sequences, or decorative UI scenes:
+:::note[Different names in JS and Lua]
+In JavaScript these functions are under [`mp.local.*`](/reference/client/api/global/mplocal/). In Lua they are under [`mp.client.*`](/reference/lua/client/#local-entities-mpclient). The arguments are the same.
+:::
+
+## Spawning a local entity
+
+Every spawn function takes a model, an appearance, a position, a rotation and a `streaming` flag, and returns a **handle**: a number you keep so you can despawn the entity later.
+
+| Function | Arguments |
+| :--- | :--- |
+| `spawnVehicle` | `model, appearance, x, y, z, roll, pitch, yaw, streaming` |
+| `spawnObject` | `model, appearance, x, y, z, roll, pitch, yaw, streaming` |
+| `spawnPed` | `model, appearance, x, y, z, yaw, streaming` |
+
+- **`model`** and **`appearance`** are hashes, not strings. The model is a `TweakDBID` (a record such as `Vehicle.v_standard2_archer_hella`) and the appearance is a `CName`. See [Working with Game Natives](/reference/client/working-with-game-natives/#handling-hashes-at-runtime) for the hash helpers.
+- **`roll, pitch, yaw`** are rotation angles. Peds only take `yaw`, the direction they face.
+- **`streaming`** controls whether the game engine handles streaming for this entity on its own.
+
+Each spawn function has a matching despawn function that takes the handle: `despawnVehicle`, `despawnPed` and `despawnObject`.
+
+### Example: a preview vehicle that cleans up after itself
+
+A dealership shows one car at a time: picking another model replaces the one on display, and leaving the shop removes it. The example below does that with two functions. `showPreviewVehicle` removes the previous preview before it spawns the new one, and `removePreviewVehicle` is safe to call at any time, also when nothing is on display.
+
+Local entities live in the game world, so only spawn them once the world is loaded (see [Client Lifecycle & Stages](/guides/client/lifecycle/)). Here the functions run from console commands that you type once you are in the world. The hash helpers need `use_game_natives = true`.
 
 <Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
   <TabItem label="JS">
     ```js title="client.js"
-    // Client-side hashes must be 64-bit BigInt values in JavaScript
-    const modelHash = BigInt(mp.game.hashes.toTweakdbid('Vehicle.v_standard2_archer_hella'));
-    const appearanceHash = BigInt(mp.game.hashes.toCname('default'));
+    // Where the preview stands: next to V's apartment in Megabuilding H10
+    const PREVIEW_SPOT = { x: -1392.637, y: 1271.536, z: 123.082, yaw: 90.0 };
 
-    // Spawn local preview vehicle: (model, appearance, x, y, z, roll, pitch, yaw, streaming)
-    const vehHandle = mp.local.spawnVehicle(
-      modelHash,
-      appearanceHash,
-      -1392.637, 1271.536, 123.082,
-      0.0, 0.0, 90.0,
-      true
-    );
+    // Handle of the vehicle on display, or null when there is none
+    let previewVehicle = null;
 
-    // Despawn when no longer needed
-    mp.local.despawnVehicle(vehHandle);
+    const removePreviewVehicle = () => {
+      if (previewVehicle === null) return;
+
+      mp.local.despawnVehicle(previewVehicle);
+      previewVehicle = null;
+    };
+
+    const showPreviewVehicle = (modelName) => {
+      // Only one preview at a time: drop the old one first
+      removePreviewVehicle();
+
+      // The hash helpers return strings. Convert them with BigInt, not Number:
+      // these are 64-bit values and a JS number can't hold them exactly.
+      const modelHash = BigInt(mp.game.hashes.toTweakdbid(modelName));
+      const appearanceHash = BigInt(mp.game.hashes.toCname('default'));
+
+      // (model, appearance, x, y, z, roll, pitch, yaw, streaming)
+      previewVehicle = mp.local.spawnVehicle(
+        modelHash,
+        appearanceHash,
+        PREVIEW_SPOT.x, PREVIEW_SPOT.y, PREVIEW_SPOT.z,
+        0.0, 0.0, PREVIEW_SPOT.yaw,
+        true
+      );
+    };
+
+    mp.commands.add('preview', () => {
+      showPreviewVehicle('Vehicle.v_standard2_archer_hella');
+    });
+
+    mp.commands.add('preview-clear', removePreviewVehicle);
+
+    // Without this, every restart of the resource leaves one more car behind
+    mp.events.on('resourceStop', removePreviewVehicle);
     ```
   </TabItem>
   <TabItem label="Lua">
     ```lua title="client.lua"
-    -- Lua hash helpers return decimal strings; convert to numbers
-    local modelHash = tonumber(mp.hashes.toTweakdbid('Vehicle.v_standard2_archer_hella'), 10)
-    local appearanceHash = tonumber(mp.hashes.toCname('default'), 10)
+    -- Where the preview stands: next to V's apartment in Megabuilding H10
+    local PREVIEW_SPOT = { x = -1392.637, y = 1271.536, z = 123.082, yaw = 90.0 }
 
-    -- Spawn local preview vehicle: (model, appearance, x, y, z, roll, pitch, yaw, streaming)
-    local vehHandle = mp.client.spawnVehicle(
-      modelHash,
-      appearanceHash,
-      -1392.637, 1271.536, 123.082,
-      0.0, 0.0, 90.0,
-      true
-    )
+    -- Handle of the vehicle on display, or nil when there is none
+    local previewVehicle = nil
 
-    -- Despawn when no longer needed
-    mp.client.despawnVehicle(vehHandle)
+    local function removePreviewVehicle()
+      if previewVehicle == nil then return end
+
+      mp.client.despawnVehicle(previewVehicle)
+      previewVehicle = nil
+    end
+
+    local function showPreviewVehicle(modelName)
+      -- Only one preview at a time: drop the old one first
+      removePreviewVehicle()
+
+      -- The hash helpers return decimal strings; convert them to numbers
+      local modelHash = tonumber(mp.hashes.toTweakdbid(modelName), 10)
+      local appearanceHash = tonumber(mp.hashes.toCname('default'), 10)
+
+      -- (model, appearance, x, y, z, roll, pitch, yaw, streaming)
+      local handle = mp.client.spawnVehicle(
+        modelHash,
+        appearanceHash,
+        PREVIEW_SPOT.x, PREVIEW_SPOT.y, PREVIEW_SPOT.z,
+        0.0, 0.0, PREVIEW_SPOT.yaw,
+        true
+      )
+
+      -- In Lua a failed spawn returns 0, and there is nothing to despawn later
+      if handle == 0 then
+        print('Could not spawn ' .. modelName)
+        return
+      end
+
+      previewVehicle = handle
+    end
+
+    mp.commands.add('preview', function()
+      showPreviewVehicle('Vehicle.v_standard2_archer_hella')
+    end)
+
+    mp.commands.add('preview-clear', removePreviewVehicle)
+
+    -- Without this, every restart of the resource leaves one more car behind
+    mp.events.add('resourceStop', removePreviewVehicle)
     ```
   </TabItem>
 </Tabs>
 
-Similar methods exist for pedestrians (`spawnPed` / `despawnPed`) and objects (`spawnObject` / `despawnObject`). Note that local entities in JavaScript reside under [`mp.local.*`](/reference/client/api/global/mplocal/), whereas in Lua they reside under [`mp.client.*`](/reference/lua/client/#local-entities-mpclient).
+Type `preview` in the client console (`F8`) to put the car on display and `preview-clear` to remove it. In a real dealership you would call the same two functions from your UI events instead.
 
----
+:::caution[Keep the handle and clean up]
+The handle is the only way to remove a local entity. Store it, and despawn everything your resource spawned in its `resourceStop` handler so nothing is left behind when the resource restarts. In Lua the spawn functions return `0` when creation failed, so check the handle before you rely on it.
+:::
 
-## Per-Frame Tick Loops
+More to know about local entities:
 
-When implementing custom 3D markers, distance math, or camera updates, execute logic on every render frame:
+- **No network ID.** A local entity has no [network ID](/guides/client/network-ids/). The `mp.network` conversions and the server APIs (metadata, `mp.vehicles`, and so on) don't apply to it.
+- **The spawn is not instant.** The spawn function returns the handle right away, while the game still has to load the model. Code that needs the entity itself (to read its position, to seat a ped in it) has to wait until it exists, the same way you [wait for the player's puppet](/guides/client/lifecycle/#waiting-for-the-puppet-after-a-spawn).
+- **Nobody else sees it.** The server and the other players don't know the entity exists. A preview car another player should be able to walk around is a job for a server vehicle in a private [dimension](/guides/server/players/#virtual-dimensions), not for a local entity.
+- **Several entities, several handles.** If you spawn more than one, keep the handles in a list and despawn each of them in `resourceStop`.
+
+## Per-frame tick loops
+
+A **tick** is a callback the client runs over and over, once per frame. Use one for work that has to keep up with the picture: moving a marker, following an entity with the camera, checking a distance.
 
 <Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
   <TabItem label="JS">
+    `mp.setTick` returns an ID. Pass it to `mp.clearTick` to stop the loop.
+
     ```js title="client.js"
     let tickId = null;
 
     const startTick = () => {
-      if (tickId !== null) return;
+      if (tickId !== null) return; // already running
 
       tickId = mp.setTick(() => {
         const player = mp.game.GetPlayer();
         if (!player) return;
-        // Fast calculations: distance checks, raycasts, UI positioning
+        // Cheap per-frame work: distance checks, UI positioning
       });
     };
 
@@ -90,16 +182,18 @@ When implementing custom 3D markers, distance math, or camera updates, execute l
     ```
   </TabItem>
   <TabItem label="Lua">
+    Lua has no tick ID. Register an `onUpdate` handler once and switch it on and off with a flag.
+
     ```lua title="client.lua"
     local isRunning = true
 
-    -- mp.registerGameState('onUpdate') runs on every script tick; the game layer is required
+    -- Runs on every script tick after onInit
     mp.registerGameState('onUpdate', function(dt)
       if not isRunning then return end
 
       local player = Game.GetPlayer() -- needs use_game_natives = true
       if not player then return end
-      -- Fast calculations: distance checks, raycasts, UI positioning
+      -- Cheap per-frame work: distance checks, UI positioning
     end)
 
     mp.events.add('resourceStop', function()
@@ -109,6 +203,46 @@ When implementing custom 3D markers, distance math, or camera updates, execute l
   </TabItem>
 </Tabs>
 
-:::tip[Performance]
-Never perform database operations, heavy JSON parsing, or bulk entity queries inside a tick callback. Keep tick execution under 1 millisecond to prevent frame drops.
+:::tip[Keep ticks cheap]
+A tick runs dozens of times per second, and whatever it does delays the frame. Keep the body well under a millisecond. Don't parse large JSON, loop over every entity or do other heavy work in it. If something only needs to run a few times per second, use a timer, or throttle it as shown below.
 :::
+
+## Measuring time with `mp.getTimer`
+
+`mp.getTimer()` returns a millisecond counter. A single reading means little; compare two readings to know how much time has passed. That is handy inside a tick, to run part of the work less often than every frame:
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="client.js"
+    let lastCheck = 0;
+
+    mp.setTick(() => {
+      const now = mp.getTimer();
+      if (now - lastCheck < 500) return; // at most twice per second
+      lastCheck = now;
+
+      // Work that doesn't need to run every frame
+    });
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="client.lua"
+    local lastCheck = 0
+
+    mp.registerGameState('onUpdate', function(dt)
+      local now = mp.getTimer()
+      if now - lastCheck < 500 then return end -- at most twice per second
+      lastCheck = now
+
+      -- Work that doesn't need to run every frame
+    end)
+    ```
+  </TabItem>
+</Tabs>
+
+## Next steps
+
+- [Network IDs](/guides/client/network-ids/): how synced entities are identified, and how that differs from local handles.
+- [Client Lifecycle & Stages](/guides/client/lifecycle/): when the world is ready, and what to clean up in `resourceStop`.
+- [Working with Game Natives](/reference/client/working-with-game-natives/): calling the game's own systems from a tick.
+- [Ticks and timers](/guides/client/tick-and-timers/): per-frame work and timing in more depth.

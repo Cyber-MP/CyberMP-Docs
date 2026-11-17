@@ -1,0 +1,343 @@
+---
+title: Client commands
+description: Register commands that run on the player's own machine from the F8 console, know when to prefer them over server commands, and let one ask the server for something.
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import { SCRIPT_LANG_TAB_SYNC_KEY } from '../../../../lib/const';
+
+A client command is a name plus a function in your **client** script. When the player types that name in the client console (it opens with `F8`), the function runs on their machine. Nothing is sent to the server unless your function sends it.
+
+They are the quickest way to poke at client code while you develop: print a position, open a panel, respawn, close a stuck menu. They are also fine for player-facing things that only concern the local game, such as hiding the HUD.
+
+## Client command or server command?
+
+The server has `mp.commands` too, and a player types both kinds in the same `F8` console. The difference is where the function runs and what it can reach:
+
+| | Client command | [Server command](/guides/server/commands/) |
+| :--- | :--- | :--- |
+| Registered in | The client script | The server script |
+| Runs on | The machine of the player who typed it | The server |
+| Can also be typed in | Nowhere else | The server console |
+| Can reach | The local game: natives, the CEF page, local storage | Every player, entities, your database |
+| Who is calling | Always the local player | A player, or the server console |
+| Can it be trusted | No, the player controls their own client | Yes, after you check permissions |
+
+Use a **client command** when everything it does happens in the local game. Use a **server command** when it changes something other players can see, or something that must not be faked: money, items, kicks, vehicles. When a command needs both sides, register it where the work starts and send an event to the other side. [A command that asks the server](#a-command-that-asks-the-server) shows that.
+
+:::caution[Give client and server commands different names]
+The docs and typings don't say what happens when a client command and a server command share a name. Don't rely on either one winning: keep the names different.
+:::
+
+## Registering a command
+
+Call `mp.commands.add(name, handler)` at the top of your script. The name is plain text without a slash. Commands don't need the game to be loaded, so there is no reason to wait for a [lifecycle stage](/guides/client/lifecycle/) before registering them.
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="client.js"
+    mp.commands.add('hello', () => {
+      console.log('Hello from the client script.');
+    });
+
+    // Take the command away again, for example when a feature is switched off
+    mp.commands.remove('hello');
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="client.lua"
+    mp.commands.add('hello', function()
+      print('Hello from the client script.')
+    end)
+
+    -- Take the command away again, for example when a feature is switched off
+    mp.commands.remove('hello')
+    ```
+  </TabItem>
+</Tabs>
+
+Press `F8`, type `hello` and press Enter. The output of `console.log` and `print` appears in that same console.
+
+### Handler arguments
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    The typings declare the handler as `(id, args)`:
+
+    - `id` is a number. On the client there is only one player who can type a command, so you rarely need it.
+    - `args` is an array with the words typed after the command name. They are always strings: convert them before you calculate with them.
+
+    ```js title="client.js"
+    // Usage: fov 90
+    mp.commands.add('fov', (id, args) => {
+      const requestedFov = parseInt(args[0], 10);
+
+      if (Number.isNaN(requestedFov)) {
+        console.log('Usage: fov <number>');
+        return;
+      }
+
+      console.log(`You asked for a field of view of ${requestedFov}.`);
+    });
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    The Lua client reference documents `mp.commands.add(name, fn)` but not what `fn` receives. On the server a Lua handler gets `(player, args, raw)`; whether the client passes the typed words the same way is not documented, so print the arguments once before you depend on them:
+
+    ```lua title="client.lua"
+    mp.commands.add('showargs', function(...)
+      local receivedArguments = { ... }
+
+      for position, value in ipairs(receivedArguments) do
+        print(position, type(value), tostring(value))
+      end
+    end)
+    ```
+
+    The reference also mentions an optional third argument to `mp.commands.add`, described only as "the admin flag". Leave it out unless you know what your server build does with it.
+  </TabItem>
+</Tabs>
+
+## Examples
+
+### Print the player's position (`pos`)
+
+You need coordinates all the time while building a gamemode: for spawn points, teleports, markers. This command prints where the player stands and which way they face. It reads the game, so the resource needs `use_game_natives = true` (see [Working with Game Natives](/reference/client/working-with-game-natives/)).
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="client.js"
+    mp.commands.add('pos', () => {
+      const player = mp.game.GetPlayer();
+
+      // There is no character before the world has loaded or the player has spawned
+      if (!player) {
+        console.log('No player character yet.');
+        return;
+      }
+
+      const position = player.GetWorldPosition();
+      const heading = player.GetWorldYaw();
+
+      const x = position.x.toFixed(3);
+      const y = position.y.toFixed(3);
+      const z = position.z.toFixed(3);
+
+      console.log(`Position: ${x}, ${y}, ${z}  Heading: ${heading.toFixed(1)}`);
+    });
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="client.lua"
+    mp.commands.add('pos', function()
+      local player = Game.GetPlayer()
+
+      -- There is no character before the world has loaded or the player has spawned
+      if not player then
+        print('No player character yet.')
+        return
+      end
+
+      local position = player:GetWorldPosition()
+      local heading = player:GetWorldYaw()
+
+      print(string.format(
+        "Position: %.3f, %.3f, %.3f  Heading: %.1f",
+        position.x, position.y, position.z, heading
+      ))
+    end)
+    ```
+  </TabItem>
+</Tabs>
+
+The heading is the character's yaw: the direction they face. The four numbers are what `mp.local.spawnPlayer(x, y, z, yaw)` (Lua: `mp.client.spawnPlayer`) takes, see [Spawning the Player](/guides/client/spawning-player/).
+
+### Toggle the UI (`ui`)
+
+One command that opens the panel when it is closed and closes it when it is open. The script keeps the state in a variable, tells the CEF page to show or hide, and moves the keyboard and mouse to the page or back to the game.
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="client.js"
+    let isPanelOpen = false;
+
+    function setPanelOpen(shouldBeOpen) {
+      isPanelOpen = shouldBeOpen;
+
+      mp.events.emitCef('setPanelVisible', isPanelOpen);
+
+      // An open panel gets keyboard and mouse; a closed one gives them back to the game
+      mp.cef.setFocus(isPanelOpen, isPanelOpen);
+    }
+
+    mp.commands.add('ui', () => {
+      setPanelOpen(!isPanelOpen);
+    });
+
+    // Don't leave the player with a stuck cursor if the resource stops
+    mp.events.on('resourceStop', () => {
+      mp.cef.setFocus(false, false);
+    });
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="client.lua"
+    local isPanelOpen = false
+
+    local function setPanelOpen(shouldBeOpen)
+      isPanelOpen = shouldBeOpen
+
+      mp.events.triggerCef('setPanelVisible', isPanelOpen)
+
+      -- An open panel gets keyboard and mouse; a closed one gives them back to the game
+      mp.cef.setFocus(isPanelOpen, isPanelOpen)
+    end
+
+    mp.commands.add('ui', function()
+      setPanelOpen(not isPanelOpen)
+    end)
+
+    -- Don't leave the player with a stuck cursor if the resource stops
+    mp.events.add('resourceStop', function()
+      mp.cef.setFocus(false, false)
+    end)
+    ```
+  </TabItem>
+</Tabs>
+
+`setPanelVisible` is the event the page from [Creating Your First CEF UI](/guides/client/first-cef-ui/) listens for; that guide builds the page. Keeping the open/closed state in one function means a close button in the page, a hotkey and this command can all call `setPanelOpen` and never disagree.
+
+### A command that asks the server
+
+A client command cannot change anything on the server by itself. It can send an event, and the server decides. Here `respawn` asks the server for permission. The server answers with coordinates, and the client spawns the player there, because spawning is something only the client can do.
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="client.js"
+    mp.commands.add('respawn', () => {
+      // Only a request: the server decides whether it happens
+      mp.events.emitServer('respawn:request');
+    });
+
+    mp.events.onServer('respawn:approved', (x, y, z, yaw) => {
+      mp.local.spawnPlayer(x, y, z, yaw);
+    });
+
+    mp.events.onServer('respawn:denied', (reason) => {
+      console.log(`Respawn denied: ${reason}`);
+    });
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="client.lua"
+    mp.commands.add('respawn', function()
+      -- Only a request: the server decides whether it happens
+      mp.events.triggerServer('respawn:request')
+    end)
+
+    mp.events.addServer('respawn:approved', function(x, y, z, yaw)
+      mp.client.spawnPlayer(x, y, z, yaw)
+    end)
+
+    mp.events.addServer('respawn:denied', function(reason)
+      print(string.format("Respawn denied: %s", reason))
+    end)
+    ```
+  </TabItem>
+</Tabs>
+
+The server side receives the request with the sending player as the first argument:
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="server.js"
+    const HOSPITAL_SPAWN = { x: -1392.637, y: 1271.536, z: 123.082, yaw: 1.0 };
+
+    mp.events.onClient('respawn:request', (player) => {
+      // 'isDead' is a value your own death handling would set on the player
+      const isDead = player.getMeta('isDead') === true;
+
+      if (!isDead) {
+        player.emit('respawn:denied', 'You are not dead.');
+        return;
+      }
+
+      player.setMeta('isDead', false);
+      player.emit('respawn:approved', HOSPITAL_SPAWN.x, HOSPITAL_SPAWN.y, HOSPITAL_SPAWN.z, HOSPITAL_SPAWN.yaw);
+    });
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="server.lua"
+    local HOSPITAL_SPAWN = { x = -1392.637, y = 1271.536, z = 123.082, yaw = 1.0 }
+
+    mp.events.addClient('respawn:request', function(player)
+      -- 'isDead' is a value your own death handling would set on the player
+      local isDead = player:getMeta('isDead') == true
+
+      if not isDead then
+        player:trigger('respawn:denied', 'You are not dead.')
+        return
+      end
+
+      player:setMeta('isDead', false)
+      player:trigger('respawn:approved', HOSPITAL_SPAWN.x, HOSPITAL_SPAWN.y, HOSPITAL_SPAWN.z, HOSPITAL_SPAWN.yaw)
+    end)
+    ```
+  </TabItem>
+</Tabs>
+
+The event names are chosen for this example. What matters is the shape: the client asks, the server checks and answers, the client acts on the answer.
+
+:::caution[The event is the door, not the command]
+A modified client can send `respawn:request` without typing anything, as often as it likes. Hiding or removing the client command protects nothing. Every check that matters belongs in the server handler.
+:::
+
+If the request needs an answer more often than this, the [RPC system](/guides/recipes/rpc/) saves you from pairing events by hand.
+
+## Lua only: listing and running commands
+
+The Lua API has two functions that JavaScript doesn't:
+
+- `mp.commands.getAll()` returns an array with the names of the registered commands.
+- `mp.commands.execute(command)` runs a command from a script. The Lua reference describes it as executing a command line "as if it were typed".
+
+A `commands` command that lists what is available:
+
+```lua title="client.lua"
+mp.commands.add('commands', function()
+  local commandNames = mp.commands.getAll()
+
+  print(string.format("%d commands available:", #commandNames))
+
+  for _, commandName in ipairs(commandNames) do
+    print('  ' .. commandName)
+  end
+end)
+```
+
+`execute` lets one command reuse another, or lets a button in your UI run a command. Use it for commands that resources registered with `mp.commands.add`, like `ui` here. On the server, `execute` runs only those and refuses the built-in console commands; whether the client version can run built-in commands has not been checked, so don't build on it.
+
+```lua title="client.lua"
+-- A button in the CEF page that does the same as typing "ui"
+mp.events.addCef('toolbar:uiButtonClicked', function()
+  mp.commands.execute('ui')
+end)
+```
+
+The JavaScript typings only declare `add` and `remove`. In JavaScript, put the work in a named function and call that function from both the command and the button.
+
+## Notes for experienced developers
+
+- **Register once.** Add commands at startup. A command you add inside an event handler is added again every time the event fires.
+- **Assume names are shared.** There is one console for all resources, so a short name such as `ui` or `pos` can collide with a command from another resource. Prefix the commands of a resource you publish (`garage-open`, not `open`).
+- **No game calls without a check.** A command can be typed at any moment: during the loading screen, while dead, inside a menu. Check what `mp.game.GetPlayer()` returns, as `pos` does.
+- **Console only.** These commands are typed in the `F8` console. A `/command` typed in a chat box is a feature of the gamemode's own chat, which parses the text and decides what to run.
+- **Not a security boundary.** Anything a client command can do, the player can also do by other means on their own machine. Don't hide admin tools behind an unlisted client command.
+
+## Next steps
+
+- [Creating Commands](/guides/server/commands/): commands that run on the server, with arguments and permissions.
+- [Working with Events](/guides/client/events/): the events a command uses to reach the server and the page.
+- [Reading keyboard input](/guides/client/keyboard-input/): run the same function from a key instead of the console.
+- [Teleporting the Player](/guides/client/teleporting-player/#add-teleport-commands): more client commands, for teleports and stuck menus.

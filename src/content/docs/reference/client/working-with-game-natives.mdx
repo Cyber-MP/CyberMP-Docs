@@ -1,45 +1,43 @@
 ---
 title: Working with Game Natives
-description: Authoritative guide to calling REDengine classes, game systems, and native methods from JavaScript and Lua client scripts.
+description: How client scripts call Cyberpunk 2077's own classes and systems from JavaScript and Lua, and the rules for passing hashes, vectors, variants and TweakDB values.
 ---
 
 import { Tabs, TabItem } from '@astrojs/starlight/components';
 import { SCRIPT_LANG_TAB_SYNC_KEY } from '../../../../lib/const';
 
-In CyberMP, client-side scripts can directly invoke underlying REDengine C++ systems and REDscript classes: query the player puppet, modify stats, teleport characters, modify TweakDB records, and install method hooks.
+**Game natives** are the classes, methods and systems of Cyberpunk 2077 itself (its engine is called REDengine): the player puppet, the stats system, the teleportation facility, UI widgets, the TweakDB database. CyberMP exposes them to client scripts, so beyond CyberMP's own `mp.*` API you can call almost anything the game's scripts can call.
 
-In this guide, you will learn how native access is enabled, how to call game systems in JavaScript and Lua, and essential bridge rules.
+You need natives whenever CyberMP has no ready-made function for what you want: reading the player's position, teleporting, changing a stat, tuning a weapon. This page explains how to switch them on, how to reach them from each language, and the conversion rules to know when values cross between your script and the game.
 
-:::important[Required Manifest Setting]
-To access game natives, you **must** enable `use_game_natives` in your `resource.toml`. Without this flag, native bindings remain inactive:
+:::caution[Turn natives on in the manifest]
+Natives are off by default. Enable them per resource in `resource.toml`, otherwise the game API described on this page isn't available to your script:
 ```toml title="resource.toml"
 client_script = 'client.js' # or 'client.lua'
 use_game_natives = true
 ```
 :::
 
----
+## Finding names on NativeDB
 
-## NativeDB Reference
+[NativeDB](https://nativedb.red4ext.com/) lists every class, method, field and enum of the game. The names you call from a client script are exactly the names shown there, so NativeDB is where you look up what exists and which arguments a method takes.
 
-All REDengine classes, methods, fields, and enums are indexed on [NativeDB](https://nativedb.red4ext.com/). Names in NativeDB match the exact names you call from client scripts.
+## Accessing game systems and the player
 
----
+In JavaScript everything hangs off `mp.game`: global functions such as `mp.game.GetPlayer()`, and the game's systems through `mp.game.ScriptGameInstance`. In Lua the same things are on the global `Game` object.
 
-## Accessing Game Systems & The Player
-
-Always wait until the world is loaded before invoking native methods. Access systems through `mp.game` in JavaScript, or the global `Game` object in Lua:
+Natives that touch the world only work once the world is loaded, so put them behind the `onGameLoaded` stage (see [Client Lifecycle & Stages](/guides/client/lifecycle/)):
 
 <Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
   <TabItem label="JS">
     ```js title="client.js"
     mp.game.onceGameLoaded(() => {
-      // Access the local player puppet
+      // The local player's character (the "player puppet")
       const player = mp.game.GetPlayer();
       const entityId = player.GetEntityID();
       console.log('Player Entity ID:', entityId);
 
-      // Access engine systems through ScriptGameInstance
+      // Game systems are reached through ScriptGameInstance
       const statsSystem = mp.game.ScriptGameInstance.GetStatsSystem();
       const statPoolsSystem = mp.game.ScriptGameInstance.GetStatPoolsSystem();
       const teleportFacility = mp.game.ScriptGameInstance.GetTeleportationFacility();
@@ -50,12 +48,12 @@ Always wait until the world is loaded before invoking native methods. Access sys
   <TabItem label="Lua">
     ```lua title="client.lua"
     mp.registerGameState('onGameLoaded', function()
-      -- Access the local player puppet
+      -- The local player's character (the "player puppet")
       local player = Game.GetPlayer()
       local entityId = player:GetEntityID()
       print("Player Entity ID:", entityId)
 
-      -- Access engine systems directly through Game
+      -- Game systems are reached directly through Game
       local statsSystem = Game.GetStatsSystem()
       local statPoolsSystem = Game.GetStatPoolsSystem()
       local teleportFacility = Game.GetTeleportationFacility()
@@ -65,84 +63,175 @@ Always wait until the world is loaded before invoking native methods. Access sys
   </TabItem>
 </Tabs>
 
-:::tip[Lua Method Invocation]
-In Lua, methods on game objects are called using colon syntax (e.g. `player:GetEntityID()`), while global system getters use dot syntax (e.g. `Game.GetStatsSystem()`).
+:::tip[Colon or dot in Lua]
+Call methods on a game object with a colon (`player:GetEntityID()`), and the getters on `Game` with a dot (`Game.GetStatsSystem()`).
 :::
 
----
+:::note
+`GetPlayer()` can still return nothing for a short moment after the world loads or right after a spawn. [Client Lifecycle & Stages](/guides/client/lifecycle/) shows how to wait for the puppet.
+:::
 
-## Handling Hashes at Runtime
+## Reading the player's position
 
-REDengine identifies assets, appearances, and database records using 64-bit numerical hashes (`TweakDBID`, `CName`, `ResRef`).
+A first native call that is useful on day one: print where you are standing. Spawn points, teleport targets and the positions of server entities are all coordinates you have to get from somewhere, and the simplest source is your own character.
+
+`GetWorldPosition()` returns the character's position as a `Vector4`. The example adds a `pos` command to the client console (`F8`):
 
 <Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
   <TabItem label="JS">
     ```js title="client.js"
-    // Convert string names to REDengine hashes
+    mp.commands.add('pos', () => {
+      const player = mp.game.GetPlayer();
+
+      // No character yet: the world is still loading or the player has not spawned
+      if (!player) {
+        console.log('No player character yet.');
+        return;
+      }
+
+      const position = player.GetWorldPosition();
+
+      // Three decimals are plenty, and easier to copy into a script
+      const x = position.x.toFixed(3);
+      const y = position.y.toFixed(3);
+      const z = position.z.toFixed(3);
+
+      console.log(`x: ${x}, y: ${y}, z: ${z}`);
+    });
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="client.lua"
+    mp.commands.add('pos', function()
+      local player = Game.GetPlayer()
+
+      -- No character yet: the world is still loading or the player has not spawned
+      if not player then
+        print('No player character yet.')
+        return
+      end
+
+      local position = player:GetWorldPosition()
+
+      -- Three decimals are plenty, and easier to copy into a script
+      print(string.format('x: %.3f, y: %.3f, z: %.3f', position.x, position.y, position.z))
+    end)
+    ```
+  </TabItem>
+</Tabs>
+
+`GetWorldPosition()` works on any entity you hold a reference to, not only the player: a vehicle, a ped, an object.
+
+:::note[This position is the client's]
+The value comes from this player's game, so it is only as trustworthy as the client. Use it freely for anything the player does to themselves. When a position decides something that matters (is the player really at the shop counter?), compare it with what the server knows about the player.
+:::
+
+## Handling hashes at runtime
+
+The game rarely refers to things by text. Records, names and files are identified by numeric hashes of their names, and many natives and CyberMP functions expect the hash instead of the string. There are three kinds:
+
+| Type | What it identifies | Example of the name it is made from |
+| :--- | :--- | :--- |
+| `TweakDBID` | A record in TweakDB, the game's database of items, vehicles, characters and tuning values | `Items.Preset_Nue_Default` |
+| `CName` | An engine name, such as an appearance | `default` |
+| `ResRef` | The path of a game resource file | `base\characters\main_npc\jackie.ent` |
+
+The hash helpers convert in both directions. On the client they are in `mp.game.hashes` in JavaScript and `mp.hashes` in Lua, and they return the hash as a string:
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="client.js"
+    // Name to hash (returned as a string)
     const itemHash = mp.game.hashes.toTweakdbid('Items.Preset_Nue_Default');
     const appHash = mp.game.hashes.toCname('default');
     const resourceHash = mp.game.hashes.toResref('base\\characters\\main_npc\\jackie.ent');
 
-    // Reverse lookup (hashes to string names)
+    // Hash back to name
     const itemName = mp.game.hashes.fromTweakdbid(itemHash);
     const appName = mp.game.hashes.fromCname(appHash);
     ```
   </TabItem>
   <TabItem label="Lua">
     ```lua title="client.lua"
-    -- Convert string names to REDengine hashes (returns decimal string)
+    -- Name to hash (returned as a decimal string)
     local itemHash = mp.hashes.toTweakdbid('Items.Preset_Nue_Default')
     local appHash = mp.hashes.toCname('default')
     local resourceHash = mp.hashes.toResref('base\\characters\\main_npc\\jackie.ent')
 
-    -- Reverse lookup (hashes to string names)
+    -- Hash back to name
     local itemName = mp.hashes.fromTweakdbid(itemHash)
     local appName = mp.hashes.fromCname(appHash)
     ```
   </TabItem>
 </Tabs>
 
----
+When a function wants the hash as a number, such as the [local entity](/guides/client/local-entities/) spawn functions, convert the string with `BigInt(...)` in JavaScript or `tonumber(..., 10)` in Lua. Don't use `Number(...)` in JavaScript: these hashes can be 64 bits wide, more than a JS number holds exactly.
 
-## Bridge Gotchas & Rules
+:::note
+The server has its own hash helpers with different names and return types. See [Working with Hashes](/guides/server/hashes/).
+:::
 
-### 1. Vector Structs as Objects in JavaScript
-When calling native methods that accept spatial coordinates (such as UI translations, rotations, or transforms on `inkWidget`), the JavaScript bridge expects an object with `{ x, y }` or `{ x, y, z }` properties rather than multiple numeric parameters:
+## Bridge rules and gotchas
+
+Your script and the game don't share types. A layer in between (the "bridge") converts values on every call. These are the cases where that conversion needs your attention.
+
+### Vectors are objects in JavaScript
+
+When a native takes a vector, pass one object with named fields, `{ x, y }`, `{ x, y, z }` or `{ x, y, z, w }`, not separate numbers:
 
 ```js title="client.js"
-// Incorrect (Ignored by the bridge)
-widget.SetAnchorPoint(0.5, 0.5);
+// Type "hop" in the client console to push your vehicle upwards
+mp.commands.add('hop', () => {
+  const player = mp.game.GetPlayer();
+  if (!player) return;
 
-// Correct (Pass vector as object)
-widget.SetAnchorPoint({ x: 0.5, y: 0.5 });
-widget.SetTranslation({ x: 100, y: 250 });
+  const vehicle = mp.game.GetMountedVehicle(player);
+  if (!vehicle) return; // the player is on foot
+
+  const upwardPush = { x: 0, y: 0, z: 5 };
+  const noSpin = { x: 0, y: 0, z: 0 };
+
+  // Wrong: separate numbers are ignored by the bridge
+  // vehicle.AddLinelyVelocity(0, 0, 5, 0, 0, 0);
+
+  // Right: one object per vector (here: velocity, then angular velocity)
+  vehicle.AddLinelyVelocity(upwardPush, noSpin);
+});
 ```
 
-In Lua, instantiate explicit engine struct types:
+In Lua, build the game's struct types explicitly:
+
 ```lua title="client.lua"
-local pos = Vector4.new(x, y, z, 1.0)
-local rot = EulerAngles.new(roll, pitch, yaw)
+-- A position next to V's apartment
+local position = Vector4.new(-1392.637, 1271.536, 123.082, 1.0)
+local rotation = EulerAngles.new(0, 0, 90.0) -- (roll, pitch, yaw)
 ```
 
-### 2. Handling Engine `Variant` Boxes
-Certain game methods accept or return generic REDengine `Variant` containers. Convert them at the bridge boundary:
+### `Variant` values need converting
+
+A `Variant` is the game's container for "a value of any type". Some natives take or return one. In JavaScript, wrap a value with `toVariant`, naming the game type it should become, and unwrap one with `fromVariant`:
 
 ```js title="client.js"
-// Box a JavaScript object into a REDengine Variant
-const variantBox = mp.game.toVariant({ x: 10, y: 20, z: 30 }, 'Vector3');
+// Wrap a JavaScript object as a Variant holding a Vector3
+const positionVariant = mp.game.toVariant({ x: 10, y: 20, z: 30 }, 'Vector3');
 
-// Unbox a REDengine Variant into a plain JavaScript value
-const plainValue = mp.game.fromVariant(variantBox);
+// Unwrap a Variant into a plain JavaScript value again
+const position = mp.game.fromVariant(positionVariant);
 ```
 
-### 3. TweakDB Records
-To modify game stats, item parameters, or vehicle handling at runtime, read and write records after the `onTweak` stage:
+### Overloads and `out` parameters in hooks
+
+When you [observe](/guides/client/observes/) or [override](/guides/client/overrides/) a method that has several versions with the same name, you select one by adding its parameter types after a `;`, for example `'IsSummoningVehiclesRestricted;GameInstance'`. An override of a method with `out` parameters returns the result followed by the `out` values; the exact shape differs between JavaScript and Lua and is described in [Overriding Game Methods](/guides/client/overrides/#handling-methods-with-out-parameters).
+
+### TweakDB records
+
+TweakDB holds the game's tuning data: weapon damage, vehicle handling, item prices. A single value in it is called a **flat** and is addressed as `Record.Name.field`. To change one, write the flat, then update its record so the game picks up the new value. Do this in the `onTweak` [lifecycle stage](/guides/client/lifecycle/), which is when TweakDB is ready:
 
 <Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
   <TabItem label="JS">
     ```js title="client.js"
     mp.game.onTweak(() => {
-      // Modify flat values in TweakDB
+      // Write the flat, then refresh the record it belongs to
       mp.game.TweakDB.setFlat('Items.Preset_Nue_Default.damage', 150);
       mp.game.TweakDB.updateRecord('Items.Preset_Nue_Default');
     });
@@ -151,10 +240,19 @@ To modify game stats, item parameters, or vehicle handling at runtime, read and 
   <TabItem label="Lua">
     ```lua title="client.lua"
     mp.registerGameState('onTweak', function()
-      -- Modify flat values in TweakDB
+      -- Write the flat, then refresh the record it belongs to
       TweakDB:SetFlat('Items.Preset_Nue_Default.damage', 150)
       TweakDB:Update('Items.Preset_Nue_Default')
     end)
     ```
   </TabItem>
 </Tabs>
+
+To read a value, use `getFlat` / `getRecord` in JavaScript and `TweakDB:GetFlat` / `TweakDB:GetRecord` in Lua. When you change many flats of the same record, write them with `setFlatNoUpdate` (Lua: `TweakDB:SetFlatNoUpdate`) and update the record once at the end.
+
+## Next steps
+
+- [Client Lifecycle & Stages](/guides/client/lifecycle/): which natives are safe to call at which stage.
+- [Observing Game Methods](/guides/client/observes/) and [Overriding Game Methods](/guides/client/overrides/): react to or replace the game's own method calls.
+- [Teleporting the Player](/guides/client/teleporting-player/): a complete example built on natives.
+- [Lua client reference](/reference/lua/client/#game-layer-use_game_natives--true): the Lua globals of the game layer.

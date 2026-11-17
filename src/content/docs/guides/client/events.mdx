@@ -1,81 +1,104 @@
 ---
 title: Working with Events
-description: Learn how to handle local, server, and CEF events on the client side in JavaScript and Lua.
+description: Listen for built-in client events, and send and receive your own events between the client script, the server and the CEF page, in JavaScript and Lua.
 ---
 
 import { Tabs, TabItem } from '@astrojs/starlight/components';
 import { SCRIPT_LANG_TAB_SYNC_KEY } from '../../../../lib/const';
 
-The client-side event system (`mp.events`) routes communication across three distinct targets: local scripts, the dedicated server, and the embedded Chromium Embedded Framework (CEF) user interface.
+Events are how a client script finds out that something happened and how it talks to everything else. `mp.events` on the client covers three directions: **local** events inside the client, events to and from the **server**, and events to and from the resource's **CEF page** (the HTML UI drawn over the game by the embedded Chromium browser).
 
-For full method signatures and event definitions, see the [`MpEvents`](/reference/client/api/events/mpevents/) and [`MpEventsMap`](/reference/client/api/events/mpeventsmap/) reference pages, or the [Lua Client Events reference](/reference/lua/client/#client-events-mpevents).
+Each direction has its own pair of functions, and the names differ between JavaScript and Lua:
 
----
+| Direction | JavaScript | Lua |
+| :--- | :--- | :--- |
+| Listen for a local or built-in event | `mp.events.on` | `mp.events.add` |
+| Fire a local event | `mp.events.emit` | `mp.events.trigger` |
+| Send to the server | `mp.events.emitServer` | `mp.events.triggerServer` |
+| Receive from the server | `mp.events.onServer` | `mp.events.addServer` |
+| Send to the CEF page | `mp.events.emitCef` | `mp.events.triggerCef` |
+| Receive from the CEF page | `mp.events.onCef` | `mp.events.addCef` |
+
+Pick the listener that matches where the event comes from: `on` for local and built-in events, `onServer` for events sent by the server, `onCef` for events sent by the page.
+
+For full signatures, see the [`MpEvents`](/reference/client/api/events/mpevents/) reference or the [Lua Client Events reference](/reference/lua/client/#client-events-mpevents).
 
 ## Custom & Platform Events
 
-Platform events are fired automatically by the client runtime when engine states transition (e.g., resources starting, entities streaming in). You can also emit custom local events to coordinate logic across scripts within the client:
+**Platform events** are built in: the client fires them on its own when something happens, such as a resource starting or a vehicle coming into range. **Custom events** are the ones you name and fire yourself, to let one part of your client code notify another.
 
 <Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
   <TabItem label="JS">
     ```js title="client.js"
-    // Platform event: triggers when this client resource completes startup
+    // Platform event: this client resource has started
     mp.events.on('resourceStart', () => {
-      console.log('The client resource has successfully started.');
+      console.log('The client resource has started.');
     });
 
-    // Platform event: triggers when an entity enters streaming range
+    // Platform event: a vehicle came into streaming range
     mp.events.on('vehicleStreamIn', (netID, gameID) => {
       console.log(`Vehicle streamed in - NetID: ${netID}, GameID: ${gameID}`);
     });
 
-    // Custom local event: listening for a local signal
+    // Custom local event: listen...
     mp.events.on('myCustomEvent', (data) => {
       console.log('Received local data:', data);
     });
 
-    // Emitting a custom local event
+    // ...and fire it
     mp.events.emit('myCustomEvent', { status: 'ok', timestamp: Date.now() });
     ```
   </TabItem>
   <TabItem label="Lua">
     ```lua title="client.lua"
-    -- Platform event: triggers when this client resource completes startup
+    -- Platform event: this client resource has started
     mp.events.add('resourceStart', function()
-      print('The client resource has successfully started.')
+      print('The client resource has started.')
     end)
 
-    -- Platform event: triggers when an entity enters streaming range
+    -- Platform event: a vehicle came into streaming range
     mp.events.add('vehicleStreamIn', function(netID, gameID)
       print(string.format("Vehicle streamed in - NetID: %s, GameID: %s", netID, gameID))
     end)
 
-    -- Custom local event: listening for a local signal
+    -- Custom local event: listen...
     mp.events.add('myCustomEvent', function(data)
       print('Received local data:', data)
     end)
 
-    -- Emitting a custom local event
+    -- ...and fire it
     mp.events.trigger('myCustomEvent', { status = 'ok', timestamp = os.time() })
     ```
   </TabItem>
 </Tabs>
 
-Stream events (such as `vehicleStreamIn` / `Out` and `remotePlayerStreamIn` / `Out`) pass both the server-assigned `netID` and local engine `gameID`. For identifier mapping outside of stream callbacks, see [Network IDs](/guides/client/network-ids/). For all built-in events, consult the [`MpEventsMap`](/reference/client/api/events/mpeventsmap/) reference.
+The platform events you will use most:
 
----
+| Event | Arguments | Fires when |
+| :--- | :--- | :--- |
+| `resourceStart` | none | This client resource has started. |
+| `resourceStop` | none | This client resource is stopping. Clean up here. |
+| `anyResourceStart` / `anyResourceStop` | `resourceName` | A client resource started or stopped. |
+| `vehicleStreamIn` / `vehicleStreamOut` | `netID`, `gameID` | A vehicle entered or left streaming range. |
+| `remotePlayerStreamIn` / `remotePlayerStreamOut` | `netID`, `gameID` | Another player entered or left streaming range. |
+| `pedStreamIn` / `pedStreamOut` | `netID`, `gameID` | A ped entered or left streaming range. |
+| `objectStreamIn` / `objectStreamOut` | `netID`, `gameID` | A world object entered or left streaming range. |
+
+**Streaming** means the client only creates the entities that are close enough to the player. An entity "streams in" when it comes within range and exists in the local game, and "streams out" when it leaves. Stream events give you both identifiers of the entity: `netID` is the id the server assigned, the same for everyone, and `gameID` is the id of the entity inside this player's game. To convert between the two outside of these callbacks, see [Network IDs](/guides/client/network-ids/).
+
+The complete list is in the [`MpEventsMap`](/reference/client/api/events/mpeventsmap/) reference.
 
 ## Communicating with the Server
 
-Client scripts send data to the server using reliable network packets and listen for events dispatched from the server runtime:
+The client and the server are separate programs, so the only way for them to exchange data is to send events over the network. Use `emitServer` (Lua: `triggerServer`) to send, and `onServer` (Lua: `addServer`) to receive what the server sends to this client:
 
 <Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
   <TabItem label="JS">
     ```js title="client.js"
-    // Send a reliable packet to the server
+    // Ask the server for something
     mp.events.emitServer('requestVehicleSpawn', 'Vehicle.v_sport1_quadra_turbo_r_player');
 
-    // Listen for events dispatched from the server
+    // Handle an event the server sent to this client
     mp.events.onServer('serverNotification', (message) => {
       console.log(`[Server]: ${message}`);
     });
@@ -83,10 +106,10 @@ Client scripts send data to the server using reliable network packets and listen
   </TabItem>
   <TabItem label="Lua">
     ```lua title="client.lua"
-    -- Send a reliable packet to the server
+    -- Ask the server for something
     mp.events.triggerServer('requestVehicleSpawn', 'Vehicle.v_sport1_quadra_turbo_r_player')
 
-    -- Listen for events dispatched from the server
+    -- Handle an event the server sent to this client
     mp.events.addServer('serverNotification', function(message)
       print(string.format("[Server]: %s", message))
     end)
@@ -94,33 +117,37 @@ Client scripts send data to the server using reliable network packets and listen
   </TabItem>
 </Tabs>
 
-:::tip[Request-Response RPC]
-When you need to wait for a return value from the server rather than listening for an asynchronous broadcast, use the [RPC system](/guides/recipes/rpc) (`RpcClient` / `RpcBrowser`).
+On the server, the matching functions are `mp.events.onClient` and `mp.events.emitClient` in JavaScript, `mp.events.addClient` and `mp.events.triggerClient` in Lua. The server handler receives the sending player as its first argument, before the values you sent. See the server-side [Working with Events](/guides/server/events) guide.
+
+:::caution[Never trust the client]
+Anything a client sends can be forged by a modified client. Treat it as a request: check on the server that this player is allowed to do it and that the values make sense.
 :::
 
----
+:::tip[Need an answer back?]
+Events are one-way. When the client needs a return value from the server, pairing a request event with a reply event gets tedious. Use the [RPC system](/guides/recipes/rpc) (`RpcClient` / `RpcBrowser`) instead, which lets you call a function on the other side and await its result.
+:::
 
 ## Interacting with CEF (Browser UI)
 
-Use CEF events to pass data between your client script and embedded HTML/CSS web interfaces:
+The CEF page is a web page, and it runs separately from your client script. The two talk through events as well: the client script sends with `emitCef` (Lua: `triggerCef`) and listens with `onCef` (Lua: `addCef`). Inside the page, the same events are received with `mp.events.on` and sent with `mp.events.emit`.
 
 <Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
   <TabItem label="JS">
     ```js title="client.js"
-    // Built-in CEF event: fires when the browser DOM is ready
+    // Built-in CEF event: the page's DOM is ready
     mp.events.onCef('domReady', (frameName) => {
       console.log(`Browser frame '${frameName}' is ready.`);
 
-      // Send initial data to the CEF web page
+      // The page can receive events now: send it its initial data
       mp.events.emitCef('initializeDashboard', { playerName: 'V', health: 100 });
     });
 
-    // Built-in CEF event: fires on uncaught JS errors in the browser
+    // Built-in CEF event: a script error happened in the page
     mp.events.onCef('loadingFailed', (error) => {
-      console.error(`CEF Load Failed: ${error.message} (Frame: ${error.frameName})`);
+      console.error(`CEF error in ${error.frameName}: ${error.message}`);
     });
 
-    // Custom event: dispatched from the CEF page via mp.events.emit
+    // Custom event: the page called mp.events.emit('uiAction', actionName, payload)
     mp.events.onCef('uiAction', (actionName, payload) => {
       console.log(`User triggered UI action: ${actionName}`, payload);
     });
@@ -128,20 +155,20 @@ Use CEF events to pass data between your client script and embedded HTML/CSS web
   </TabItem>
   <TabItem label="Lua">
     ```lua title="client.lua"
-    -- Built-in CEF event: fires when the browser DOM is ready
+    -- Built-in CEF event: the page's DOM is ready
     mp.events.addCef('domReady', function(frameName)
       print(string.format("Browser frame '%s' is ready.", frameName))
 
-      -- Send initial data to the CEF web page
+      -- The page can receive events now: send it its initial data
       mp.events.triggerCef('initializeDashboard', { playerName = 'V', health = 100 })
     end)
 
-    -- Built-in CEF event: fires on uncaught JS errors in the browser
+    -- Built-in CEF event: a script error happened in the page
     mp.events.addCef('loadingFailed', function(err)
       print(string.format("CEF error in %s: %s", err.frameName, err.message))
     end)
 
-    -- Custom event: dispatched from the CEF page via mp.events.emit
+    -- Custom event: the page called mp.events.emit('uiAction', actionName, payload)
     mp.events.addCef('uiAction', function(actionName, payload)
       print(string.format("User triggered UI action: %s", actionName))
     end)
@@ -149,17 +176,185 @@ Use CEF events to pass data between your client script and embedded HTML/CSS web
   </TabItem>
 </Tabs>
 
-CEF automatically dispatches two built-in events into every frame:
-- **`domReady`**: Fires when the document structure has loaded (argument: `window.name`).
-- **`loadingFailed`**: Fires on uncaught exceptions or unhandled promise rejections in the page (returns [`CefLoadingFailedError`](/reference/client/api/events/cefloadingfailederror/)).
+CEF sends two built-in events to your client script for every frame:
 
-To learn how to structure HTML interfaces and handle focus, see [Creating Your First CEF UI](/guides/client/first-cef-ui).
+| Event | Argument | Fires when |
+| :--- | :--- | :--- |
+| `domReady` | `frameName`, the frame's `window.name` | The document has loaded. This also happens again when the page reloads, so it is the right place to send (or resend) the page its state. |
+| `loadingFailed` | A [`CefLoadingFailedError`](/reference/client/api/events/cefloadingfailederror/) with `frameName`, `message`, `source`, `line`, `column` and `stack` | An uncaught exception or unhandled promise rejection happened in the page. Despite the name, it is not a network or HTTP load error. |
 
----
+:::note
+The page cannot reach the server on its own. To get data from the server into the UI, or a click from the UI to the server, relay it through the client script. [Creating Your First CEF UI](/guides/client/first-cef-ui) builds a page and walks through the whole chain.
+:::
+
+## A complete round trip
+
+Most features end up using all three directions at once. This example follows one click the whole way: a **Buy** button in the page, the client script that passes it on, the server that decides, and the answer travelling back to the page.
+
+```text
+page  --buyItem-->  client  --shop:buyItem-->  server
+page  <--purchaseResult--  client  <--shop:purchaseResult--  server
+```
+
+**1. The page** sends the click and shows whatever answer comes back. It only names the item. It doesn't send a price, because the server would have no reason to believe it.
+
+```html title="ui/index.html"
+<button id="buy-medkit">Buy medkit</button>
+<p id="shop-status"></p>
+
+<script>
+  const buyButton = document.getElementById('buy-medkit');
+  const shopStatus = document.getElementById('shop-status');
+
+  buyButton.addEventListener('click', () => {
+    mp.events.emit('buyItem', 'medkit');
+  });
+
+  mp.events.on('purchaseResult', (success, message, money) => {
+    shopStatus.textContent = `${message} You have ${money} eddies.`;
+    shopStatus.style.color = success ? 'lightgreen' : 'salmon';
+  });
+</script>
+```
+
+**2. The client script** is the relay. The page can't reach the server, so the client forwards the request one way and the answer the other way:
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="client.js"
+    // Page -> client -> server
+    mp.events.onCef('buyItem', (itemName) => {
+      mp.events.emitServer('shop:buyItem', itemName);
+    });
+
+    // Server -> client -> page
+    mp.events.onServer('shop:purchaseResult', (success, message, money) => {
+      mp.events.emitCef('purchaseResult', success, message, money);
+    });
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="client.lua"
+    -- Page -> client -> server
+    mp.events.addCef('buyItem', function(itemName)
+      mp.events.triggerServer('shop:buyItem', itemName)
+    end)
+
+    -- Server -> client -> page
+    mp.events.addServer('shop:purchaseResult', function(success, message, money)
+      mp.events.triggerCef('purchaseResult', success, message, money)
+    end)
+    ```
+  </TabItem>
+</Tabs>
+
+**3. The server** owns the prices and the money, checks the request, and answers the player who asked:
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="server.js"
+    const STARTING_MONEY = 500;
+
+    const itemPrices = new Map();
+    itemPrices.set('medkit', 150);
+    itemPrices.set('ammo', 40);
+
+    // Money of each connected player, by player id
+    const moneyByPlayerId = new Map();
+
+    const getMoney = (player) => {
+      if (!moneyByPlayerId.has(player.id)) {
+        moneyByPlayerId.set(player.id, STARTING_MONEY);
+      }
+      return moneyByPlayerId.get(player.id);
+    };
+
+    // `player` is filled in by the server, so it can be trusted. `itemName` cannot.
+    mp.events.onClient('shop:buyItem', (player, itemName) => {
+      const money = getMoney(player);
+      const price = itemPrices.get(itemName);
+
+      // A modified client can send any value here, not only what the button sends
+      if (price === undefined) {
+        mp.events.emitClient(player, 'shop:purchaseResult', false, 'We do not sell that.', money);
+        return;
+      }
+
+      if (money < price) {
+        mp.events.emitClient(player, 'shop:purchaseResult', false, 'Not enough eddies.', money);
+        return;
+      }
+
+      const moneyLeft = money - price;
+      moneyByPlayerId.set(player.id, moneyLeft);
+      mp.events.emitClient(player, 'shop:purchaseResult', true, `You bought a ${itemName}.`, moneyLeft);
+    });
+
+    // Forget players who left, or the map grows forever
+    mp.events.on('playerDisconnected', (playerId) => {
+      moneyByPlayerId.delete(playerId);
+    });
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="server.lua"
+    local STARTING_MONEY = 500
+
+    local itemPrices = {
+      medkit = 150,
+      ammo = 40,
+    }
+
+    -- Money of each connected player, by player id
+    local moneyByPlayerId = {}
+
+    local function getMoney(player)
+      if moneyByPlayerId[player.id] == nil then
+        moneyByPlayerId[player.id] = STARTING_MONEY
+      end
+      return moneyByPlayerId[player.id]
+    end
+
+    -- `player` is filled in by the server, so it can be trusted. `itemName` cannot.
+    mp.events.addClient('shop:buyItem', function(player, itemName)
+      local money = getMoney(player)
+
+      -- A modified client can send any value here, not only what the button sends
+      if type(itemName) ~= 'string' or itemPrices[itemName] == nil then
+        mp.events.triggerClient(player, 'shop:purchaseResult', false, 'We do not sell that.', money)
+        return
+      end
+
+      local price = itemPrices[itemName]
+
+      if money < price then
+        mp.events.triggerClient(player, 'shop:purchaseResult', false, 'Not enough eddies.', money)
+        return
+      end
+
+      local moneyLeft = money - price
+      moneyByPlayerId[player.id] = moneyLeft
+      mp.events.triggerClient(player, 'shop:purchaseResult', true, 'You bought a ' .. itemName .. '.', moneyLeft)
+    end)
+
+    -- Forget players who left, or the table grows forever
+    mp.events.add('playerDisconnected', function(playerId)
+      moneyByPlayerId[playerId] = nil
+    end)
+    ```
+  </TabItem>
+</Tabs>
+
+What makes this safe, and where it stops:
+
+- **The server never takes the client's word.** The price and the balance live on the server. The only thing the client supplies is an item name, and the server looks it up before using it. In JavaScript the prices are in a `Map` for that reason: looking up an unknown name in a `Map` gives `undefined`, while a plain object would also answer to names like `toString`.
+- **The answer goes to one player.** `emitClient` / `triggerClient` take the player as their first argument. Nobody else receives the result.
+- **Nothing limits how often a client can send the event.** A modified client can send `shop:buyItem` hundreds of times per second. Here each request is cheap and ends in a balance check, but anything slower (a database write, an HTTP request) needs a cooldown per player on the server.
+- **There is no timeout.** If the server handler throws or the player's connection drops, the page waits forever. Once you have several request and answer pairs like this one, switch to the [RPC system](/guides/recipes/rpc), which matches answers to requests for you and rejects a call that gets no answer.
 
 ## Cleaning Up Listeners
 
-To prevent memory leaks and duplicate callbacks across script reloads, detach listeners when they are no longer needed:
+Handlers are dropped automatically when the resource stops. Remove one yourself when you only need it for a while, so it doesn't keep running after it has done its job:
 
 <Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
   <TabItem label="JS">
@@ -168,10 +363,10 @@ To prevent memory leaks and duplicate callbacks across script reloads, detach li
       console.log(`Vehicle ${netID} streamed in.`);
     };
 
-    // Register listener
+    // Register the listener
     mp.events.on('vehicleStreamIn', handleVehicleStream);
 
-    // Unregister listener
+    // Remove it: pass the same function you registered
     mp.events.off('vehicleStreamIn', handleVehicleStream);
     ```
   </TabItem>
@@ -181,15 +376,25 @@ To prevent memory leaks and duplicate callbacks across script reloads, detach li
       print(string.format("Vehicle %s streamed in.", netID))
     end
 
-    -- Register listener (returns a numeric handler id)
+    -- Register the listener (returns a numeric handler id)
     local handlerId = mp.events.add('vehicleStreamIn', handleVehicleStream)
 
-    -- Unregister listener; the event name is required too
+    -- Remove it: pass the event name and the id, not the function
     mp.events.remove('vehicleStreamIn', handlerId)
     ```
   </TabItem>
 </Tabs>
 
-:::note[Listener Scope in JavaScript]
-In JavaScript, `mp.events.off()` removes only listeners registered through `mp.events.on()`. Handlers registered through `onServer` or `onCef` use internal prefixes and are automatically cleaned up when the resource stops or restarts.
-:::
+The two languages identify a handler differently:
+
+- **JavaScript**: `mp.events.off(name, fn)` needs the same function reference you passed to `on`, so keep the handler in a variable instead of writing it inline. It removes only listeners registered with `mp.events.on()`. Handlers registered with `onServer` or `onCef` use internal prefixes and are cleaned up automatically when the resource stops or restarts.
+- **Lua**: `mp.events.remove(name, id)` takes the numeric id returned by `add` or `addServer`. CEF handlers have their own function: `mp.events.removeCef(name, token)`, where `token` is the value returned by `addCef`.
+
+## Next steps
+
+- [Creating Your First CEF UI](/guides/client/first-cef-ui): build a page and wire it to your client script.
+- [Remote Procedure Calls (RPC)](/guides/recipes/rpc): request and response between server, client and CEF.
+- [Network IDs](/guides/client/network-ids/): work with the `netID` and `gameID` from stream events.
+- [Working with Events](/guides/server/events): the server side of the same system.
+- [Streaming: what the client can see](/guides/client/streaming/): the stream-in and stream-out events in detail.
+- [Client commands](/guides/client/commands/): trigger your client code from the F8 console.
