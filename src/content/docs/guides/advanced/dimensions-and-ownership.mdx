@@ -1,0 +1,331 @@
+---
+title: Dimensions, Streaming Radius and Entity Ownership
+description: Instance players and entities into private dimensions, tune how far away entities appear, and understand what an entity's owner is.
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import { SCRIPT_LANG_TAB_SYNC_KEY } from '../../../../lib/const';
+
+Every player and every server-created entity has three properties you can write: `dimension`, `streamingRadius` and `owner`. Together they decide who sees an entity, from how far, and whose game simulates it. The basic guides introduce them in a sentence each ([Virtual dimensions](/guides/server/players/#virtual-dimensions), [What all entities share](/guides/server/entities/#what-all-entities-share)). This page is about using them for real: instanced lobbies and interiors, and what the server accepts when you assign them.
+
+The values quoted on this page were read back from server v4.0.4-beta.1 with vehicles, peds and objects. No game client was connected, so statements about what players see come from the typings and the Lua reference, and are marked where they could not be checked.
+
+## Dimensions
+
+A dimension is a numbered copy of the world. Players and entities only see and touch what is in the same dimension. Dimension `0` is the shared world everybody starts in.
+
+### What you can assign
+
+`dimension` is a whole number, zero or above.
+
+| You assign | What reads back |
+| :--- | :--- |
+| `5`, `100007` | The same number. |
+| `-1` | Ignored. The previous dimension stays. |
+| `2.7`, or a string in JavaScript | A meaningless large number. The entity is now in a dimension nobody else is in. |
+
+There is no error for a bad value in either language, so make sure a dimension computed from other numbers is a whole number before you assign it. Lua is stricter than JavaScript here: it keeps whole numbers and decimal numbers apart, and `entity.dimension = 4.0` is misread just like `2.7` (it read back as `1082130432`). Pass a computed value through `math.floor` first; adding whole numbers, as the examples below do, stays whole. We did not find a "visible in every dimension" value in any source: `-1` is not one.
+
+The `dimension` option of `mp.vehicles.create` and the other `create` calls is applied as documented: an entity created with `dimension: 42` reads back `42`.
+
+### Choosing dimension numbers
+
+Two schemes cover most needs.
+
+**A private dimension per player.** Player IDs are unique among connected players, so `base + player.id` cannot collide with another player's private dimension. Good for anything one player does alone: a login screen, character creation, a personal garage preview.
+
+**A dimension per instance.** For something several players share (a race, a mission, an apartment visit), hand out a number when the instance opens. The official Freeroam gamemode does this for its matches: it picks a random number between 1000 and 10000 that no running match uses. A counter is even simpler, as below.
+
+Keep the two ranges apart (for example instances from 1000, private dimensions from 100000) so they can never overlap.
+
+### An instance, from open to close
+
+An instance is more than a number: it has entities that belong to it, and it has to be taken apart again. An entity in a dimension nobody is in is invisible, but it still exists on the server and still counts.
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="server.js"
+    const FIRST_INSTANCE_DIMENSION = 1000;
+    let nextInstanceDimension = FIRST_INSTANCE_DIMENSION;
+
+    // dimension -> ids of the vehicles created for that instance
+    const vehicleIdsByDimension = new Map();
+
+    function openInstance() {
+      const dimension = nextInstanceDimension;
+      nextInstanceDimension += 1;
+      vehicleIdsByDimension.set(dimension, []);
+      return dimension;
+    }
+
+    function spawnInstanceVehicle(dimension, position) {
+      const vehicle = mp.vehicles.create({
+        model: mp.hashes.tweakdbid('Vehicle.v_sport2_porsche_911turbo_player'),
+        appearance: mp.hashes.cname('porsche_911turbo__basic_johnny'),
+        position: position,
+        dimension: dimension,
+      });
+
+      vehicleIdsByDimension.get(dimension).push(vehicle.id);
+      return vehicle;
+    }
+
+    function closeInstance(dimension) {
+      // Send everyone who is still inside back to the shared world.
+      for (const player of mp.players.toArray()) {
+        if (player.dimension === dimension) {
+          player.dimension = 0;
+        }
+      }
+
+      // Nobody can see these vehicles any more, but they would stay on the server forever.
+      for (const vehicleId of vehicleIdsByDimension.get(dimension)) {
+        if (mp.vehicles.exists(vehicleId)) {
+          mp.vehicles.destroy(vehicleId);
+        }
+      }
+
+      vehicleIdsByDimension.delete(dimension);
+    }
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="server.lua"
+    local FIRST_INSTANCE_DIMENSION = 1000
+    local nextInstanceDimension = FIRST_INSTANCE_DIMENSION
+
+    -- dimension -> ids of the vehicles created for that instance
+    local vehicleIdsByDimension = {}
+
+    local function openInstance()
+      local dimension = nextInstanceDimension
+      nextInstanceDimension = nextInstanceDimension + 1
+      vehicleIdsByDimension[dimension] = {}
+      return dimension
+    end
+
+    local function spawnInstanceVehicle(dimension, position)
+      local vehicle = mp.vehicles.create({
+        model = tonumber(mp.hashes.toTweakdbid('Vehicle.v_sport2_porsche_911turbo_player'), 10),
+        appearance = tonumber(mp.hashes.toCname('porsche_911turbo__basic_johnny'), 10),
+        position = position,
+        dimension = dimension,
+      })
+
+      table.insert(vehicleIdsByDimension[dimension], vehicle.id)
+      return vehicle
+    end
+
+    local function closeInstance(dimension)
+      -- Send everyone who is still inside back to the shared world.
+      for _, player in ipairs(mp.players.toArray()) do
+        if player.dimension == dimension then
+          player.dimension = 0
+        end
+      end
+
+      -- Nobody can see these vehicles any more, but they would stay on the server forever.
+      for _, vehicleId in ipairs(vehicleIdsByDimension[dimension]) do
+        if mp.vehicles.exists(vehicleId) then
+          mp.vehicles.destroy(vehicleId)
+        end
+      end
+
+      vehicleIdsByDimension[dimension] = nil
+    end
+    ```
+  </TabItem>
+</Tabs>
+
+Call `closeInstance` for every open instance in your `resourceStop` handler too. The vehicles survive a resource restart, and after it your script no longer knows their IDs.
+
+Changing a dimension does not move anyone. Putting the player at the right spot inside the instance is a client-side teleport: see [Teleporting into another dimension](/guides/client/teleporting-player/#teleporting-into-another-dimension).
+
+### Taking a vehicle along
+
+A player's dimension and their vehicle's dimension are separate properties, and nothing in the sources says that moving a driver moves the car. To move a car with everyone in it, set the vehicle and each occupant yourself:
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="server.js"
+    function moveVehicleToDimension(vehicle, dimension) {
+      vehicle.dimension = dimension;
+
+      const occupants = [
+        vehicle.seats.driver,
+        vehicle.seats.passenger,
+        vehicle.seats.rearLeft,
+        vehicle.seats.rearRight,
+      ];
+
+      for (const occupant of occupants) {
+        // An empty seat is null.
+        if (occupant) {
+          occupant.dimension = dimension;
+        }
+      }
+    }
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="server.lua"
+    local function moveVehicleToDimension(vehicle, dimension)
+      vehicle.dimension = dimension
+
+      local occupants = {
+        vehicle.seats.driver,
+        vehicle.seats.passenger,
+        vehicle.seats.rearLeft,
+        vehicle.seats.rearRight,
+      }
+
+      for _, occupant in ipairs(occupants) do
+        -- An empty seat is a player object whose id is 0.
+        if occupant.id ~= 0 then
+          occupant.dimension = dimension
+        end
+      end
+    end
+    ```
+  </TabItem>
+</Tabs>
+
+To start from a player, read `player.vehicle` first: it is `null` in JavaScript, and an object whose `id` is `0` in Lua, when the player is on foot.
+
+The same goes for anything else that should come along, such as a ped that follows the player: it stays where it is until you assign its `dimension`. What a player's game shows while a driver and their vehicle are briefly in different dimensions could not be checked here, so change them in the same function, as above.
+
+## Streaming radius
+
+A client does not know about every entity on the server. An entity is **streamed in** for a player when it comes within range, and streamed out when it leaves; only then does it exist in that player's game. `streamingRadius` is that range for one entity, in metres.
+
+### What you can assign
+
+Every new vehicle, ped and object starts at `230`.
+
+| You assign | What reads back |
+| :--- | :--- |
+| `50`, `12.5`, `1000` | The same number. |
+| `0` | `230`. Zero resets the entity to the default. |
+| `-10` | `10`. The sign is dropped. |
+
+:::caution[Lua: write the radius with a decimal point]
+In server-side Lua, assigning a whole number is ignored: after `vehicle.streamingRadius = 50` the property still reads `230`. Write `vehicle.streamingRadius = 50.0` and it is applied. JavaScript has no such difference.
+:::
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="server.js"
+    // A landmark that should be visible from far away
+    landmarkObject.streamingRadius = 600;
+
+    // Small clutter that nobody needs to see from across the street
+    trashBagObject.streamingRadius = 60;
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="server.lua"
+    -- A landmark that should be visible from far away
+    landmarkObject.streamingRadius = 600.0
+
+    -- Small clutter that nobody needs to see from across the street
+    trashBagObject.streamingRadius = 60.0
+    ```
+  </TabItem>
+</Tabs>
+
+(`landmarkObject` and `trashBagObject` are objects you created earlier with `mp.objects.create`.)
+
+### When to change it
+
+The default suits most things. Reasons to move away from it:
+
+- **Lower it** for small or numerous entities: props in a dense area, pickups, decoration. Each player then has fewer entities streamed in at once, and fewer stream in and out as they move.
+- **Raise it** for the few things that must be seen from a distance: a race checkpoint gate, a large event prop, a vehicle that players are meant to chase.
+
+A large radius on many entities is the expensive combination, because every player in range gets every one of them. Raise it per entity, for a reason, not across the board.
+
+Players have a `streamingRadius` as well. The typings describe the property the same way for every entity ("distance at which this entity streams in/out"), which for a player would be the distance at which others see them. We could not confirm that reading without connected players, nor whether it also limits what that player sees.
+
+## Entity ownership
+
+The server decides that an entity exists and where it was created. It does not run the game: the physics of a car, the animation of a ped. One connected player's game does that for each entity and reports the result, and that player is the entity's **owner**. The typings call `owner` the "current owner of the entity sync"; the Lua reference calls it the "network owner client".
+
+### Reading the owner
+
+An entity that nobody simulates has no owner. That is the state of every entity on a server with no players, and how it reads differs per language:
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="server.js"
+    function describeOwner(vehicle) {
+      const owner = vehicle.owner;
+
+      // An entity nobody simulates still returns an object; its id is -1.
+      if (!owner || owner.id === -1) {
+        return 'nobody';
+      }
+
+      return owner.nickname;
+    }
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="server.lua"
+    local function describeOwner(vehicle)
+      local owner = vehicle.owner
+
+      -- An entity nobody simulates has the number -1 as its owner.
+      if type(owner) ~= 'table' then
+        return 'nobody'
+      end
+
+      return owner.nickname
+    end
+    ```
+  </TabItem>
+</Tabs>
+
+In JavaScript, `if (vehicle.owner)` is always true, so compare the `id`. The typings declare `owner` as a plain `MpPlayer`; the `-1` case is what the server returns.
+
+Both runtimes also have a read-only `firstOwner` property with the same "no owner" values. It is not in the typings or the Lua reference, and nothing describes when it differs from `owner`, so don't build on it.
+
+### Changing the owner
+
+`owner` can be assigned for vehicles, peds, objects and pickups (the Lua reference: "assignable for non-player entities"). Pass a player object or a player ID.
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="server.js"
+    function giveSimulationTo(vehicle, player) {
+      if (!mp.players.exists(player.id)) return;
+
+      vehicle.owner = player;
+    }
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="server.lua"
+    local function giveSimulationTo(vehicle, player)
+      if not mp.players.exists(player.id) then return end
+
+      vehicle.owner = player
+    end
+    ```
+  </TabItem>
+</Tabs>
+
+The `exists` check matters more in Lua: assigning the ID of a player who is not connected raises `entity id is not valid` there. In JavaScript the same assignment is silently ignored, and assigning `null` throws, so there is no way to clear an owner by hand.
+
+What we can say about when to do this is limited, and worth being plain about:
+
+- The sources do not describe how the server picks an owner or when it changes one by itself. With no players connected, nothing is owned.
+- On the client, the game's vehicle class has a `VehicleOwnerWasChanged()` callback in the typings, and the `vehicleHittedByPlayer` server event carries a `byOwner` flag. So ownership does change during play, and the platform tracks it.
+- Since the owner's game reports the entity's state, the owner is the player whose view of that entity is the direct one. That is the reason to assign it yourself: when your gamemode knows better than the default who should drive the simulation, for example the player a scripted ped is escorting.
+
+Everything in the last point is reasoning from the definition, not something we could observe. Test an ownership change with two players before a feature depends on it, and remember the security side: the owner's client is the source of that entity's movement, so ownership is not something to hand to a player as a reward.
+
+## What next
+
+- [Choosing How to Sync State](/guides/advanced/state-sync/#state-that-belongs-to-a-dimension): sending events only to the players inside an instance.
+- [Network IDs](/guides/client/network-ids/): what "streamed in" means on the client, and the stream events.
+- [Performance](/guides/advanced/performance/): the cost of reading entity properties in loops such as `closeInstance`.

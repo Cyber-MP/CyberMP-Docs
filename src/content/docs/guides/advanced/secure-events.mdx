@@ -1,0 +1,378 @@
+---
+title: Never Trust the Client
+description: Treat every client event as untrusted input, with a validated purchase request, a per-player rate limiter and server-side checks on platform events.
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import { SCRIPT_LANG_TAB_SYNC_KEY } from '../../../../lib/const';
+
+Your client script runs on the player's computer. The player can read it, change it, or skip it and send the server whatever they like. So an event that arrives from a client is not "my client script calling my server": it is a message from a stranger that happens to use one of your event names.
+
+This page shows what to check before acting on such a message. It assumes you know how client events reach the server ([Working with Events](/guides/server/events/#receiving-events-from-clients)).
+
+## What you can and cannot trust
+
+When a handler registered with `mp.events.onClient` (`mp.events.addClient` in Lua) runs, exactly one argument is reliable: the first one, `player`. The server fills it in from the connection the message came from, so it really is the sender.
+
+Everything after it was chosen by the sender:
+
+- **The values.** An item ID that does not exist, a quantity of `-5`, a price of `0`.
+- **The types.** A table where you expected a number, nothing where you expected a string.
+- **The moment.** A "buy" event from someone standing on the other side of the map, or in another [dimension](/guides/server/players/#virtual-dimensions).
+- **The frequency.** The same event a thousand times per second.
+- **The event itself.** Any name you listen for can be sent at any time, whether or not your UI offers a button for it.
+
+The rule that follows: **the client asks, the server decides.** A client never sends a result ("I bought a katana for 300", "give me 500 eddies"). It sends a request ("I want to buy this item"), and the server works out everything else from data it owns.
+
+## Example: a purchase request
+
+A player wants to buy an item from a vendor. The client sends two things: which item, and how many.
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="client.js"
+    mp.events.emitServer('shop:buy', 'Items.Preset_Katana_Military', 1);
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="client.lua"
+    mp.events.triggerServer('shop:buy', 'Items.Preset_Katana_Military', 1)
+    ```
+  </TabItem>
+</Tabs>
+
+The price is not in that message, and it must not be. The server looks it up in its own table. The handler then checks, in this order:
+
+1. **Types and known values.** Is the item a string, and one we sell?
+2. **Ranges.** Is the quantity a whole number between 1 and the maximum?
+3. **May this player do this, here, now?** Are they in the vendor's dimension and close enough to it?
+4. **Can they pay?** The balance is read from the server's own data.
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="server.js"
+    // Prices live on the server. The client only says which item it wants.
+    const priceByItemId = new Map([
+      ['Items.Preset_Katana_Military', 300],
+      ['Items.Preset_Nue_Default', 150],
+    ]);
+
+    const VENDOR_POSITION = [-1456.8, 1038.2, 16.8];
+    const VENDOR_DIMENSION = 0;
+    const MAX_BUY_DISTANCE = 5;
+    const MAX_QUANTITY = 10;
+
+    function distanceBetween(positionA, positionB) {
+      const deltaX = positionA[0] - positionB[0];
+      const deltaY = positionA[1] - positionB[1];
+      const deltaZ = positionA[2] - positionB[2];
+      return Math.sqrt(deltaX * deltaX + deltaY * deltaY + deltaZ * deltaZ);
+    }
+
+    // Returns the reason to refuse the request, or null when it is acceptable.
+    function findBuyRefusal(player, itemId, quantity) {
+      if (typeof itemId !== 'string' || !priceByItemId.has(itemId)) {
+        return 'unknown item';
+      }
+
+      if (!Number.isInteger(quantity) || quantity < 1 || quantity > MAX_QUANTITY) {
+        return 'invalid quantity';
+      }
+
+      if (player.dimension !== VENDOR_DIMENSION) {
+        return 'not at the vendor';
+      }
+
+      if (distanceBetween(player.position, VENDOR_POSITION) > MAX_BUY_DISTANCE) {
+        return 'not at the vendor';
+      }
+
+      return null;
+    }
+
+    function handleBuyRequest(player, itemId, quantity) {
+      const refusal = findBuyRefusal(player, itemId, quantity);
+      if (refusal) {
+        player.emit('shop:buyRefused', refusal);
+        return;
+      }
+
+      const totalPrice = priceByItemId.get(itemId) * quantity;
+      const money = player.getMeta('money') || 0;
+      if (money < totalPrice) {
+        player.emit('shop:buyRefused', 'not enough money');
+        return;
+      }
+
+      // Not synced: the balance stays on the server.
+      player.setMeta('money', money - totalPrice);
+      player.emit('shop:buyAccepted', itemId, quantity);
+    }
+
+    mp.events.onClient('shop:buy', handleBuyRequest);
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="server.lua"
+    -- Prices live on the server. The client only says which item it wants.
+    local priceByItemId = {
+      ['Items.Preset_Katana_Military'] = 300,
+      ['Items.Preset_Nue_Default'] = 150,
+    }
+
+    local VENDOR_POSITION = vector3(-1456.8, 1038.2, 16.8)
+    local VENDOR_DIMENSION = 0
+    local MAX_BUY_DISTANCE = 5
+    local MAX_QUANTITY = 10
+
+    local function distanceBetween(positionA, positionB)
+      local deltaX = positionA.x - positionB.x
+      local deltaY = positionA.y - positionB.y
+      local deltaZ = positionA.z - positionB.z
+      return math.sqrt(deltaX * deltaX + deltaY * deltaY + deltaZ * deltaZ)
+    end
+
+    -- Returns the reason to refuse the request, or nil when it is acceptable.
+    local function findBuyRefusal(player, itemId, quantity)
+      if type(itemId) ~= 'string' or priceByItemId[itemId] == nil then
+        return 'unknown item'
+      end
+
+      local isWholeNumber = type(quantity) == 'number' and quantity == math.floor(quantity)
+      if not isWholeNumber or quantity < 1 or quantity > MAX_QUANTITY then
+        return 'invalid quantity'
+      end
+
+      if player.dimension ~= VENDOR_DIMENSION then
+        return 'not at the vendor'
+      end
+
+      if distanceBetween(player.position, VENDOR_POSITION) > MAX_BUY_DISTANCE then
+        return 'not at the vendor'
+      end
+
+      return nil
+    end
+
+    local function handleBuyRequest(player, itemId, quantity)
+      local refusal = findBuyRefusal(player, itemId, quantity)
+      if refusal then
+        player:trigger('shop:buyRefused', refusal)
+        return
+      end
+
+      local totalPrice = priceByItemId[itemId] * quantity
+      local money = player:getMeta('money') or 0
+      if money < totalPrice then
+        player:trigger('shop:buyRefused', 'not enough money')
+        return
+      end
+
+      -- Not synced: the balance stays on the server.
+      player:setMeta('money', money - totalPrice)
+      player:trigger('shop:buyAccepted', itemId, quantity)
+    end
+
+    mp.events.addClient('shop:buy', handleBuyRequest)
+    ```
+  </TabItem>
+</Tabs>
+
+Details that matter more than they look:
+
+- **Check the type before the value.** In JavaScript, `quantity > 0` is true for the string `'2'`. In Lua 5.3, which the server runs, `math.tointeger('2')` happily returns `2`. Asking for the type first closes both doors. `Number.isInteger` also rejects `NaN` and `Infinity`.
+- **Look items up in a `Map`, not a plain object** (JavaScript). With a plain object, `prices['constructor']` finds something even though you never put it there.
+- **Have an upper bound.** A quantity of ten billion is a whole number above zero too.
+- **Read the position from the server.** `player.position` and `player.dimension` come from the server's own state, not from the message. The server's idea of a position follows what the player's game reports, so a distance check stops requests from the other side of the map; it is not proof that nobody tampers with movement.
+- **Be vague in the answer.** `'not at the vendor'` is enough for an honest player's UI. A message such as "you are 7.3 m away, the limit is 5" mostly helps someone tune a cheat.
+
+:::note
+The balance is stored here as non-synced player [metadata](/guides/server/meta/) to keep the example in one file. In a project with several resources, one resource should own it: see [Structuring a Gamemode](/guides/advanced/architecture/#who-owns-the-data).
+:::
+
+## Rate limiting
+
+A valid request can still be sent far too often: to flood the chat, to make the server hit your database a thousand times per second, or just because a client script has a bug in a tick loop. A rate limiter answers one question: has this player done this too many times lately?
+
+The simplest kind counts calls inside a fixed time window. When the window is over, the count starts again.
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="server.js"
+    // playerId -> (action name -> { windowStartedAt, callCount })
+    const usageByPlayerId = new Map();
+
+    // Returns true when the player has used up `maxCalls` for this action in the current window.
+    function isRateLimited(player, actionName, maxCalls, windowMs) {
+      let usageByAction = usageByPlayerId.get(player.id);
+      if (!usageByAction) {
+        usageByAction = new Map();
+        usageByPlayerId.set(player.id, usageByAction);
+      }
+
+      const now = Date.now();
+      const usage = usageByAction.get(actionName);
+      const windowIsOver = !usage || now - usage.windowStartedAt >= windowMs;
+
+      if (windowIsOver) {
+        usageByAction.set(actionName, { windowStartedAt: now, callCount: 1 });
+        return false;
+      }
+
+      usage.callCount += 1;
+      return usage.callCount > maxCalls;
+    }
+
+    mp.events.on('playerDisconnected', (playerId) => {
+      // Without this the map grows with every player who ever joined.
+      usageByPlayerId.delete(playerId);
+    });
+
+    mp.events.onClient('chat:message', (player, text) => {
+      // At most 5 messages every 10 seconds.
+      if (isRateLimited(player, 'chat:message', 5, 10000)) return;
+      if (typeof text !== 'string' || text.length === 0 || text.length > 200) return;
+
+      console.log(`${player.nickname}: ${text}`);
+    });
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="server.lua"
+    -- playerId -> (action name -> { windowStartedAt, callCount })
+    local usageByPlayerId = {}
+
+    -- Returns true when the player has used up `maxCalls` for this action in the current window.
+    local function isRateLimited(player, actionName, maxCalls, windowMs)
+      local usageByAction = usageByPlayerId[player.id]
+      if not usageByAction then
+        usageByAction = {}
+        usageByPlayerId[player.id] = usageByAction
+      end
+
+      local now = mp.getTimer()
+      local usage = usageByAction[actionName]
+      local windowIsOver = usage == nil or now - usage.windowStartedAt >= windowMs
+
+      if windowIsOver then
+        usageByAction[actionName] = { windowStartedAt = now, callCount = 1 }
+        return false
+      end
+
+      usage.callCount = usage.callCount + 1
+      return usage.callCount > maxCalls
+    end
+
+    mp.events.add('playerDisconnected', function(playerId)
+      -- Without this the table grows with every player who ever joined.
+      usageByPlayerId[playerId] = nil
+    end)
+
+    mp.events.addClient('chat:message', function(player, text)
+      -- At most 5 messages every 10 seconds.
+      if isRateLimited(player, 'chat:message', 5, 10000) then return end
+      if type(text) ~= 'string' or #text == 0 or #text > 200 then return end
+
+      print(string.format('%s: %s', player.nickname, text))
+    end)
+    ```
+  </TabItem>
+</Tabs>
+
+Put the limiter first in the handler, before any validation or database work: its job is to make the rest cheap to skip. Note the length check on `text` as well. A size limit on strings and arrays is part of validating them, because the sender chooses how much data arrives.
+
+The trade-offs of this version:
+
+- A fixed window lets a player send `maxCalls` at the end of one window and `maxCalls` again right at the start of the next. For chat or shop requests that does not matter. If it does, shorten the window.
+- A request over the limit is dropped without a word. For a button the player presses, send back a "slow down" message; for an event only a script sends, staying silent is fine.
+- It limits your own events. It does not stop someone from flooding the connection itself; that is outside what a script can do.
+
+## Don't hand out secrets
+
+Whatever a client receives, the player can read. Two places where data leaks without anyone meaning to:
+
+- **Synced metadata.** A value set with `sync = true` is copied to clients. Admin flags, database IDs, other players' balances and anti-cheat state belong in non-synced metadata or in plain server variables. [Entity Metadata](/guides/server/meta/#the-sync-flag) explains the flag.
+- **Event payloads.** Sending the whole player record to the UI because it was convenient also sends the fields the UI does not show.
+
+There is a second side to synced metadata. Client scripts have their own `mp.meta` setters with a `sync` argument, and the official Freeroam gamemode uses one from the client for a `spectating` flag. So don't read a synced key on the server as proof of anything, unless you know only your server code writes it. We could not test without a game client what the server does with such a write, so the safe design is the one above: values that matter live in non-synced keys or in server variables.
+
+## Platform events carry client data too
+
+The same thinking applies to the server's built-in events. Events such as `damage`, `shootAction`, `pickupRaise` or `explosion` describe something a player's game reported. For those, you can veto the action by returning `false` from the handler, as described in [Cancelling platform events](/guides/server/events/#cancelling-platform-events).
+
+For example, in `damage` the first argument is the attacker and `data.victimId` is the victim. A victim in another dimension, or much farther away than anything is visible, is not a hit you want to accept:
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="server.js"
+    // Entities stream in at 230 m by default, so nobody can see a target at 300 m.
+    const MAX_DAMAGE_DISTANCE = 300;
+
+    mp.events.on('damage', (attackerId, data) => {
+      if (!mp.players.exists(attackerId) || !mp.players.exists(data.victimId)) {
+        return false;
+      }
+
+      const attacker = mp.players.at(attackerId);
+      const victim = mp.players.at(data.victimId);
+
+      if (attacker.dimension !== victim.dimension) {
+        return false;
+      }
+
+      if (distanceBetween(attacker.position, victim.position) > MAX_DAMAGE_DISTANCE) {
+        return false;
+      }
+    });
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="server.lua"
+    -- Entities stream in at 230 m by default, so nobody can see a target at 300 m.
+    local MAX_DAMAGE_DISTANCE = 300
+
+    -- In Lua, mp.players.exists(id) also says yes for the ID of a vehicle, ped or object.
+    -- Reading the entity type as well makes sure the ID belongs to a connected player.
+    local PLAYER_ENTITY_TYPE = 1
+
+    local function isConnectedPlayer(id)
+      return mp.players.exists(id) and mp.players.at(id).type == PLAYER_ENTITY_TYPE
+    end
+
+    mp.events.add('damage', function(attackerId, data)
+      if not isConnectedPlayer(attackerId) or not isConnectedPlayer(data.victimId) then
+        return false
+      end
+
+      local attacker = mp.players.at(attackerId)
+      local victim = mp.players.at(data.victimId)
+
+      if attacker.dimension ~= victim.dimension then
+        return false
+      end
+
+      if distanceBetween(attacker.position, victim.position) > MAX_DAMAGE_DISTANCE then
+        return false
+      end
+    end)
+    ```
+  </TabItem>
+</Tabs>
+
+`distanceBetween` is the helper from the purchase example. The Lua version needs `isConnectedPlayer` because Lua's `mp.players.exists` also accepts the ID of a vehicle or any other entity (see [Finding players](/guides/server/players/#finding-players)); in JavaScript `mp.players.exists` already refuses those. The handler was run on the server with made-up player IDs and takes the first `return false` without errors. That the game then drops the hit can only be seen with players connected, so test it on your server before relying on it. If you raise [streaming radii](/guides/advanced/dimensions-and-ownership/#streaming-radius), raise the limit with them.
+
+## A checklist for every client event
+
+- Is each argument the type I expect, before I use it?
+- Is each number whole when it should be, and inside a range I chose?
+- Is each ID something that exists, and something this player may act on (their own vehicle, an item they hold)?
+- Is the player in the right place and dimension for this action?
+- Does the server compute every value that matters (price, damage, reward) from its own data?
+- Is there a limit on how often this can be called, and on how big the payload can be?
+- Does the answer reveal only what the player should know?
+
+## What next
+
+- [Request and Response over Events](/guides/advanced/request-response/): answering a client's request, including the "refused" case.
+- [Choosing How to Sync State](/guides/advanced/state-sync/): what to send to clients, and what to keep.
+- [Remote Procedure Calls (RPC)](/guides/recipes/rpc/): handlers still need every check on this page; RPC only changes how the request arrives.

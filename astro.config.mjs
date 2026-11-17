@@ -51,6 +51,18 @@ export default defineConfig({
                   ],
                 },
                 {
+                  label: "Advanced",
+                  items: [
+                    "guides/advanced/architecture",
+                    "guides/advanced/secure-events",
+                    "guides/advanced/request-response",
+                    "guides/advanced/state-sync",
+                    "guides/advanced/dimensions-and-ownership",
+                    "guides/advanced/performance",
+                    "guides/advanced/native-hooks",
+                  ],
+                },
+                {
                   label: "Client",
                   items: [
                     "guides/client/spawning-player",
