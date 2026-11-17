@@ -66,14 +66,14 @@ export default defineConfig({
                     "guides/client/discord",
                   ],
                 },
-                // {
-                //   label: "Recipes",
-                //   items: [
-                //     "guides/recipes/typescript",
-                //     "guides/recipes/hotreload",
-                //     "guides/recipes/rpc",
-                //   ],
-                // },
+                {
+                  label: "Recipes",
+                  items: [
+                    "guides/recipes/typescript",
+                    "guides/recipes/hotreload",
+                    "guides/recipes/rpc",
+                  ],
+                },
               ],
             },
             {
@@ -128,7 +128,6 @@ export default defineConfig({
               ],
             },
           ],
-          { exclude: ["/guides/recipes/*"] },
         ),
         // starlightLinksValidatorPlugin(),
         starlightThemeNext(),

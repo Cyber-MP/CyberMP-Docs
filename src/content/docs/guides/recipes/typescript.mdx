@@ -1,37 +1,46 @@
 ---
 title: Setting Up TypeScript
-description: Learn how to configure type safety for CyberMP server, client, and CEF browser scripts using official type definition packages.
+description: Write CyberMP server, client and CEF scripts in TypeScript, with the official type packages, one tsconfig per environment and a bundled JavaScript output.
 ---
 
 import { Tabs, TabItem } from '@astrojs/starlight/components';
 
-While CyberMP executes standard JavaScript and Lua at runtime, using TypeScript during development provides autocompletion, type checking, and compile-time validation for network events, entity properties, and REDengine classes.
+CyberMP runs plain JavaScript, but you don't have to write it. With TypeScript and the official type packages, your editor autocompletes the whole `mp` API and the game's classes, and mistakes such as a misspelled event name or a wrong argument show up before you start the server.
 
-In this guide, you will learn how to install official type definitions, configure scoped `tsconfig` files, and compile your code for production.
+The setup has three parts: install the types, tell TypeScript which `mp` each part of your code sees, and bundle the result into the `.js` files your `resource.toml` points at.
 
----
+## The type packages
 
-## Official Type Packages
+A resource runs in up to three separate environments, and `mp` is a different object in each of them. There is one type package per environment:
 
-Install the official definitions corresponding to each execution environment:
-
-| Package | Environment | Injected Global |
+| Package | Environment | Type of `mp` |
 | :--- | :--- | :--- |
-| [`@cybermp/server-types`](https://www.npmjs.com/package/@cybermp/server-types) | Server resources | `mp: MpServer` |
-| [`@cybermp/client-types`](https://www.npmjs.com/package/@cybermp/client-types) | Game client resources | `mp: MpClient` |
-| [`@cybermp/browser-types`](https://www.npmjs.com/package/@cybermp/browser-types) | CEF web pages | `mp: MpBrowser` |
+| [`@cybermp/server-types`](https://www.npmjs.com/package/@cybermp/server-types) | Server scripts (Node.js) | `MpServer` |
+| [`@cybermp/client-types`](https://www.npmjs.com/package/@cybermp/client-types) | Client scripts, inside the game | `MpClient` |
+| [`@cybermp/browser-types`](https://www.npmjs.com/package/@cybermp/browser-types) | CEF pages, the in-game browser that renders your web UI | `MpBrowser` |
 
-Install them as development dependencies in your project root:
+Install the ones you need as development dependencies, together with TypeScript and a bundler (this page uses esbuild):
 
 ```bash
-npm install -D @cybermp/server-types @cybermp/client-types @cybermp/browser-types @types/node typescript
+npm install -D @cybermp/server-types @cybermp/client-types @cybermp/browser-types @types/node typescript esbuild
 ```
 
----
+The examples below assume this layout. Adapt the paths if yours differs:
 
-## Global Type Declarations
+```
+src/
+  server/main.ts
+  client/main.ts
+  types/            # the declaration files from the next section
+resources/
+  my_resource/
+    resource.toml
+    dist/           # bundled output
+```
 
-Because CyberMP injects the `mp` object into the global execution context, create declaration files (`.d.ts`) to let the TypeScript compiler know which type interface applies to which file:
+## Declaring the `mp` global
+
+CyberMP provides `mp` as a global at runtime, so there is nothing to import, and TypeScript doesn't know it exists. A small declaration file (`.d.ts`) per environment fixes that:
 
 <Tabs>
   <TabItem label="Server Declaration">
@@ -69,26 +78,29 @@ Because CyberMP injects the `mp` object into the global execution context, creat
   </TabItem>
 </Tabs>
 
-:::important[Separate Declarations]
-Never include `@cybermp/server-types` and `@cybermp/client-types` inside the same compilation scope. Server scripts have access to `mp.players.create`, while client scripts have access to `mp.game` and `mp.cef`. Combining them causes type collisions.
+:::caution[One declaration per tsconfig]
+Each of these files declares the same global name with a different type. If two of them end up in the same TypeScript project, they collide and nothing type-checks. That is why the next step uses a separate `tsconfig` for the server and for the client, each including only its own declaration file.
 :::
 
----
+If you would rather not declare a global, each package's README shows an alternative: export a typed `mp` constant from one module (`export const mp = (globalThis as any).mp as MpClient;`) and import it where you need it.
 
 ## Configuring `tsconfig.json`
 
-Set up separate tsconfig files for server and client directories:
+Create one config per environment. TypeScript only checks the code here (`noEmit`); the bundler produces the JavaScript.
 
-### Server Configuration
+### Server configuration
+
+Server scripts run in Node.js, so they get the Node types:
 
 ```json title="tsconfig.server.json"
 {
   "compilerOptions": {
-    "target": "ESNext",
-    "module": "NodeNext",
-    "moduleResolution": "NodeNext",
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
     "strict": true,
     "skipLibCheck": true,
+    "noEmit": true,
     "types": ["node"]
   },
   "include": [
@@ -98,17 +110,21 @@ Set up separate tsconfig files for server and client directories:
 }
 ```
 
-### Client Configuration
+### Client configuration
+
+Client scripts don't run in Node.js, so leave the Node types out. That way TypeScript stops you from using `fs` or `process` there:
 
 ```json title="tsconfig.client.json"
 {
   "compilerOptions": {
-    "target": "ESNext",
+    "target": "ES2022",
     "module": "ESNext",
     "moduleResolution": "bundler",
     "strict": true,
     "skipLibCheck": true,
-    "lib": ["ESNext", "DOM"]
+    "noEmit": true,
+    "types": [],
+    "lib": ["ES2022", "DOM"]
   },
   "include": [
     "src/client/**/*.ts",
@@ -117,33 +133,75 @@ Set up separate tsconfig files for server and client directories:
 }
 ```
 
----
+Check each project on its own:
 
-## Accessing REDengine Types
+```bash
+npx tsc -p tsconfig.server.json
+npx tsc -p tsconfig.client.json
+```
 
-Client-side game classes (such as `PlayerPuppet`, `VehicleObject`, `SettingsMainGameController`) can be imported directly from the `/game` export of `@cybermp/client-types`:
+A CEF page is an ordinary web project. Keep the `tsconfig` your frontend tooling (Vite or similar) generated and add `browser-env.d.ts` to its `include`.
+
+## Using game class types
+
+`mp.game` is already typed: `mp.game.GetPlayer()` returns a `PlayerPuppet` and its methods autocomplete. When you need to name a game class yourself, for a parameter or a variable, import the type from the `/game` entry of `@cybermp/client-types`:
 
 ```ts title="src/client/main.ts"
 import type { PlayerPuppet } from '@cybermp/client-types/game';
 
+const logEntityId = (player: PlayerPuppet) => {
+  console.log('Player Entity ID:', player.GetEntityID());
+};
+
 mp.game.onceGameLoaded(() => {
-  const player = mp.game.GetPlayer() as PlayerPuppet;
-  console.log(`Player Entity ID: ${player.GetEntityID()}`);
+  logEntityId(mp.game.GetPlayer());
 });
 ```
 
----
+Use `import type` for these: the package only contains type definitions, so there is nothing to import at runtime.
 
-## Building for Production
+## Using game enums
 
-CyberMP runs JavaScript files referenced in `resource.toml` (`client_script = 'dist/client.js'`, `server_script = 'dist/server.js'`). Use a bundler such as `esbuild`, `tsdown`, or `bun` to compile your TypeScript sources into bundled JavaScript files.
+Many game functions take a number that stands for one option out of a list: a key, a stat, a weather type. In plain JavaScript you copy those numbers from NativeDB and hope you copied the right one. The client types package ships the game's enums under the `/enums` entry, so you can use the names instead:
 
-Example build script using `esbuild`:
+```ts title="src/client/main.ts"
+import { EInputAction, EInputKey } from '@cybermp/client-types/enums';
+
+mp.game.onInputKeyEvent((action, key) => {
+  // Without the enums this line would read: key !== 113 || action !== 2
+  if (key !== EInputKey.IK_F2 || action !== EInputAction.IACT_Release) return;
+
+  console.log('F2 was pressed and released.');
+});
+```
+
+This is a normal `import`, not `import type`: an enum is a real value that has to exist when the code runs. The bundler from the next section takes care of that. esbuild replaces each enum member you use with its number, so the output contains `key !== 113` and none of the thousands of enums you did not use.
+
+## Building for production
+
+CyberMP loads the JavaScript files named in `resource.toml`. It doesn't run TypeScript, and client scripts can't load packages from `node_modules`, so bundle each side into a single file:
+
+```toml title="resources/my_resource/resource.toml"
+server_script = 'dist/server.js'
+client_script = 'dist/client.js'
+```
+
+Any bundler works (`esbuild`, `tsdown`, `bun`). With esbuild:
 
 ```bash
-# Compile server script
-npx esbuild src/server/main.ts --bundle --platform=node --outfile=resources/my_resource/dist/server.js
+# Server script: Node.js, CommonJS
+npx esbuild src/server/main.ts --bundle --platform=node --format=cjs --outfile=resources/my_resource/dist/server.js
 
-# Compile client script
-npx esbuild src/client/main.ts --bundle --platform=neutral --outfile=resources/my_resource/dist/client.js
+# Client script: one self-contained file
+npx esbuild src/client/main.ts --bundle --format=iife --outfile=resources/my_resource/dist/client.js
 ```
+
+A bundler only strips the types, it doesn't check them. Run the two `tsc` commands above as part of your build so type errors stop it.
+
+For a complete project built this way, read the official [Freeroam gamemode](https://github.com/Cyber-MP/CyberMP-Freeroam). It has one package and one `tsconfig` each for server, client and browser, uses the typed `mp` module instead of a global declaration, and bundles with `tsdown` to the same two formats: CommonJS for the server, a single IIFE file for the client.
+
+## Next steps
+
+- [Resource Hotreload](/guides/recipes/hotreload/): restart the resource automatically each time the bundle changes.
+- [Remote Procedure Calls (RPC)](/guides/recipes/rpc/): typed request and response calls between server, client and CEF.
+- [Working with Game Natives](/reference/client/working-with-game-natives/): what `mp.game` gives you on the client.
