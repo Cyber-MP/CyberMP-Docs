@@ -1,277 +1,379 @@
 ---
 title: 'World Entities: Objects, Peds, and Pickups'
-description: Learn how to create, stream, and manage static and dynamic world entities such as game objects, NPC peds, and item pickups.
+description: Create synchronized props, NPCs and item pickups from the server, read their properties, and remove them when you are done.
 ---
 
 import { Tabs, TabItem } from '@astrojs/starlight/components';
 import { SCRIPT_LANG_TAB_SYNC_KEY } from '../../../../lib/const';
 
-In CyberMP, interactive elements in the game world share core networking attributes such as positions, dimensions, and streaming distances. Beyond players and vehicles, the server runtime provides dedicated managers for:
+Besides players and vehicles, the server can place three more kinds of synchronized entities in the world. Each has its own pool:
 
-- **Game Objects (`mp.objects`):** Static or dynamic physical props, barricades, furniture, and custom scene structures.
-- **Peds (`mp.peds`):** Non-Player Characters (NPCs) with custom appearances and health pools.
-- **Pickups (`mp.pickups`):** Collectible items, weapons, clothing bags, or loot containers.
+- **Objects (`mp.objects`)**: props: barriers, gates, furniture, decoration.
+- **Peds (`mp.peds`)**: NPCs with a model, an appearance and health.
+- **Pickups (`mp.pickups`)**: items lying on the ground that players can pick up.
 
-In this guide, you will learn how to spawn and manage these world entities.
+They all work like [vehicles](/guides/server/vehicles/): you create one with `create`, get an entity object back, and every player close enough sees it.
 
----
+## What all entities share
 
-## Entity Types & Shared Attributes
+Players, vehicles, objects, peds and pickups have these properties in common:
 
-World entities share core spatial and networking properties:
+| Property | Type | Writable | Description |
+| :--- | :--- | :--- | :--- |
+| `id` | `number` | No | Network ID, unique across the server. |
+| `type` | `number` | No | Kind of entity: Player `1`, Vehicle `2`, Object `3`, Ped `4`, Pickup `5`, GameObject `6`. |
+| `position` | `[x, y, z]` | No | World coordinates. |
+| `rotation` | `[pitch, roll, yaw]` | No | Orientation. |
+| `yaw` | `number` | No | Heading in degrees. |
+| `exist` | `boolean` | No | Whether the entity still exists. |
+| `dimension` | `number` | Yes | The [dimension](/guides/server/players/#virtual-dimensions) the entity is in. Only players and entities in the same dimension see each other. |
+| `streamingRadius` | `number` | Yes | Distance in meters at which clients stream the entity in. New entities start at `230`. |
+| `owner` | player | Yes | The player whose client currently syncs the entity. |
 
-| Property | Type | Description |
-| :--- | :--- | :--- |
-| `id` | `number` | Unique numeric identifier for the entity across the server. |
-| `type` | `number` | Entity type identifier (Player: 1, Vehicle: 2, Object: 3, Ped: 4, Pickup: 5, GameObject: 6). |
-| `position` | `[x, y, z]` | Current 3D coordinates array in world space. |
-| `rotation` | `[pitch, roll, yaw]` | Orientation Euler angles array. |
-| `yaw` | `number` | Heading angle in degrees. |
-| `dimension` | `number` | Virtual world / dimension instance ID. |
-| `streamingRadius` | `number` | Distance in meters at which clients will stream this entity. |
-| `exist` | `boolean` | True if the entity is active in the world. |
+Only `dimension`, `streamingRadius` and `owner` can be assigned. You cannot move an entity by writing to `position`.
 
----
+`owner` is never empty: while no client syncs the entity (for example right after `create`, with nobody nearby), it reads as a player object whose `id` is `-1` in JS, and as the number `-1` in Lua.
 
-## Working with Objects
+Every pool has `exists(id)` and `at(id)`. As with players, call `exists()` first: `at()` returns `undefined` in JS and raises an error in Lua when the entity is gone. Compare entities by `id`, because each `at()` call returns a new wrapper object. IDs are reused: once an entity is destroyed, the next entity created can get the same ID, so drop the IDs you stored when their entity goes away.
 
-Game objects allow placing props, barriers, dynamic physics items, and custom scene decorations into Night City.
+:::caution[Lua: write `yaw` and `health` with a decimal point]
+Server-side Lua does not convert between whole numbers and decimal numbers. In `create` options, `yaw` and `health` must be written as `45.0` and `200.0`; `streamingRadius` needs a decimal number too, while `dimension` must be a whole number, and `position` is safest as a `vector3(...)`. A value of the wrong kind raises no error, it is just misread. The rule and how to convert computed values are explained in [Working with Vehicles](/guides/server/vehicles/#spawning-a-vehicle) and in the [Lua reference](/reference/lua/server/#creating-entities). JavaScript is not affected.
+:::
 
-### Spawning Objects
+:::caution[Entities outlive your resource]
+Anything you create with `mp.objects.create`, `mp.peds.create` or `mp.pickups.create` stays in the world when your resource stops or restarts. Destroy what you created in a `resourceStop` handler, or you get duplicates on every restart. The vehicles guide has a [ready-made pattern](/guides/server/vehicles/#clean-up-when-your-resource-stops) that works for any pool.
+:::
+
+## Objects
+
+An object's `model` is a **ResRef**: the hash of the path to an `.ent` file inside the game archives. Get it with `mp.hashes.resref` (see [Working with Hashes](/guides/server/hashes/)).
 
 <Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
   <TabItem label="JS">
     ```js title="server.js"
-    // 1. Resolve hash for an in-game asset
-    const barrierHash = mp.hashes.resref('base\\gameplay\\devices\\doors\\gates\\appearances\\w300_h250_mall_metal.ent');
-
-    // 2. Create the object
     const barrier = mp.objects.create({
-      model: barrierHash,
+      model: mp.hashes.resref('base\\gameplay\\devices\\doors\\gates\\appearances\\w300_h250_mall_metal.ent'),
       position: [-1400.5, 1280.0, 122.5],
       yaw: 45.0,
-      dynamic: false,
+      dynamic: false, // static prop: stays where you put it
       dimension: 0
     });
 
-    console.log(`Placed Barrier Object #${barrier.id}`);
+    console.log(`Placed barrier object #${barrier.id}`);
     ```
   </TabItem>
   <TabItem label="Lua">
     ```lua title="server.lua"
-    -- 1. Resolve hash for an in-game asset
-    local barrierHash = tonumber(mp.hashes.toResref('base\\gameplay\\devices\\doors\\gates\\appearances\\w300_h250_mall_metal.ent'), 10)
-
-    -- 2. Create the object
     local barrier = mp.objects.create({
-      model = barrierHash,
+      model = tonumber(mp.hashes.toResref('base\\gameplay\\devices\\doors\\gates\\appearances\\w300_h250_mall_metal.ent'), 10),
       position = vector3(-1400.5, 1280.0, 122.5),
       yaw = 45.0,
-      dynamic = false, -- Objects are dynamic by default; false pins the prop in place
+      dynamic = false, -- static prop: stays where you put it
       dimension = 0
     })
 
-    print(string.format("Placed Barrier Object #%s", barrier.id))
+    print(string.format("Placed barrier object #%s", barrier.id))
     ```
   </TabItem>
 </Tabs>
 
-### Destroying Objects
+| Option | Required | Description |
+| :--- | :--- | :--- |
+| `model` | Yes | ResRef of the `.ent` file. |
+| `position` | Yes | World coordinates. |
+| `yaw` | No | Heading in degrees. Default `0`. |
+| `dynamic` | No | `true` lets the object react to physics; `false` pins it in place. In JS the default is `false`. Set it explicitly so the intent is clear. |
+| `dimension` | No | Dimension to create the object in. |
+
+To remove an object, call `destroy` on it, or pass its ID (or the object) to `mp.objects.destroy`:
 
 <Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
   <TabItem label="JS">
     ```js title="server.js"
-    // Destroy an object
     barrier.destroy();
-    // or: mp.objects.destroy(objectId);
+
+    // Same thing when you only kept the ID:
+    // mp.objects.destroy(barrierId);
     ```
   </TabItem>
   <TabItem label="Lua">
     ```lua title="server.lua"
-    -- Destroy an object
     barrier:destroy()
-    -- or: mp.objects.destroy(objectId)
+
+    -- Same thing when you only kept the ID:
+    -- mp.objects.destroy(barrierId)
     ```
   </TabItem>
 </Tabs>
 
----
+:::note[Reading `model` back in JS]
+An object's `model` is a 64-bit ResRef. In JS, `object.model` comes back as a rounded `number` that does **not** equal what `mp.hashes.resref` returned, so you cannot use it to tell which prop an object is. Remember that yourself, for example in a table keyed by object ID or in [metadata](/guides/server/meta/). In Lua the two values compare equal.
+:::
 
-## Working with Peds (NPCs)
+### Example: a prop layout loaded from a table
 
-The `mp.peds` manager enables spawning ambient civilians, enemies, quest givers, or vendors.
-
-### Spawning Peds
+Maps, roadblocks and event decorations are usually a list of props. Keep the list as data, create everything in one loop, and remember the IDs so that you can remove the whole layout again, at the latest when your resource stops.
 
 <Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
   <TabItem label="JS">
     ```js title="server.js"
-    const vendorModel = mp.hashes.tweakdbid('Character.Judy');
-    const vendorAppearance = mp.hashes.cname('default');
+    const GATE_MODEL = 'base\\gameplay\\devices\\doors\\gates\\appearances\\w300_h250_mall_metal.ent';
 
+    // One line per prop: what it is, where it stands, which way it faces.
+    const ROADBLOCK_PROPS = [
+      { model: GATE_MODEL, position: [-1400.5, 1280.0, 122.5], yaw: 45 },
+      { model: GATE_MODEL, position: [-1396.0, 1284.5, 122.5], yaw: 45 },
+      { model: GATE_MODEL, position: [-1391.5, 1289.0, 122.5], yaw: 45 },
+    ];
+
+    let roadblockObjectIds = [];
+
+    function buildRoadblock() {
+      for (const prop of ROADBLOCK_PROPS) {
+        const object = mp.objects.create({
+          model: mp.hashes.resref(prop.model),
+          position: prop.position,
+          yaw: prop.yaw,
+          dynamic: false,
+        });
+        roadblockObjectIds.push(object.id);
+      }
+    }
+
+    function removeRoadblock() {
+      for (const objectId of roadblockObjectIds) {
+        if (mp.objects.exists(objectId)) {
+          mp.objects.destroy(objectId);
+        }
+      }
+      roadblockObjectIds = [];
+    }
+
+    buildRoadblock();
+
+    // Objects survive a resource stop, so remove them by hand.
+    mp.events.on('resourceStop', removeRoadblock);
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="server.lua"
+    local GATE_MODEL = 'base\\gameplay\\devices\\doors\\gates\\appearances\\w300_h250_mall_metal.ent'
+
+    -- One line per prop: what it is, where it stands, which way it faces.
+    local ROADBLOCK_PROPS = {
+      { model = GATE_MODEL, position = vector3(-1400.5, 1280.0, 122.5), yaw = 45.0 },
+      { model = GATE_MODEL, position = vector3(-1396.0, 1284.5, 122.5), yaw = 45.0 },
+      { model = GATE_MODEL, position = vector3(-1391.5, 1289.0, 122.5), yaw = 45.0 },
+    }
+
+    local roadblockObjectIds = {}
+
+    local function buildRoadblock()
+      for _, prop in ipairs(ROADBLOCK_PROPS) do
+        local object = mp.objects.create({
+          model = tonumber(mp.hashes.toResref(prop.model), 10),
+          position = prop.position,
+          yaw = prop.yaw,
+          dynamic = false,
+        })
+        table.insert(roadblockObjectIds, object.id)
+      end
+    end
+
+    local function removeRoadblock()
+      for _, objectId in ipairs(roadblockObjectIds) do
+        if mp.objects.exists(objectId) then
+          mp.objects.destroy(objectId)
+        end
+      end
+      roadblockObjectIds = {}
+    end
+
+    buildRoadblock()
+
+    -- Objects survive a resource stop, so remove them by hand.
+    mp.events.add('resourceStop', removeRoadblock)
+    ```
+  </TabItem>
+</Tabs>
+
+A few things to keep in mind:
+
+- `destroy` takes effect on the next server tick. Right after a restart, `mp.objects.toArray()` can still include the objects the old instance has just destroyed.
+- Each object is streamed to every player within its `streamingRadius` (230 meters by default). For a layout with hundreds of props, lower the radius of the small ones so clients load less.
+- The same loop works for peds and pickups; only the options passed to `create` change.
+
+## Peds (NPCs)
+
+A ped needs a `model` (the **TweakDBID** of a character record such as `Character.Judy`) and an `appearance` (a **CName**).
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="server.js"
     const judy = mp.peds.create({
-      model: vendorModel,
-      appearance: vendorAppearance,
+      model: mp.hashes.tweakdbid('Character.Judy'),
+      appearance: mp.hashes.cname('default'),
       position: [-1456.8, 1038.2, 16.8],
       yaw: 180.0,
       health: 200,
       dimension: 0
     });
 
-    console.log(`Spawned Judy Ped #${judy.id}`);
+    console.log(`Spawned ped #${judy.id}`);
     ```
   </TabItem>
   <TabItem label="Lua">
     ```lua title="server.lua"
-    local vendorModel = tonumber(mp.hashes.toTweakdbid('Character.Judy'), 10)
-    local vendorAppearance = tonumber(mp.hashes.toCname('default'), 10)
-
     local judy = mp.peds.create({
-      model = vendorModel,
-      appearance = vendorAppearance,
+      model = tonumber(mp.hashes.toTweakdbid('Character.Judy'), 10),
+      appearance = tonumber(mp.hashes.toCname('default'), 10),
       position = vector3(-1456.8, 1038.2, 16.8),
       yaw = 180.0,
-      health = 200,
+      health = 200.0,
       dimension = 0
     })
 
-    print(string.format("Spawned Judy Ped #%s", judy.id))
+    print(string.format("Spawned ped #%s", judy.id))
     ```
   </TabItem>
 </Tabs>
 
-### Inspecting and Destroying Peds
+`yaw` defaults to `0` and `health` to `200`. Besides the shared properties, a ped object has read-only `model`, `appearance` and `health`. As with vehicles, `health` reads `0` as long as no client has streamed the ped in, and in JS `appearance` comes back as a rounded number that cannot be compared with `mp.hashes.cname` (see [Comparing hashes](/guides/server/hashes/#comparing-hashes)).
 
 <Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
   <TabItem label="JS">
     ```js title="server.js"
-    // Inspect ped
     console.log(`Ped health: ${judy.health}`);
 
-    // Destroy ped
     judy.destroy();
-    // or: mp.peds.destroy(pedId);
+
+    // Same thing when you only kept the ID:
+    // mp.peds.destroy(judyId);
     ```
   </TabItem>
   <TabItem label="Lua">
     ```lua title="server.lua"
-    -- Inspect ped
     print(string.format("Ped health: %s", judy.health))
 
-    -- Destroy ped
     judy:destroy()
-    -- or: mp.peds.destroy(pedId)
+
+    -- Same thing when you only kept the ID:
+    -- mp.peds.destroy(judyId)
     ```
   </TabItem>
 </Tabs>
 
----
+## Pickups
 
-## Working with Pickups
+A pickup is an item on the ground. Its `model` is the **TweakDBID** of the item, and `type` tells the game what kind of item it is:
 
-Pickups represent interactive items, weapon drops, and collectible packages that appear physically on the ground.
-
-| Pickup Type | Value | Description |
+| `type` | Name | Use for |
 | :--- | :--- | :--- |
-| Clothes | `1` | Clothing and cosmetic apparel pickups. |
-| Weapon | `2` | Firearms, blades, and heavy weapons. |
-| Other | `3` | Consumables, quest items, and miscellaneous props. |
+| `1` | Clothes | Clothing items. |
+| `2` | Weapon | Weapons. |
+| `3` | Other | Everything else. |
 
-### Spawning Pickups
+`type` is required; `yaw` defaults to `0`.
 
 <Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
   <TabItem label="JS">
     ```js title="server.js"
-    const katanaHash = mp.hashes.tweakdbid('Items.Preset_Katana_Military');
-
     const droppedWeapon = mp.pickups.create({
-      model: katanaHash,
-      type: 2, // 1 = Clothes, 2 = Weapon, 3 = Other
+      model: mp.hashes.tweakdbid('Items.Preset_Katana_Military'),
+      type: 2, // Weapon
       position: [-1395.0, 1275.0, 123.0],
       yaw: 0,
       dimension: 0
     });
 
-    console.log(`Created Katana Pickup #${droppedWeapon.id}`);
+    console.log(`Created pickup #${droppedWeapon.id} of type ${droppedWeapon.pickupType}`);
     ```
   </TabItem>
   <TabItem label="Lua">
     ```lua title="server.lua"
-    local katanaHash = tonumber(mp.hashes.toTweakdbid('Items.Preset_Katana_Military'), 10)
-
     local droppedWeapon = mp.pickups.create({
-      model = katanaHash,
-      type = 2, -- 1 = Clothes, 2 = Weapon, 3 = Other
+      model = tonumber(mp.hashes.toTweakdbid('Items.Preset_Katana_Military'), 10),
+      type = 2, -- Weapon
       position = vector3(-1395.0, 1275.0, 123.0),
-      yaw = 0,
+      yaw = 0.0,
       dimension = 0
     })
 
-    print(string.format("Created Katana Pickup #%s", droppedWeapon.id))
+    print(string.format("Created pickup #%s of type %s", droppedWeapon.id, droppedWeapon.pickupType))
     ```
   </TabItem>
 </Tabs>
 
-### Tracking Pickup Interactions
+On the pickup object the type is called `pickupType` (the plain `type` property is the entity type, `5`). `model` is readable too. Remove a pickup with `droppedWeapon.destroy()` (`droppedWeapon:destroy()` in Lua).
+
+### Pickup events
 
 <Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
   <TabItem label="JS">
     ```js title="server.js"
-    // Player picked up an item
+    // A player picked an item up
     mp.events.on('pickupRaise', (playerId, data) => {
       const player = mp.players.at(playerId);
-      console.log(`Player ${player.nickname} picked up: ${data.pickupHash} (NetID: ${data.pickupNetId})`);
+      console.log(`${player.nickname} picked up ${data.pickupHash} (pickup #${data.pickupNetId})`);
     });
 
-    // Item dropped to the ground
+    // A player dropped an item
     mp.events.on('pickupDrop', (playerId, data) => {
-      console.log(`Player ${playerId} dropped item ${data.pickupHash}`);
+      console.log(`Player ${playerId} dropped an item (pickup #${data.pickupNetId})`);
     });
     ```
   </TabItem>
   <TabItem label="Lua">
     ```lua title="server.lua"
-    -- Player picked up an item
+    -- A player picked an item up
     mp.events.add('pickupRaise', function(playerId, data)
       local player = mp.players.at(playerId)
-      print(string.format("Player %s picked up: %s (NetID: %s)", player.nickname, data.pickupHash, data.pickupNetId))
+      print(string.format("%s picked up %s (pickup #%s)", player.nickname, data.pickupHash, data.pickupNetId))
     end)
 
-    -- Item dropped to the ground
+    -- A player dropped an item
     mp.events.add('pickupDrop', function(playerId, data)
-      print(string.format("Player %s dropped pickup %s (type %s)", playerId, data.pickupNetId, data.type))
+      print(string.format("Player %s dropped an item (pickup #%s)", playerId, data.pickupNetId))
     end)
     ```
   </TabItem>
 </Tabs>
 
----
+Both events can be cancelled by returning `false`: see [Cancelling platform events](/guides/server/events/#cancelling-platform-events).
 
-## Global Entity Events
+## Spawn and despawn events
 
-To listen to lifecycle changes across all entity types simultaneously, use `entitySpawn` and `entityDespawn`:
+Each kind of entity has its own pair of events, `vehicleSpawn` / `vehicleDespawn`, `objectSpawn` / `objectDespawn`, `pedSpawn` / `pedDespawn`, `pickupSpawn` / `pickupDespawn`: which receive the entity ID. After each of them the server also fires the generic `entitySpawn` / `entityDespawn` with the ID and the entity `type`, so you can watch everything in one place. These events fire shortly after `create` or `destroy` returns, not during the call.
 
 <Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
   <TabItem label="JS">
     ```js title="server.js"
     mp.events.on('entitySpawn', (entityId, type) => {
-      console.log(`[Entity Spawn] Type: ${type} | ID: ${entityId}`);
+      console.log(`Entity #${entityId} of type ${type} spawned`);
     });
 
     mp.events.on('entityDespawn', (entityId, type) => {
-      console.log(`[Entity Despawn] ID: ${entityId}`);
+      console.log(`Entity #${entityId} of type ${type} despawned`);
     });
     ```
   </TabItem>
   <TabItem label="Lua">
     ```lua title="server.lua"
     mp.events.add('entitySpawn', function(entityId, type)
-      print(string.format("[Entity Spawn] Type: %s | ID: %s", type, entityId))
+      print(string.format("Entity #%s of type %s spawned", entityId, type))
     end)
 
     mp.events.add('entityDespawn', function(entityId, type)
-      print(string.format("[Entity Despawn] ID: %s", entityId))
+      print(string.format("Entity #%s of type %s despawned", entityId, type))
     end)
     ```
   </TabItem>
 </Tabs>
+
+## What next
+
+- [Entity Metadata](/guides/server/meta/): attach your own data to any entity and sync it to clients.
+- [Network IDs](/guides/client/network-ids/): find the same entity on the client from its network ID.
+- API reference: [`MpObjects`](/reference/server/api/entities/objects/mpobjects/), [`MpPeds`](/reference/server/api/entities/peds/mppeds/), [`MpPickups`](/reference/server/api/entities/pickups/mppickups/); for Lua, [Creating Entities](/reference/lua/server/#creating-entities).
+- [Streaming: what the client can see](/guides/client/streaming/): when an entity you created becomes visible to a player.
+- [Dimensions, streaming radius and entity ownership](/guides/advanced/dimensions-and-ownership/): moving entities between dimensions and what `owner` means.

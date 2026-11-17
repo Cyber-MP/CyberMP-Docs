@@ -1,68 +1,54 @@
 ---
 title: Working with Players
-description: Learn how to manage connected players, track lifecycles, inspect player state, and handle combat on the server.
+description: Follow players from connection to disconnect, read their state, send them events, kick them, and move them between dimensions.
 ---
 
 import { Tabs, TabItem } from '@astrojs/starlight/components';
 import { SCRIPT_LANG_TAB_SYNC_KEY } from '../../../../lib/const';
 
-The server provides APIs to interact with connected players in Night City. You can monitor lifecycle stages (connection, spawning, death, disconnection), read real-time state (health, position, vehicle occupancy), transmit private network events, and enforce moderation.
+Every connected player is an entity on the server. You get its ID from events such as `playerConnected`, turn that ID into a player object with `mp.players.at(id)`, and then read its state (nickname, position, health, vehicle), send it events, or kick it.
 
-In this guide, you will learn how to access players, track their lifecycles, inspect their state, and handle combat interactions.
+One thing to know up front: the server mostly *reads* players. The only properties you can assign are `dimension` and `streamingRadius`. To heal, teleport or respawn someone, you send an event to that player's client and let a client script do it, see [Spawning the player](/guides/client/spawning-player/) and [Teleporting the player](/guides/client/teleporting-player/).
 
----
+## Player lifecycle
 
-{/* ## Player Connection Lifecycle
+These are the events a player goes through, from joining to leaving:
 
-When a client launches and connects to the server, several platform events fire in a distinct sequence:
+| Event | Arguments | When it fires |
+| :--- | :--- | :--- |
+| `playerConnecting` | `tempId`, `name` | A client starts connecting. The player has no permanent ID yet. |
+| `playerConnected` | `playerId`, `tempId` | The connection is complete and the player has its network ID. |
+| `playerSpawn` | `playerId` | The player's character appears in the world. |
+| `playerDeath` | `playerId`, `data` | The player dies. `data.killerId` is set when another player did it. |
+| `playerRespawn` | `playerId`, `data` | The player comes back after dying. `data.posX`, `data.posY`, `data.posZ` hold the position. |
+| `playerDespawn` | `playerId` | The player despawns. |
+| `playerDisconnected` | `playerId`, `reason` | The player left the server. |
 
-```mermaid
-sequenceDiagram
-    autonumber
-    participant Client
-    participant Server as Server Events
-    participant World as World State
+All of them give you a numeric player ID, not a player object.
 
-    Client->>Server: playerConnecting (tempId, nickname)
-    Note over Server: Authentication, whitelist, IP checks
-    Server->>World: Allocate network slot
-    Server->>Server: playerConnected (playerId, tempId)
-    Client->>Server: playerSpawn (playerId)
-    Note over Server: Initialize stats, weapons, inventory
-    alt Player Dies
-        Client->>Server: playerDeath (playerId, data)
-        Client->>Server: playerRespawn (playerId, position)
-    end
-    Client->>Server: playerDisconnected (playerId, reason)
-    Server->>World: Remove player
-```*/}
-
-### 1. Connection & Spawning
-
-Listen for connection and spawn events:
+### Connection and spawning
 
 <Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
   <TabItem label="JS">
     ```js title="server.js"
-    // 1. Connection attempt
+    // A client is connecting. Only a temporary ID and the name are known.
     mp.events.on('playerConnecting', (tempId, name) => {
-      console.log(`[Connect Request] Incoming connection: ${name} (TempID: ${tempId})`);
+      console.log(`${name} is connecting (temp ID ${tempId})`);
     });
 
-    // 2. Connection finalized: Permanent network ID assigned
+    // The player now has its permanent network ID.
     mp.events.on('playerConnected', (playerId, tempId) => {
       const player = mp.players.at(playerId);
-      console.log(`[Connected] ${player.nickname} joined with ID: ${playerId}`);
-
-      // Send a private welcome packet to the client
-      player.emit('chat:add', `Welcome to Night City, ${player.nickname}!`);
+      console.log(`${player.nickname} joined with ID ${playerId}`);
     });
 
-    // 3. Player spawned in the game world
+    // The character is in the world.
     mp.events.on('playerSpawn', (playerId) => {
       const player = mp.players.at(playerId);
-      console.log(`[Spawn] Player ${player.nickname} (${playerId}) spawned at:`, player.position);
+      const [x, y, z] = player.position;
+      console.log(`${player.nickname} spawned at [${x}, ${y}, ${z}]`);
 
+      // Put the player in the shared world, and let them see entities up to 250 meters away.
       player.dimension = 0;
       player.streamingRadius = 250;
     });
@@ -70,197 +56,353 @@ Listen for connection and spawn events:
   </TabItem>
   <TabItem label="Lua">
     ```lua title="server.lua"
-    -- 1. Connection attempt
+    -- A client is connecting. Only a temporary ID and the name are known.
     mp.events.add('playerConnecting', function(tempId, name)
-      print(string.format("[Connect Request] Incoming connection: %s (TempID: %s)", name, tempId))
+      print(string.format("%s is connecting (temp ID %s)", name, tempId))
     end)
 
-    -- 2. Connection finalized: Permanent network ID assigned
+    -- The player now has its permanent network ID.
     mp.events.add('playerConnected', function(playerId, tempId)
       local player = mp.players.at(playerId)
-      print(string.format("[Connected] %s joined with ID: %s", player.nickname, playerId))
-
-      -- Send a private welcome packet to the client
-      player:trigger('chat:add', string.format("Welcome to Night City, %s!", player.nickname))
+      print(string.format("%s joined with ID %s", player.nickname, playerId))
     end)
 
-    -- 3. Player spawned in the game world
+    -- The character is in the world.
     mp.events.add('playerSpawn', function(playerId)
       local player = mp.players.at(playerId)
-      print(string.format("[Spawn] Player %s (%s) spawned", player.nickname, playerId))
+      local position = player.position
+      print(string.format("%s spawned at [%s, %s, %s]", player.nickname, position[1], position[2], position[3]))
 
+      -- Put the player in the shared world, and let them see entities up to 250 meters away.
+      -- In Lua the radius must be a decimal number: `250` without `.0` is ignored.
       player.dimension = 0
-      player.streamingRadius = 250
+      player.streamingRadius = 250.0
     end)
     ```
   </TabItem>
 </Tabs>
 
-### 2. Death, Respawn, and Disconnect
-
-Track player flatlining, respawning, and leaving the server:
+### Death, respawn and disconnect
 
 <Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
   <TabItem label="JS">
     ```js title="server.js"
-    // Player dies
+    // The killer may have left in the meantime, so check before reading the name.
+    function getKillerName(killerId) {
+      if (mp.players.exists(killerId)) {
+        return mp.players.at(killerId).nickname;
+      }
+      return `player ${killerId}`;
+    }
+
     mp.events.on('playerDeath', (playerId, data) => {
       const victim = mp.players.at(playerId);
 
       if (data.killerId) {
-        const killer = mp.players.exists(data.killerId) ? mp.players.at(data.killerId) : null;
-        const killerName = killer ? killer.nickname : `ID ${data.killerId}`;
-        console.log(`[Death] ${victim.nickname} was flatlined by ${killerName}.`);
+        console.log(`${victim.nickname} was flatlined by ${getKillerName(data.killerId)}`);
       } else {
-        console.log(`[Death] ${victim.nickname} died of environmental damage.`);
+        console.log(`${victim.nickname} died`);
       }
     });
 
-    // Player respawns back into the world
     mp.events.on('playerRespawn', (playerId, data) => {
       const player = mp.players.at(playerId);
-      console.log(`[Respawn] ${player.nickname} respawned at [${data.posX}, ${data.posY}, ${data.posZ}]`);
+      console.log(`${player.nickname} respawned at [${data.posX}, ${data.posY}, ${data.posZ}]`);
     });
 
-    // Player disconnects
     mp.events.on('playerDisconnected', (playerId, reason) => {
-      console.log(`[Disconnect] Player ${playerId} disconnected. Reason: ${reason}`);
+      console.log(`Player ${playerId} disconnected: ${reason}`);
     });
     ```
   </TabItem>
   <TabItem label="Lua">
     ```lua title="server.lua"
-    -- Player dies
+    -- The killer may have left in the meantime, so check before reading the name.
+    local function getKillerName(killerId)
+      if mp.players.exists(killerId) then
+        return mp.players.at(killerId).nickname
+      end
+      return string.format("player %s", killerId)
+    end
+
     mp.events.add('playerDeath', function(playerId, data)
       local victim = mp.players.at(playerId)
 
       if data.killerId then
-        local killerName = mp.players.exists(data.killerId) and mp.players.at(data.killerId).nickname or string.format("ID %s", data.killerId)
-        print(string.format("[Death] %s was flatlined by %s.", victim.nickname, killerName))
+        print(string.format("%s was flatlined by %s", victim.nickname, getKillerName(data.killerId)))
       else
-        print(string.format("[Death] %s died of environmental damage.", victim.nickname))
+        print(string.format("%s died", victim.nickname))
       end
     end)
 
-    -- Player respawns back into the world
     mp.events.add('playerRespawn', function(playerId, data)
       local player = mp.players.at(playerId)
-      print(string.format("[Respawn] %s respawned at [%s, %s, %s]", player.nickname, player.position[1], player.position[2], player.position[3]))
+      print(string.format("%s respawned at [%s, %s, %s]", player.nickname, data.posX, data.posY, data.posZ))
     end)
 
-    -- Player disconnects
     mp.events.add('playerDisconnected', function(playerId, reason)
-      print(string.format("[Disconnect] Player %s disconnected. Reason: %s", playerId, reason))
+      print(string.format("Player %s disconnected: %s", playerId, reason))
     end)
     ```
   </TabItem>
 </Tabs>
 
----
+:::caution
+In `playerDisconnected` the player may already be gone, so don't count on `mp.players.at(playerId)` there. Use the ID to clean up your own data (anything you keyed by player ID). If you need the nickname at that point, store it yourself when the player connects.
+:::
 
-## Accessing and Finding Players
+### Example: join and leave announcements
 
-The `mp.players` helper lets you check player existence and retrieve player references:
+This tells everyone when a player joins or leaves. It remembers each nickname at connection time, because the player object is no longer usable when `playerDisconnected` fires.
+
+`chat:add` is a custom event, not a built-in one: you need a client script that listens for it and shows the text (see [client events](/guides/client/events/#communicating-with-the-server)).
 
 <Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
   <TabItem label="JS">
     ```js title="server.js"
-    // Verify existence before retrieving
-    if (mp.players.exists(targetId)) {
-      const targetPlayer = mp.players.at(targetId);
-      console.log(`Found player: ${targetPlayer.nickname}`);
-    }
+    // Nickname of every connected player, by player ID.
+    const nicknames = new Map();
 
-    // Convert active players to an array for iteration
-    const allPlayers = mp.players.toArray();
-    console.log(`Active players count: ${allPlayers.length}`);
-
-    // Helper: Find player by numeric ID or partial nickname
-    function findPlayer(query) {
-      const numericId = Number(query);
-      if (!Number.isNaN(numericId) && mp.players.exists(numericId)) {
-        return mp.players.at(numericId);
+    function sendToEveryone(message) {
+      for (const player of mp.players.toArray()) {
+        player.emit('chat:add', message);
       }
-
-      const term = String(query).toLowerCase();
-      return mp.players.toArray().find((p) => p.nickname.toLowerCase().includes(term)) || null;
     }
-    ```
 
-    :::note
-    In JavaScript, entity objects returned by `mp.players.at()` or event callbacks are syntax-sugar wrappers over internal function calls. Because new wrapper objects are created dynamically, two references to the same player will never share the same object identity (`playerA === playerB` is `false`). Always compare players by their unique numeric ID:
-    ```js
-    if (playerA.id === playerB.id) { ... }
+    // If this resource is restarted while people are online, playerConnected
+    // does not fire again for them, so pick their nicknames up here.
+    for (const player of mp.players.toArray()) {
+      nicknames.set(player.id, player.nickname);
+    }
+
+    mp.events.on('playerConnected', (playerId) => {
+      const player = mp.players.at(playerId);
+      nicknames.set(playerId, player.nickname);
+
+      sendToEveryone(`${player.nickname} joined the server.`);
+    });
+
+    mp.events.on('playerDisconnected', (playerId, reason) => {
+      const nickname = nicknames.get(playerId) || `Player ${playerId}`;
+      nicknames.delete(playerId);
+
+      sendToEveryone(`${nickname} left the server (${reason}).`);
+    });
     ```
-    :::
   </TabItem>
   <TabItem label="Lua">
     ```lua title="server.lua"
-    -- Verify existence before retrieving
-    if mp.players.exists(targetId) then
-      local targetPlayer = mp.players.at(targetId)
-      print(string.format("Found player: %s", targetPlayer.nickname))
+    -- Nickname of every connected player, by player ID.
+    local nicknames = {}
+
+    local function sendToEveryone(message)
+      for _, player in ipairs(mp.players.toArray()) do
+        player:trigger('chat:add', message)
+      end
     end
 
-    -- Iterate active players
-    local allPlayers = mp.players.toArray()
-    print(string.format("Active players count: %s", #allPlayers))
+    -- If this resource is restarted while people are online, playerConnected
+    -- does not fire again for them, so pick their nicknames up here.
+    for _, player in ipairs(mp.players.toArray()) do
+      nicknames[player.id] = player.nickname
+    end
 
-    -- Helper: Find player by numeric ID or partial nickname
+    mp.events.add('playerConnected', function(playerId)
+      local player = mp.players.at(playerId)
+      nicknames[playerId] = player.nickname
+
+      sendToEveryone(string.format("%s joined the server.", player.nickname))
+    end)
+
+    mp.events.add('playerDisconnected', function(playerId, reason)
+      local nickname = nicknames[playerId] or string.format("Player %s", playerId)
+      nicknames[playerId] = nil
+
+      sendToEveryone(string.format("%s left the server (%s).", nickname, reason))
+    end)
+    ```
+  </TabItem>
+</Tabs>
+
+Deleting the entry on disconnect matters: a table keyed by player ID that is never cleaned grows for as long as the server runs.
+
+## Finding players
+
+`mp.players` is the pool of connected players:
+
+- `mp.players.exists(id)` tells you whether that player is still connected.
+- `mp.players.at(id)` returns the player object.
+- `mp.players.toArray()` returns every connected player.
+
+A typical use is turning something a person typed (an ID, or part of a name) into a player object:
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="server.js"
+    // Accepts a player ID ("12") or part of a nickname ("jack").
+    // Returns the player object, or null when nobody matches.
+    function findPlayer(query) {
+      const playerId = Number(query);
+      if (!Number.isNaN(playerId) && mp.players.exists(playerId)) {
+        return mp.players.at(playerId);
+      }
+
+      const searchedName = String(query).toLowerCase();
+      for (const player of mp.players.toArray()) {
+        if (player.nickname.toLowerCase().includes(searchedName)) {
+          return player;
+        }
+      }
+
+      return null;
+    }
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="server.lua"
+    -- In Lua, mp.players.exists(id) also says yes for the ID of a vehicle, ped or object.
+    -- Reading the entity type as well makes sure the ID belongs to a connected player.
+    local PLAYER_ENTITY_TYPE = 1
+
+    local function isConnectedPlayer(id)
+      return mp.players.exists(id) and mp.players.at(id).type == PLAYER_ENTITY_TYPE
+    end
+
+    -- Accepts a player ID ("12") or part of a nickname ("jack").
+    -- Returns the player object, or nil when nobody matches.
     function findPlayer(query)
-      local numericId = tonumber(query)
-      if numericId and mp.players.exists(numericId) then
-        return mp.players.at(numericId)
+      local playerId = tonumber(query)
+      if playerId and isConnectedPlayer(playerId) then
+        return mp.players.at(playerId)
       end
 
-      local term = string.lower(tostring(query))
-      for _, p in ipairs(mp.players.toArray()) do
-        if string.find(string.lower(p.nickname), term, 1, true) then
-          return p
+      local searchedName = string.lower(tostring(query))
+      for _, player in ipairs(mp.players.toArray()) do
+        -- The last two arguments make string.find search for plain text, not a Lua pattern.
+        if string.find(string.lower(player.nickname), searchedName, 1, true) then
+          return player
         end
       end
+
       return nil
     end
     ```
   </TabItem>
 </Tabs>
 
+### Example: a "who is online" command
 
+`toArray()` is also how you count and list players. This registers an `online` [command](/guides/server/commands/) that works from the server console and from a player's F8 console.
 
----
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="server.js"
+    function describeOnlinePlayers() {
+      const players = mp.players.toArray();
+      if (players.length === 0) {
+        return 'Nobody is online.';
+      }
 
-## Player Properties
+      const names = players.map((player) => `${player.nickname} (${player.id})`);
+      return `${players.length} online: ${names.join(', ')}`;
+    }
 
-Player objects expose synchronized properties describing their current state in the game world:
+    mp.commands.add('online', (player) => {
+      const text = describeOnlinePlayers();
 
-| Property | Type | Description |
-| :--- | :--- | :--- |
-| `id` | `number` | Unique network identifier assigned by the server. |
-| `nickname` | `string` | Display name of the player. |
-| `health` | `number` | Health points of the player. |
-| `position` | `[x, y, z]` | Coordinates array in world space. |
-| `rotation` | `[pitch, roll, yaw]` | Euler angles rotation array. |
-| `yaw` | `number` | Heading / yaw angle in degrees. |
-| `velocity` | `[x, y, z]` | Movement velocity vector. |
-| `ping` | `number` | Network latency in milliseconds. |
-| `ip` | `string` | Remote IP address. |
-| `dimension` | `number` | Virtual world / dimension instance ID (default `0`). |
-| `streamingRadius` | `number` | Streaming boundary distance for nearby entities. |
-| `vehicle` | object \| `nil` | The vehicle currently occupied by the player, or `null`/`nil`. |
-| `lastVehicle` | object \| `nil` | The vehicle previously occupied by the player before exiting. |
-| `exist` | `boolean` | True if the player is currently valid and in the world. |
+      // From the server console there is no player to answer, so print instead.
+      const fromConsole = !player || player.id === 0;
+      if (fromConsole) {
+        console.log(text);
+      } else {
+        player.emit('chat:add', text);
+      }
+    });
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="server.lua"
+    local function describeOnlinePlayers()
+      local players = mp.players.toArray()
+      if #players == 0 then
+        return 'Nobody is online.'
+      end
+
+      local names = {}
+      for _, player in ipairs(players) do
+        table.insert(names, string.format("%s (%s)", player.nickname, player.id))
+      end
+      return string.format("%s online: %s", #players, table.concat(names, ', '))
+    end
+
+    mp.commands.add('online', function(player)
+      local text = describeOnlinePlayers()
+
+      -- From the server console there is no player to answer, so print instead.
+      local fromConsole = player == 0
+      if fromConsole then
+        print(text)
+      else
+        player:trigger('chat:add', text)
+      end
+    end)
+    ```
+  </TabItem>
+</Tabs>
+
+`toArray()` builds a new list of player objects on every call. That is fine for a command; in code that runs many times per second, call it once and reuse the result.
+
+:::caution[Check `exists()` before `at()`]
+An ID you kept from earlier can belong to a player who has since left. In JS, `mp.players.at(id)` then returns `undefined` and the next property access throws. In Lua, `mp.players.at(id)` itself raises an error. Calling `mp.players.exists(id)` first avoids both.
+:::
+
+:::caution[Lua: `mp.players.exists` does not check that the ID is a player]
+In server-side Lua the pools do not look at the kind of entity: `mp.players.exists(id)` returns `1` for the ID of any existing entity, a vehicle or a ped included, and `mp.players.at(id)` then hands you that entity. For an ID your own code got from a player event this makes no difference. For an ID that a person typed or a client sent, also compare the entity's `type` with `1` (player), as `isConnectedPlayer` does above. In JavaScript, `mp.players.exists` only accepts players.
+
+Note the return values too: Lua's `exists` gives `1` or `false`, not `true`. Use it directly in an `if`; `mp.players.exists(id) == true` never matches.
+:::
+
+:::note[Compare players by ID]
+A player object is a thin wrapper around the ID, and a new wrapper is created on every call. `mp.players.at(5) === mp.players.at(5)` is `false`. Compare `playerA.id === playerB.id` instead (`playerA.id == playerB.id` in Lua).
+:::
+
+## Player properties
+
+A player object stores nothing but the ID. Every property is read live from the server at the moment you access it, so `player.position` is always current, and if you need the same value several times in a row, read it once into a local variable.
+
+| Property | Type | Writable | Description |
+| :--- | :--- | :--- | :--- |
+| `id` | `number` | No | Network ID assigned by the server. |
+| `nickname` | `string` | No | Display name. |
+| `health` | `number` | No | Current health points. |
+| `position` | `[x, y, z]` | No | World coordinates. |
+| `rotation` | `[pitch, roll, yaw]` | No | Orientation. |
+| `yaw` | `number` | No | Heading in degrees. |
+| `velocity` | `[x, y, z]` | No | Movement velocity. |
+| `ping` | `number` | No | Network latency in milliseconds. |
+| `ip` | `string` | No | Remote IP address. |
+| `vehicle` | vehicle | No | The vehicle the player is in. On foot: `null` in JS; in Lua, a vehicle object whose `id` is `0`. |
+| `lastVehicle` | vehicle | No | The vehicle the player was in before. Same empty value as `vehicle`. |
+| `exist` | `boolean` | No | Whether the player is still connected. |
+| `dimension` | `number` | Yes | The virtual world the player is in (`0` is the shared world). See [Virtual dimensions](#virtual-dimensions). |
+| `streamingRadius` | `number` | Yes | The distance at which this player streams in and out. |
+
+*Streaming* means sending an entity to a client. A client doesn't receive everything on the server, only what is close enough to it; the streaming radius is that distance.
+
+Everything else is read-only. The full list of members is on the [`MpPlayer`](/reference/server/api/entities/players/mpplayer/) reference page; for Lua, see [Player Objects](/reference/lua/server/#player-objects).
 
 <Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
   <TabItem label="JS">
     ```js title="server.js"
     function logPlayerSnapshot(player) {
+      // position is an array: [x, y, z]
       const [x, y, z] = player.position;
-      console.log(`--- Snapshot for ${player.nickname} (ID: ${player.id}) ---`);
-      console.log(`Position: [${x.toFixed(2)}, ${y.toFixed(2)}, ${z.toFixed(2)}] (Yaw: ${player.yaw.toFixed(1)}°)`);
-      console.log(`Health: ${player.health} | Ping: ${player.ping}ms | IP: ${player.ip}`);
+      console.log(`${player.nickname} (ID ${player.id})`);
+      console.log(`Position: [${x.toFixed(2)}, ${y.toFixed(2)}, ${z.toFixed(2)}], yaw ${player.yaw.toFixed(1)}`);
+      console.log(`Health: ${player.health} | Ping: ${player.ping} ms | IP: ${player.ip}`);
 
       if (player.vehicle) {
-        console.log(`Currently seated in Vehicle ID: ${player.vehicle.id}`);
+        console.log(`In vehicle #${player.vehicle.id}`);
       }
     }
     ```
@@ -268,172 +410,216 @@ Player objects expose synchronized properties describing their current state in 
   <TabItem label="Lua">
     ```lua title="server.lua"
     function logPlayerSnapshot(player)
-      local pos = player.position
-      print(string.format("--- Snapshot for %s (ID: %s) ---", player.nickname, player.id))
-      print(string.format("Position: [%.2f, %.2f, %.2f] (Yaw: %.1f°)", pos[1], pos[2], pos[3], player.yaw))
-      print(string.format("Health: %s | Ping: %sms | IP: %s", player.health, player.ping, player.ip))
+      -- position is indexed from 1: x, y, z
+      local position = player.position
+      print(string.format("%s (ID %s)", player.nickname, player.id))
+      print(string.format("Position: [%.2f, %.2f, %.2f], yaw %.1f", position[1], position[2], position[3], player.yaw))
+      print(string.format("Health: %s | Ping: %s ms | IP: %s", player.health, player.ping, player.ip))
 
+      -- An empty vehicle reads as an object whose id is 0
       if player.vehicle and player.vehicle.id ~= 0 then
-        print(string.format("Currently seated in Vehicle ID: %s", player.vehicle.id))
+        print(string.format("In vehicle #%s", player.vehicle.id))
       end
     end
     ```
   </TabItem>
 </Tabs>
 
----
+## Interacting with players
 
-## Interacting with Players
+### Sending an event to one player
 
-### Emitting Private Client Events
+Call `emit` on the player object (`trigger` in Lua), or use `mp.events.emitClient` (`mp.events.triggerClient` in Lua) when you only have the ID.
 
-To send an event directly to a player, call `emit` on the player object or `mp.events.emitClient`:
+The event names below are made up for the example. Nothing happens on the client until one of your client scripts listens for them, see [client events](/guides/client/events/#communicating-with-the-server).
 
 <Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
   <TabItem label="JS">
     ```js title="server.js"
-    // Send private notifications or UI updates
-    player.emit('ui:showNotification', {
-      title: 'Contract Completed',
-      amount: 2500
-    });
+    // When you have the player object
+    function showContractReward(player, amount) {
+      player.emit('ui:showNotification', {
+        title: 'Contract Completed',
+        amount: amount
+      });
+    }
 
-    player.emit('hud:updateBalance', 15000);
+    // When you only have the ID, for example inside a platform event
+    mp.events.on('playerSpawn', (playerId) => {
+      mp.events.emitClient(playerId, 'ui:showNotification', {
+        title: 'Welcome to Night City',
+        amount: 0
+      });
+    });
     ```
   </TabItem>
   <TabItem label="Lua">
     ```lua title="server.lua"
-    -- Send private notifications or UI updates
-    player:trigger('ui:showNotification', {
-      title = 'Contract Completed',
-      amount = 2500
-    })
+    -- When you have the player object
+    function showContractReward(player, amount)
+      player:trigger('ui:showNotification', {
+        title = 'Contract Completed',
+        amount = amount
+      })
+    end
 
-    player:trigger('hud:updateBalance', 15000)
+    -- When you only have the ID, for example inside a platform event
+    mp.events.add('playerSpawn', function(playerId)
+      mp.events.triggerClient(playerId, 'ui:showNotification', {
+        title = 'Welcome to Night City',
+        amount = 0
+      })
+    end)
     ```
   </TabItem>
 </Tabs>
 
-### Moderation: Kicking and Muting
+To reach everyone, loop over `mp.players.toArray()` as `sendToEveryone` does [above](#example-join-and-leave-announcements); in Lua you can also pass `-1` instead of a player to `mp.events.triggerClient`.
+
+### Kicking and muting
+
+`kick` disconnects a player; the reason is optional. In JS, kicking an ID that is no longer connected does nothing, so you don't need to guard the call.
 
 <Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
   <TabItem label="JS">
     ```js title="server.js"
-    // Disconnect a player with an optional reason
-    player.kick('Exploiting game mechanics');
+    function kickCheater(player) {
+      player.kick('Exploiting game mechanics');
+    }
 
-    // Mute player's voice transmission
-    player.mute();
+    // Same thing when you only have the ID
+    function kickCheaterById(playerId) {
+      mp.players.kick(playerId, 'Exploiting game mechanics');
+    }
     ```
   </TabItem>
   <TabItem label="Lua">
     ```lua title="server.lua"
-    -- Disconnect a player with an optional reason
-    player:kick('Exploiting game mechanics')
+    function kickCheater(player)
+      player:kick('Exploiting game mechanics')
+    end
 
-    -- Mute player's voice transmission
-    player:mute(true)
+    -- Same thing when you only have the ID
+    function kickCheaterById(playerId)
+      mp.players.kick(playerId, 'Exploiting game mechanics')
+    end
     ```
   </TabItem>
 </Tabs>
 
----
+:::caution[Muting does nothing yet]
+Players also have a `mute` method (`player.mute()` in JS, `player:mute(enable)` in Lua), meant to silence their voice chat. On server v4.0.4-beta.1 it has no effect: the call only logs a warning and the player can still be heard. [Voice chat](/guides/server/voice-chat/#the-script-api) has the details and what you can do in the meantime.
+:::
 
-## Tracking Combat & Weapons
+For a complete `kick` command with a permission check, see [Creating Commands](/guides/server/commands/#a-command-for-both-console-and-players-kick).
 
-The server receives synchronized events when players take damage or fire weapons:
+## Tracking combat and weapons
+
+The server is told when players deal damage, shoot, swing a melee weapon or throw a grenade.
+
+:::caution[`damage`: the first argument is the attacker]
+In the `damage` event the first argument is the ID of the player who **dealt** the damage. The player who was hit is `data.victimId`.
+:::
 
 <Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
   <TabItem label="JS">
     ```js title="server.js"
-    // Handle damage
-    mp.events.on('damage', (victimId, data) => {
-      const victim = mp.players.at(victimId);
-      console.log(`[Damage] ${victim.nickname} took ${data.totalDamage} damage.`);
-      console.log(`Weapon Hash: ${data.weaponHash} | Damage Type: ${data.damageType}`);
+    mp.events.on('damage', (attackerId, data) => {
+      if (!mp.players.exists(data.victimId)) return;
+
+      const victim = mp.players.at(data.victimId);
+      console.log(`${victim.nickname} took ${data.totalDamage} damage from player ${attackerId}`);
+      console.log(`Weapon hash: ${data.weaponHash} | Damage type: ${data.damageType}`);
     });
 
-    // Weapon fired
     mp.events.on('shootAction', (playerId, data) => {
       console.log(`Player ${playerId} fired weapon ${data.weaponHash} at [${data.posX}, ${data.posY}, ${data.posZ}]`);
     });
 
-    // Melee attack
     mp.events.on('meleeAction', (playerId, data) => {
-      console.log(`Player ${playerId} performed melee action type: ${data.type}`);
+      console.log(`Player ${playerId} did melee action type ${data.type}`);
     });
 
-    // Grenade thrown
     mp.events.on('throwGrenade', (playerId, data) => {
-      console.log(`Player ${playerId} threw grenade (QuickThrow: ${data.isQuickThrow})`);
+      console.log(`Player ${playerId} threw a grenade (quick throw: ${data.isQuickThrow})`);
     });
     ```
   </TabItem>
   <TabItem label="Lua">
     ```lua title="server.lua"
-    -- Handle damage
-    mp.events.add('damage', function(playerId, data)
+    mp.events.add('damage', function(attackerId, data)
+      if not mp.players.exists(data.victimId) then return end
+
       local victim = mp.players.at(data.victimId)
-      print(string.format("[Damage] %s took %s damage.", victim.nickname, data.totalDamage))
-      print(string.format("Weapon Hash: %s | Damage Type: %s", data.weaponHash, data.damageType))
+      print(string.format("%s took %s damage from player %s", victim.nickname, data.totalDamage, attackerId))
+      print(string.format("Weapon hash: %s | Damage type: %s", data.weaponHash, data.damageType))
     end)
 
-    -- Weapon fired
     mp.events.add('shootAction', function(playerId, data)
       print(string.format("Player %s fired weapon %s at [%s, %s, %s]", playerId, data[1], data[3], data[4], data[5]))
     end)
 
-    -- Melee attack
     mp.events.add('meleeAction', function(playerId, data)
-      print(string.format("Player %s performed melee action type: %s", playerId, data[1]))
+      print(string.format("Player %s did melee action type %s", playerId, data[1]))
     end)
 
-    -- Grenade thrown
     mp.events.add('throwGrenade', function(playerId, data)
-      print(string.format("Player %s threw grenade (QuickThrow: %s)", playerId, tostring(data[3])))
+      print(string.format("Player %s threw a grenade (quick throw: %s)", playerId, tostring(data[3])))
     end)
     ```
   </TabItem>
 </Tabs>
 
----
+The fields of each payload are listed in the [`PlayersEvents`](/reference/server/api/events/players/playersevents/) reference (JS) and the [Lua event catalog](/reference/lua/server/#platform-event-catalog). To block damage, return `false` from the handler, see [Cancelling platform events](/guides/server/events/#cancelling-platform-events). To recognise a weapon from `data.weaponHash`, see [Working with Hashes](/guides/server/hashes/#comparing-hashes).
 
-## Virtual Dimensions
+## Virtual dimensions
 
-Dimensions isolate players into virtual instances. Entities in different dimensions cannot see, collide with, or interact with each other.
+A dimension is a numbered copy of the world. Players and entities only see and touch what is in the same dimension as them, so two players standing on the same spot in different dimensions never meet.
 
-- **Dimension `0`:** Default shared public world.
-- **Dimension `> 0`:** Private instances (e.g. apartment interiors, instanced missions).
+- Dimension `0` is the default, shared world.
+- Any other number is a separate instance. Use them for apartment interiors or instanced missions.
+
+Move a player by assigning `player.dimension`. Vehicles, peds, objects and pickups have the same property.
 
 <Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
   <TabItem label="JS">
     ```js title="server.js"
-    // Enter private instance
+    // Give each apartment its own dimension
     function enterApartment(player, apartmentId) {
       player.dimension = 1000 + apartmentId;
-      player.emit('chat:add', `Entered private apartment #${apartmentId}.`);
     }
 
-    // Return to public world
+    // Back to the shared world
     function exitApartment(player) {
       player.dimension = 0;
-      player.emit('chat:add', 'Returned to public street.');
     }
     ```
   </TabItem>
   <TabItem label="Lua">
     ```lua title="server.lua"
-    -- Enter private instance
+    -- Give each apartment its own dimension
     function enterApartment(player, apartmentId)
       player.dimension = 1000 + apartmentId
-      player:trigger('chat:add', string.format("Entered private apartment #%s.", apartmentId))
     end
 
-    -- Return to public world
+    -- Back to the shared world
     function exitApartment(player)
       player.dimension = 0
-      player:trigger('chat:add', 'Returned to public street.')
     end
     ```
   </TabItem>
 </Tabs>
+
+The numbers are yours to choose, as long as they are whole numbers; nothing has to be created before you use a dimension. In Lua a decimal number is not accepted even when it is whole (`4.0` is misread, `4` works), so if `apartmentId` could arrive as a decimal, for example from a client, assign `1000 + math.floor(apartmentId)`. Just keep the ranges of your different systems apart (here apartments start at `1000`) so that two features never pick the same number by accident.
+
+Changing the dimension does not move the player. To also put them inside the interior, send an event to their client and teleport there, see [Teleporting into another dimension](/guides/client/teleporting-player/#teleporting-into-another-dimension).
+
+## What next
+
+- [Working with Events](/guides/server/events/): every way to listen, emit and cancel.
+- [Entity Metadata](/guides/server/meta/): attach your own data (faction, admin flag, money) to a player.
+- [Creating Commands](/guides/server/commands/): let players and admins run actions from the console.
+- [Timers and scheduled work](/guides/server/timers/): delays, repeating work and per-player cooldowns.
+- [Saving data](/guides/server/saving-data/): keep player data across restarts.
+- [HTTP requests](/guides/server/http-requests/): call a web API, for example to post a message when a player joins.
+- [Dimensions, streaming radius and entity ownership](/guides/advanced/dimensions-and-ownership/): private instances, and what the values on this page accept.

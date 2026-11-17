@@ -1,29 +1,27 @@
 ---
 title: CDN
-description: Learn how to offload resource file delivery to an external CDN, reducing server bandwidth and speeding up client downloads.
+description: Serve your resources' client files from an external HTTP host instead of the game server, to save server bandwidth and speed up downloads.
 ---
 
-By default, clients download every file listed in a resource's [`file`](/guides/resources/adding-resource-files) array directly from the dedicated server. This includes CEF UI assets, `.archive` / `.xl` packs, and tweak files. For servers with many players or large custom assets, this can saturate the server's upload bandwidth and slow down connection times.
+When a player joins, their game downloads the client side of your resources: the client scripts and every file listed in a resource's [`file`](/guides/resources/adding-resource-files/) array (UI assets for the in-game browser, `.archive` / `.xl` packs, tweak files). By default the game server itself serves those files. With many players or large asset packs, that eats the server's upload bandwidth and makes joining slow.
 
-A **resource CDN** lets you host those files on an external HTTP server (or a traditional CDN provider) so that clients fetch them from a fast, dedicated download endpoint instead of the game server itself.
+A **resource CDN** moves those downloads elsewhere. You upload the files to any HTTP host (a plain web server or a CDN provider, a content delivery network), and clients fetch them from there instead of from the game server.
 
 :::note
-Resource CDN is available on [Server Manager plans](/guides/server-manager/subscriptions) starting from **Bronze**. If the listing plan is below Bronze, the server logs a warning and falls back to serving files through its built-in file server.
+Resource CDN is available on Server Manager plans starting from **Bronze**. If the listing plan is below Bronze, the server logs a warning and falls back to serving files through its built-in file server.
 :::
 
----
+## How it works
 
-## How It Works
+With CDN enabled, the work is split in two.
 
-When CDN is enabled, the dedicated server process separates into two concerns:
-
-**The server process retains:**
+**The game server keeps:**
 - `server.toml` configuration and all `server_script` logic
 - Entity streaming, events, and RPC
 - The `file` allow-list (clients still validate downloads against it)
 
 **The CDN hosts:**
-- The packed client files of every started resource that is **not** marked as `server_only` — this includes `resource.toml`, `client_script` and all `file` entries
+- The packed client files of every started resource that is **not** marked as `server_only`: this includes `resource.toml`, `client_script` and all `file` entries
 
 Typical CDN-hosted assets include:
 
@@ -34,16 +32,14 @@ Typical CDN-hosted assets include:
 | UI assets | Images, bundled HTML/CSS/JS for CEF |
 
 :::tip
-If you use [hot reload](/guides/recipes/hotreload) during development, keep frequently edited HTML and JS files inside the resource rather than on the CDN. Hot reload watches local resource files — changes pushed to the CDN won't be detected automatically.
+A CDN is for production. While you develop with [hot reload](/guides/recipes/hotreload/), leave it off: hot reload watches the local resource files, and it does not notice files you push to the CDN.
 :::
 
----
+## Setting up CDN
 
-## Setting Up CDN
+### Step 1: Pack the client files
 
-### Step 1 — Pack the client files
-
-Run the server with the `--justpack` flag. This loads `server.toml`, starts all resources, writes the packed client files along with a `connect.json` manifest into a `cdn_upload/` directory, and then exits:
+Run the server with the `--justpack` flag. Instead of starting normally, it loads `server.toml`, starts all resources, writes their packed client files and a `connect.json` manifest into a `cdn_upload/` directory, and exits:
 
 ```shell
 # Windows
@@ -53,13 +49,34 @@ cybermp-server.exe -run --justpack
 ./cybermp-server -run --justpack
 ```
 
-You can optionally pass `--host=<ip>` and `--port=<port>` if your server binds to a non-default address.
+The result is one packed archive per resource, plus the manifest:
 
-### Step 2 — Upload to your CDN
+```
+cdn_upload/
+├── connect.json
+├── cybermp_core/
+│   └── resource.archive
+└── my_gamemode/
+    └── resource.archive
+```
 
-Upload the **entire contents** of the `cdn_upload/` directory to the root of your CDN domain. The directory structure must be preserved exactly as generated — clients will request files by their relative paths.
+`connect.json` records the server version, a hash of every archive and an `endpoints` list with the server address. That address comes from the optional `--host=<ip>` and `--port=<port>` flags and defaults to `127.0.0.1:2077`, so pass them when your server is reached at another address:
 
-### Step 3 — Configure `server.toml`
+```shell
+./cybermp-server -run --justpack --host=203.0.113.10 --port=2077
+```
+
+Things to know about this step:
+
+- It starts your resources for real, so their server scripts run once, and the built-in `cybermp_core` resource is packed along with yours.
+- The flags are also echoed as unknown console commands (`-host=… command doesn't exist!`). That message is harmless.
+
+
+### Step 2: Upload to your CDN
+
+Upload the **entire contents** of the `cdn_upload/` directory to the root of your CDN domain. Keep the directory structure exactly as generated: clients request the files by their relative paths.
+
+### Step 3: Configure `server.toml`
 
 Add the following keys to your `server.toml` and start the server normally:
 
@@ -69,22 +86,20 @@ cdnUrl = "https://cdn.example.com"
 ```
 
 :::caution
-These keys are not exposed on the [`ServerConfig`](/reference/server/api/global/config/serverconfig/) type directly — in `mp.config` they fall under its index signature. Do not attempt to read them as typed properties.
+If you read these keys from a script through `mp.config`, note that the [`ServerConfig`](/reference/server/api/global/config/serverconfig/) type does not declare them by name. They are only covered by its index signature, so TypeScript types them as `any`.
 :::
 
----
+Both keys are described in the [server configuration reference](/reference/server/configuration/).
 
-## Re-packing After Changes
+## Re-packing after changes
 
-Every time you add, remove, or update resource files (new archives, updated UI builds, etc.), you need to repeat the pack-and-upload cycle:
+The CDN holds a snapshot of your client files. Every time you add, remove or change one (a new archive, a rebuilt UI, an edited client script), the snapshot is out of date and you have to pack and upload again:
 
-1. Stop the server (or run a separate instance with `--justpack`)
-2. Re-run with `--justpack` to regenerate `cdn_upload/`
-3. Upload the updated files to your CDN
-4. Restart the server
+1. Stop the server (or run a separate instance with `--justpack`).
+2. Run with `--justpack` to regenerate `cdn_upload/`.
+3. Upload the updated files to your CDN.
+4. Start the server again.
 
----
-
-## Core Files
+## Core files
 
 The built-in `cybermp_core` resource includes optional files that can be toggled via the `core.files` setting. See the [`[core]` section](/reference/server/configuration) of the server configuration reference for available options.

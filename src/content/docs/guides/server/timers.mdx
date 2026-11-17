@@ -1,0 +1,478 @@
+---
+title: Timers and scheduled work
+description: Run server code later or on a repeat, wait inside a handler, add per-player cooldowns, and know what happens to pending timers when a resource stops.
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import { SCRIPT_LANG_TAB_SYNC_KEY } from '../../../../lib/const';
+
+Events tell you when something happens. Timers are for everything that should happen *later* or *again*: an announcement every five minutes, a vehicle that disappears ten minutes after it was spawned, a countdown, a command that can only be used once every thirty seconds.
+
+The two languages give you different tools for this. JavaScript server scripts run on Node.js, so you have the timer functions you already know. Lua scripts use a small scheduler on the `mp` table.
+
+| You want to… | JS | Lua |
+| :--- | :--- | :--- |
+| Run something once, later | `setTimeout(fn, ms)` | `mp.setTimeout(fn, ms)` |
+| Cancel it before it runs | `clearTimeout(timer)` | not possible, see [below](#removing-a-vehicle-after-a-delay) |
+| Run something again and again | `setInterval(fn, ms)` | a loop with `mp.wait(ms)` inside `mp.spawnTask(fn)` |
+| Stop repeating | `clearInterval(timer)` | leave the loop |
+| Pause in the middle of a handler | `await` a promise | `mp.wait(ms)` |
+| Measure elapsed time | `Date.now()` | `mp.getTimer()` |
+
+All durations are in milliseconds: `1000` is one second.
+
+## Running something later
+
+`setTimeout` runs a function once, after a delay. The rest of your script keeps running in the meantime.
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="server.js"
+    setTimeout(() => {
+      console.log('Ten seconds have passed.');
+    }, 10000);
+
+    console.log('This line prints first.');
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="server.lua"
+    mp.setTimeout(function()
+      print('Ten seconds have passed.')
+    end, 10000)
+
+    print('This line prints first.')
+    ```
+  </TabItem>
+</Tabs>
+
+In JS, `setTimeout` returns a timer that you can pass to `clearTimeout` to call the whole thing off. In Lua, `mp.setTimeout` returns nothing: once a timeout is set, it will run.
+
+### Removing a vehicle after a delay
+
+A common use: spawn something for an event and remove it by itself later. This command puts a car at a meeting point and removes it ten minutes later.
+
+There is one trap. Entity IDs are reused: when a vehicle is destroyed, the next vehicle that is created can get the same ID. If an admin removes the event car by hand after two minutes, the ID may belong to somebody else's car by the time your timer fires. So the timer has to be called off when the car is gone. In JS you cancel it with `clearTimeout`. In Lua you can't cancel, so the timer checks that the ID still belongs to the car it was started for.
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="server.js"
+    const EVENT_CAR_LIFETIME_MS = 10 * 60 * 1000;
+
+    // vehicle ID -> the timer that will remove this car
+    const eventCarTimers = new Map();
+
+    // Usage: eventcar
+    mp.commands.add('eventcar', (player, args) => {
+      const vehicle = mp.vehicles.create({
+        model: mp.hashes.tweakdbid('Vehicle.v_sport1_quadra_turbo_r_player'),
+        appearance: mp.hashes.cname('quadra_turbo_r__basic_player_01'),
+        position: [-1392.6, 1271.5, 123.0],
+      });
+      const vehicleId = vehicle.id;
+
+      const removalTimer = setTimeout(() => {
+        mp.vehicles.destroy(vehicleId);
+        console.log(`Event car #${vehicleId} was removed after ten minutes.`);
+      }, EVENT_CAR_LIFETIME_MS);
+
+      eventCarTimers.set(vehicleId, removalTimer);
+    });
+
+    // The car is gone, whoever removed it. Call its timer off,
+    // otherwise it could later destroy a new vehicle that got the same ID.
+    mp.events.on('vehicleDespawn', (vehicleId) => {
+      const removalTimer = eventCarTimers.get(vehicleId);
+      if (removalTimer === undefined) {
+        return; // not one of our event cars
+      }
+
+      clearTimeout(removalTimer);
+      eventCarTimers.delete(vehicleId);
+    });
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="server.lua"
+    local EVENT_CAR_LIFETIME_MS = 10 * 60 * 1000
+
+    -- vehicle ID -> the time at which this car was spawned
+    local eventCarSpawnTimes = {}
+
+    -- Usage: eventcar
+    mp.commands.add('eventcar', function(player, args)
+      local vehicle = mp.vehicles.create({
+        model = tonumber(mp.hashes.toTweakdbid('Vehicle.v_sport1_quadra_turbo_r_player'), 10),
+        appearance = tonumber(mp.hashes.toCname('quadra_turbo_r__basic_player_01'), 10),
+        position = vector3(-1392.6, 1271.5, 123.0),
+      })
+      local vehicleId = vehicle.id
+      local spawnTime = mp.getTimer()
+
+      eventCarSpawnTimes[vehicleId] = spawnTime
+
+      mp.setTimeout(function()
+        -- A Lua timeout can't be cancelled, so check that this ID
+        -- still belongs to the car this timeout was started for.
+        if eventCarSpawnTimes[vehicleId] ~= spawnTime then
+          return
+        end
+
+        mp.vehicles.destroy(vehicleId)
+        print(string.format('Event car #%s was removed after ten minutes.', vehicleId))
+      end, EVENT_CAR_LIFETIME_MS)
+    end)
+
+    -- The car is gone, whoever removed it. Forget it,
+    -- otherwise the timeout could later destroy a new vehicle that got the same ID.
+    mp.events.add('vehicleDespawn', function(vehicleId)
+      eventCarSpawnTimes[vehicleId] = nil
+    end)
+    ```
+  </TabItem>
+</Tabs>
+
+`vehicleDespawn` also fires when the timer itself destroys the car, so the bookkeeping is cleaned up in both cases.
+
+:::caution
+Be just as careful with players. A timer that holds a player ID for a while must check that the player is still there (`mp.players.exists(playerId)`) before it does anything, and should not hold on to a player or vehicle *object* across the delay. See the countdown example [below](#the-world-changes-while-you-wait).
+:::
+
+## Repeating work
+
+`setInterval` runs a function again and again with a fixed delay between runs. Lua has no `setInterval`: you start a task with `mp.spawnTask` and write a loop that waits.
+
+This example sends a rotating announcement to every player every five minutes.
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="server.js"
+    const ANNOUNCEMENT_INTERVAL_MS = 5 * 60 * 1000;
+
+    const announcements = [
+      'Welcome to Night City. Be kind to other players.',
+      'Found a bug? Tell an admin.',
+    ];
+
+    let nextAnnouncementIndex = 0;
+
+    function sendNextAnnouncement() {
+      const message = announcements[nextAnnouncementIndex];
+
+      for (const player of mp.players.toArray()) {
+        player.emit('chat:add', message); // handled by your own client script
+      }
+      console.log(`[Announcement] ${message}`);
+
+      // Move on to the next message, and start over after the last one.
+      nextAnnouncementIndex = nextAnnouncementIndex + 1;
+      if (nextAnnouncementIndex >= announcements.length) {
+        nextAnnouncementIndex = 0;
+      }
+    }
+
+    const announcementTimer = setInterval(sendNextAnnouncement, ANNOUNCEMENT_INTERVAL_MS);
+
+    // Usage: stopannouncements
+    mp.commands.add('stopannouncements', (player, args) => {
+      clearInterval(announcementTimer);
+      console.log('Announcements stopped.');
+    });
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="server.lua"
+    local ANNOUNCEMENT_INTERVAL_MS = 5 * 60 * 1000
+
+    local announcements = {
+      'Welcome to Night City. Be kind to other players.',
+      'Found a bug? Tell an admin.',
+    }
+
+    local nextAnnouncementIndex = 1
+
+    local function sendNextAnnouncement()
+      local message = announcements[nextAnnouncementIndex]
+
+      for _, player in ipairs(mp.players.toArray()) do
+        player:trigger('chat:add', message) -- handled by your own client script
+      end
+      print('[Announcement] ' .. message)
+
+      -- Move on to the next message, and start over after the last one.
+      nextAnnouncementIndex = nextAnnouncementIndex + 1
+      if nextAnnouncementIndex > #announcements then
+        nextAnnouncementIndex = 1
+      end
+    end
+
+    local announcementsEnabled = true
+
+    -- The task runs next to the rest of the script: the loop does not block anything.
+    mp.spawnTask(function()
+      while announcementsEnabled do
+        mp.wait(ANNOUNCEMENT_INTERVAL_MS)
+
+        if announcementsEnabled then
+          -- pcall keeps the loop alive if one announcement fails.
+          local succeeded, errorMessage = pcall(sendNextAnnouncement)
+          if not succeeded then
+            print('Announcement failed: ' .. tostring(errorMessage))
+          end
+        end
+      end
+    end)
+
+    -- Usage: stopannouncements
+    mp.commands.add('stopannouncements', function(player, args)
+      announcementsEnabled = false
+      print('Announcements stopped.')
+    end)
+    ```
+  </TabItem>
+</Tabs>
+
+`chat:add` is not a built-in event. It is a name chosen for these examples, and your client script has to listen for it. [Creating Commands](/guides/server/commands/#replying-to-the-caller) explains the pattern.
+
+:::caution[An error ends a Lua loop for good]
+The two languages react differently when the repeated function throws an error. In JS the error is logged and the interval keeps going. In Lua the error is logged too, but it ends the task, so the loop never runs again until the resource restarts. That is why the Lua loop above calls the function through `pcall`.
+:::
+
+## Waiting inside a handler
+
+Sometimes you want to do something, pause, and then carry on in the same function. A countdown is the classic case.
+
+In Lua, call `mp.wait(ms)`. In JS, mark the handler `async` and `await` a promise that resolves after the delay. JS has no built-in `sleep`, so the example defines one. Either way only your handler pauses. The server keeps running and other events are handled while you wait.
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="server.js"
+    // Returns a promise that resolves after the given time, so that you can "await" it.
+    function sleep(milliseconds) {
+      return new Promise((resolve) => setTimeout(resolve, milliseconds));
+    }
+
+    // Usage: countdown [seconds]
+    mp.commands.add('countdown', async (player, args) => {
+      const seconds = parseInt(args[0], 10) || 3;
+
+      for (let remaining = seconds; remaining > 0; remaining--) {
+        console.log(`Race starts in ${remaining}...`);
+        await sleep(1000);
+      }
+
+      console.log('Go!');
+    });
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="server.lua"
+    -- Usage: countdown [seconds]
+    mp.commands.add('countdown', function(player, args)
+      local seconds = tonumber(args[1]) or 3
+
+      for remaining = seconds, 1, -1 do
+        print(string.format('Race starts in %s...', remaining))
+        mp.wait(1000)
+      end
+
+      print('Go!')
+    end)
+    ```
+  </TabItem>
+</Tabs>
+
+:::caution[JS: errors in async handlers]
+An error thrown inside an `async` handler after an `await` is not reported like a normal script error. Node prints an `UnhandledPromiseRejectionWarning` and the rest of the handler is skipped. Wrap the body of an `async` handler in `try` / `catch` when it does anything that can fail.
+:::
+
+:::caution[Lua: `mp.wait` needs a coroutine]
+Event handlers, command handlers, tasks, timeouts and HTTP callbacks all run as coroutines, so `mp.wait` works in them. The top level of your script file is not a coroutine: calling `mp.wait` there fails with `attempt to yield from outside a coroutine`. Wrap that code in `mp.spawnTask(function() ... end)`.
+:::
+
+### The world changes while you wait
+
+A lot can happen during a pause: the player you were dealing with can disconnect, the vehicle can be destroyed. Before the wait, keep the ID. After the wait, check that it still exists and fetch the object again.
+
+This example greets a player five seconds after they connect, unless they have already left.
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="server.js"
+    mp.events.on('playerConnected', async (playerId, tempId) => {
+      await sleep(5000); // the sleep helper from the countdown example
+
+      // Five seconds are a long time: the player may be gone.
+      if (!mp.players.exists(playerId)) {
+        return;
+      }
+
+      const player = mp.players.at(playerId);
+      player.emit('chat:add', `Welcome, ${player.nickname}!`);
+    });
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="server.lua"
+    mp.events.add('playerConnected', function(playerId, tempId)
+      mp.wait(5000)
+
+      -- Five seconds are a long time: the player may be gone.
+      if not mp.players.exists(playerId) then
+        return
+      end
+
+      local player = mp.players.at(playerId)
+      player:trigger('chat:add', string.format('Welcome, %s!', player.nickname))
+    end)
+    ```
+  </TabItem>
+</Tabs>
+
+## A cooldown per player
+
+A cooldown doesn't need a timer at all. Remember *when* the player last did the thing, and compare with the current time the next time they try. Nothing runs in the background, and it costs nothing while nobody uses the command.
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="server.js"
+    const HEAL_COOLDOWN_MS = 30 * 1000;
+
+    // player ID -> time of that player's last heal
+    const lastHealTimes = new Map();
+
+    // Returns how many milliseconds the player still has to wait. 0 means "go ahead".
+    function getRemainingHealCooldown(playerId) {
+      const lastHealTime = lastHealTimes.get(playerId);
+      if (lastHealTime === undefined) {
+        return 0; // this player has not healed yet
+      }
+
+      const elapsed = Date.now() - lastHealTime;
+      return Math.max(0, HEAL_COOLDOWN_MS - elapsed);
+    }
+
+    // Usage (F8 console): heal
+    mp.commands.add('heal', (player, args) => {
+      const fromConsole = !player || player.id === 0;
+      if (fromConsole) {
+        console.log('heal can only be used by a player in-game.');
+        return;
+      }
+
+      const remaining = getRemainingHealCooldown(player.id);
+      if (remaining > 0) {
+        const secondsLeft = Math.ceil(remaining / 1000);
+        player.emit('chat:add', `You can heal again in ${secondsLeft} seconds.`);
+        return;
+      }
+
+      lastHealTimes.set(player.id, Date.now());
+      player.emit('player:setHealth', 100); // handled by your own client script
+    });
+
+    // Forget players who leave, so that a later player with the same ID doesn't inherit the cooldown.
+    mp.events.on('playerDisconnected', (playerId, reason) => {
+      lastHealTimes.delete(playerId);
+    });
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="server.lua"
+    local HEAL_COOLDOWN_MS = 30 * 1000
+
+    -- player ID -> time of that player's last heal
+    local lastHealTimes = {}
+
+    -- Returns how many milliseconds the player still has to wait. 0 means "go ahead".
+    local function getRemainingHealCooldown(playerId)
+      local lastHealTime = lastHealTimes[playerId]
+      if lastHealTime == nil then
+        return 0 -- this player has not healed yet
+      end
+
+      local elapsed = mp.getTimer() - lastHealTime
+      return math.max(0, HEAL_COOLDOWN_MS - elapsed)
+    end
+
+    -- Usage (F8 console): heal
+    mp.commands.add('heal', function(player, args)
+      local fromConsole = player == 0
+      if fromConsole then
+        print('heal can only be used by a player in-game.')
+        return
+      end
+
+      local remaining = getRemainingHealCooldown(player.id)
+      if remaining > 0 then
+        local secondsLeft = math.ceil(remaining / 1000)
+        player:trigger('chat:add', string.format('You can heal again in %s seconds.', secondsLeft))
+        return
+      end
+
+      lastHealTimes[player.id] = mp.getTimer()
+      player:trigger('player:setHealth', 100) -- handled by your own client script
+    end)
+
+    -- Forget players who leave, so that a later player with the same ID doesn't inherit the cooldown.
+    mp.events.add('playerDisconnected', function(playerId, reason)
+      lastHealTimes[playerId] = nil
+    end)
+    ```
+  </TabItem>
+</Tabs>
+
+`mp.getTimer()` is a millisecond counter that keeps going up while the server runs. Its absolute value means nothing; use it only to measure the time between two moments, as above.
+
+The cooldown lives in the memory of your resource, so it resets when the resource restarts. For a cooldown that has to survive a restart (a daily reward, a ban), store a real date and [save it](/guides/server/saving-data/).
+
+## When the resource stops
+
+When a resource stops or restarts, everything it had scheduled is thrown away with it: JS timeouts and intervals, Lua timeouts, tasks and `mp.onUpdateLoop` callbacks. You don't need to clear them in `resourceStop`, and you don't get doubled intervals after a restart.
+
+The catch is the other way round: **work that was pending is lost without a word.** The event car from the example above stays in the world forever if the resource restarts during its ten minutes, because the vehicle survives the restart and the timer does not. Anything that a timer was supposed to clean up has to be cleaned up in `resourceStop` as well.
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="server.js"
+    mp.events.on('resourceStop', () => {
+      // The timers die with the resource, the cars do not. Remove them now.
+      for (const vehicleId of eventCarTimers.keys()) {
+        mp.vehicles.destroy(vehicleId);
+      }
+    });
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="server.lua"
+    mp.events.add('resourceStop', function()
+      -- The timeouts die with the resource, the cars do not. Remove them now.
+      for vehicleId, spawnTime in pairs(eventCarSpawnTimes) do
+        mp.vehicles.destroy(vehicleId)
+      end
+    end)
+    ```
+  </TabItem>
+</Tabs>
+
+:::note
+`resourceStop` fires when a resource is stopped or restarted. It does **not** fire when the whole server shuts down with `quit`, and of course not when the process is killed or crashes. Don't count on it for anything that must not be lost; see [Saving data](/guides/server/saving-data/#when-to-save).
+:::
+
+## Good to know
+
+- **Timers are not exact.** The server runs its scripts in steps, about twenty per second on an idle server. A timer fires on the first step after its delay has passed, so `setTimeout(fn, 0)` runs roughly 50 ms later and a 100 ms interval fires about every 115 ms. Don't build a clock by counting interval runs; compare `Date.now()` or `mp.getTimer()` values instead.
+- **Everything runs on the server's main thread.** A timer callback that takes long holds up the whole server: no events, no sync, for every player. The server tells you when that happens with a line such as `Server main thread LAG delay of 408 ms`. Keep callbacks short and split big jobs into pieces.
+- **Prefer one slow interval over many fast ones.** A loop over all players every 100 ms is rarely needed. Once a second, or reacting to an event, is usually enough.
+- **Lua: running on every step.** `mp.onUpdateLoop(fn)` calls `fn` on every script step. It cannot be removed again, so keep the function cheap and use it only when a loop with `mp.wait` is too coarse.
+- **Lua: two ways to start a task.** `mp.spawnTask(fn)` starts the function on the next step. `mp.spawnTaskImmediatly(fn)` (spelled like that in the API) runs it right away, up to its first `mp.wait`.
+
+## Next steps
+
+- [Saving data](/guides/server/saving-data/): keep values across restarts, and save on a timer.
+- [HTTP requests](/guides/server/http-requests/): the other kind of work that finishes later.
+- [Working with Events](/guides/server/events/): the events used on this page, and how to remove handlers.
+- [Working with Vehicles](/guides/server/vehicles/#clean-up-when-your-resource-stops): cleaning up entities when a resource stops.
+- [Script scheduling](/reference/lua/server/#script-scheduling): the Lua scheduler functions in the reference.
+- [Ticks and timers](/guides/client/tick-and-timers/): the same topic on the client.
+- [Performance](/guides/advanced/performance/): spreading heavy work over several ticks.

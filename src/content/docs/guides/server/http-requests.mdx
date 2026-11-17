@@ -1,0 +1,382 @@
+---
+title: HTTP requests
+description: Call a web API from a server script with fetch in JavaScript or mp.sendHttpRequest in Lua, post to a Discord webhook, and handle errors and timeouts.
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import { SCRIPT_LANG_TAB_SYNC_KEY } from '../../../../lib/const';
+
+A server script can talk to the outside world over HTTP: post a message to Discord when a player joins, ask your website's API whether an account is banned, load a price list from a backend. This page shows how to send a request, read the answer, and cope with the request failing.
+
+- **JavaScript** server scripts run on Node.js and use the standard `fetch` function.
+- **Lua** server scripts use `mp.sendHttpRequest`, which calls a function of yours when the answer arrives.
+
+Both are asynchronous: the request is sent, your script carries on, and the answer comes back later. The server does not freeze while it waits.
+
+## A first request
+
+Every CyberMP server answers a plain `GET /` on its TCP port with its version as JSON, for example `{"version":"server v4.0.4-beta.1"}`. That makes it a handy thing to practise on: no account, no internet. The command below asks your own server for it. Replace `2077` with the port from `tcp_host` in your `server.toml` if you changed it.
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="server.js"
+    // Usage: serverinfo
+    mp.commands.add('serverinfo', async (player, args) => {
+      const response = await fetch('http://127.0.0.1:2077/');
+      const serverInfo = await response.json();
+
+      console.log(`HTTP status: ${response.status}`);
+      console.log(`This server runs ${serverInfo.version}`);
+    });
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="server.lua"
+    -- Usage: serverinfo
+    mp.commands.add('serverinfo', function(player, args)
+      mp.sendHttpRequest('http://127.0.0.1:2077/', function(status, body, headers, errorMessage)
+        local serverInfo = json.decode(body)
+
+        print(string.format('HTTP status: %s', status))
+        print('This server runs ' .. serverInfo.version)
+      end)
+    end)
+    ```
+  </TabItem>
+</Tabs>
+
+In JS, `await fetch(...)` gives you a response object; `response.json()` reads the body and parses it. In Lua, the body arrives as a string, and the global `json` table turns it into a Lua table (`json.decode`) or a table into a string (`json.encode`).
+
+This first version assumes that everything goes well. The next section deals with what happens when it doesn't.
+
+### The Lua callback
+
+`mp.sendHttpRequest(url, callback, method, data, headers, options)`: only `url` and `callback` are required. The callback receives four values:
+
+| Argument | When the request worked | HTTP error (for example 404) | No answer at all |
+| :--- | :--- | :--- | :--- |
+| `status` | the HTTP status, e.g. `200` | the HTTP status, e.g. `404` | `0` |
+| `body` | the response body, a string | `nil` | `nil` |
+| `headers` | a table of response headers | an empty table | an empty table |
+| `errorMessage` | `nil` | a text such as `HTTP 404: Not found` (the status, then the response body) | a text that describes the problem, e.g. `Error in curl: … Couldn't connect to server` |
+
+So one check is enough to know whether you have a usable answer: `errorMessage` is `nil` only when the request worked.
+
+## When the request fails
+
+A request can go wrong in three ways, and the two languages report them differently:
+
+| What went wrong | JS (`fetch`) | Lua (`mp.sendHttpRequest`) |
+| :--- | :--- | :--- |
+| The other side can't be reached (wrong address, service down, no network) | `fetch` throws an error | `status` is `0`, `errorMessage` is set |
+| It answers with an error status (404, 500…) | **no error is thrown**; `response.ok` is `false` | `errorMessage` is set, `body` is `nil` |
+| It answers, but the body is not what you expected | `response.json()` throws an error | `json.decode` returns `nil` |
+
+The JS column has a trap in the middle: a 404 or a 500 is a perfectly good answer as far as `fetch` is concerned. You have to look at `response.ok` (true for statuses 200 to 299) yourself.
+
+A small helper that handles all three cases keeps the rest of your code simple. This one returns the parsed JSON, or nothing when the request failed for any reason.
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="server.js"
+    // Requests a URL and returns the parsed JSON answer, or null when anything goes wrong.
+    async function getJson(url) {
+      try {
+        const response = await fetch(url);
+
+        if (!response.ok) {
+          console.log(`Request to ${url} failed: HTTP ${response.status}`);
+          return null;
+        }
+
+        return await response.json();
+      } catch (error) {
+        // We get here when the address can't be reached, or when the body is not valid JSON.
+        console.log(`Request to ${url} failed: ${error.message}`);
+        return null;
+      }
+    }
+
+    // Usage: apicheck <url>
+    mp.commands.add('apicheck', async (player, args) => {
+      const url = args[0];
+      if (!url) {
+        console.log('Usage: apicheck <url>');
+        return;
+      }
+
+      const data = await getJson(url);
+      if (data === null) {
+        return; // getJson has already logged the reason
+      }
+
+      console.log('The API answered:', data);
+    });
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="server.lua"
+    -- Requests a URL, then calls onDone with the decoded JSON answer,
+    -- or with nil when anything goes wrong.
+    local function getJson(url, onDone)
+      mp.sendHttpRequest(url, function(status, body, headers, errorMessage)
+        if errorMessage then
+          print(string.format('Request to %s failed: %s', url, errorMessage))
+          onDone(nil)
+          return
+        end
+
+        local data = json.decode(body)
+        if data == nil then
+          print(string.format('Request to %s failed: the answer is not valid JSON', url))
+        end
+
+        onDone(data)
+      end)
+    end
+
+    -- Usage: apicheck <url>
+    mp.commands.add('apicheck', function(player, args)
+      local url = args[1]
+      if not url then
+        print('Usage: apicheck <url>')
+        return
+      end
+
+      getJson(url, function(data)
+        if data == nil then
+          return -- getJson has already logged the reason
+        end
+
+        print('The API answered: ' .. json.encode(data))
+      end)
+    end)
+    ```
+  </TabItem>
+</Tabs>
+
+Lua has no `await`, so `getJson` can't *return* the data: the answer isn't there yet when the function ends. Instead you hand it a function (`onDone`) that it calls once the answer has arrived.
+
+:::caution
+`apicheck` requests whatever address it is given, which is fine for an operator's test command. Don't let players choose the URL in a real gamemode: your server would become a tool to send requests from your machine to any address, including services on your own network.
+:::
+
+## Sending data: a Discord webhook
+
+To *send* something, use the `POST` method and put the data in the request body. APIs usually expect JSON, and want a `Content-Type` header that says so.
+
+A [Discord webhook](https://support.discord.com/hc/en-us/articles/228383668-Intro-to-Webhooks) is a good example: Discord gives you a secret URL, and every JSON message you post to that URL shows up in a channel. This example announces players who join.
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="server.js"
+    // The webhook URL is a secret. It comes from an environment variable, not from this file.
+    const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL;
+
+    async function sendDiscordMessage(text) {
+      if (!DISCORD_WEBHOOK_URL) {
+        return; // no webhook configured, for example on a developer's machine
+      }
+
+      const message = {
+        content: text,
+        // Player names are free text. This stops a name like "@everyone" from pinging your Discord server.
+        allowed_mentions: { parse: [] },
+      };
+
+      try {
+        const response = await fetch(DISCORD_WEBHOOK_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(message),
+        });
+
+        if (!response.ok) {
+          console.log(`Discord refused the message: HTTP ${response.status}`);
+        }
+      } catch (error) {
+        console.log(`Could not reach Discord: ${error.message}`);
+      }
+    }
+
+    mp.events.on('playerConnected', (playerId, tempId) => {
+      const player = mp.players.at(playerId);
+      sendDiscordMessage(`${player.nickname} joined the server.`);
+    });
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="server.lua"
+    -- The webhook URL is a secret. It comes from an environment variable, not from this file.
+    local DISCORD_WEBHOOK_URL = os.getenv('DISCORD_WEBHOOK_URL')
+
+    local function sendDiscordMessage(text)
+      if not DISCORD_WEBHOOK_URL then
+        return -- no webhook configured, for example on a developer's machine
+      end
+
+      local message = {
+        content = text,
+        -- Player names are free text. This stops a name like "@everyone" from pinging your Discord server.
+        allowed_mentions = { parse = json.array({}) },
+      }
+
+      local function onAnswer(status, body, headers, errorMessage)
+        if errorMessage then
+          print('Could not send the Discord message: ' .. errorMessage)
+        end
+      end
+
+      local requestHeaders = { ['Content-Type'] = 'application/json' }
+
+      mp.sendHttpRequest(DISCORD_WEBHOOK_URL, onAnswer, 'POST', json.encode(message), requestHeaders)
+    end
+
+    mp.events.add('playerConnected', function(playerId, tempId)
+      local player = mp.players.at(playerId)
+      sendDiscordMessage(string.format('%s joined the server.', player.nickname))
+    end)
+    ```
+  </TabItem>
+</Tabs>
+
+A few things to notice:
+
+- The body is always a **string**. Build a table or object first, then encode it with `JSON.stringify` / `json.encode`. Passing a Lua table as the body does not work.
+- Nothing waits for the answer here. The `playerConnected` handler fires the request and returns; a slow Discord does not slow the player's connection down.
+- A failed message is logged and then forgotten. That is the right call for a join notification. For something that matters, such as a purchase, you would keep the data and try again later.
+
+### Where to keep the secret
+
+Anyone who knows the webhook URL can post to your channel, and the same goes for API keys and tokens. Treat them like passwords:
+
+- **Don't write them into a script.** Scripts end up in Git repositories, in screenshots and in zip files you share.
+- **Never put them in anything players download.** `client_script`, `shared_script` and everything listed in `file` is sent to every player's machine. A secret belongs in server-side code only.
+- **Read them from an environment variable**, as the example does. You set the variable in whatever starts the server: your shell, a service file, a Docker Compose file. The scripts read it with `process.env.NAME` (JS) or `os.getenv('NAME')` (Lua), and get `undefined` / `nil` when it isn't set. The official [Freeroam gamemode](https://github.com/Cyber-MP/CyberMP-Freeroam) reads its admin password this way.
+
+```shell title="Linux"
+DISCORD_WEBHOOK_URL="https://discord.com/api/webhooks/your-id/your-token" ./cybermp-server -run
+```
+
+```shell title="Windows (cmd)"
+set DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/your-id/your-token
+cybermp-server.exe -run
+```
+
+## Timeouts
+
+A service that is down usually fails fast. A service that is *slow* is worse: the connection opens, and then nothing comes back for a long time. If your code waits for the answer before letting a player in, that player is stuck. Decide how long you are willing to wait, and give up after that.
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    `fetch` can be cancelled through an `AbortController`. Start a timer that aborts the request, and cancel that timer when the request finishes in time. An aborted `fetch` throws an error, so it lands in the `catch` block like any other failure.
+
+    ```js title="server.js"
+    const REQUEST_TIMEOUT_MS = 5000;
+
+    // Like getJson, but gives up when the answer takes longer than REQUEST_TIMEOUT_MS.
+    async function getJsonWithTimeout(url) {
+      const abortController = new AbortController();
+      const timeoutTimer = setTimeout(() => abortController.abort(), REQUEST_TIMEOUT_MS);
+
+      try {
+        const response = await fetch(url, { signal: abortController.signal });
+
+        if (!response.ok) {
+          console.log(`Request to ${url} failed: HTTP ${response.status}`);
+          return null;
+        }
+
+        return await response.json();
+      } catch (error) {
+        if (error.name === 'AbortError') {
+          console.log(`Request to ${url} took longer than ${REQUEST_TIMEOUT_MS} ms and was cancelled.`);
+        } else {
+          console.log(`Request to ${url} failed: ${error.message}`);
+        }
+        return null;
+      } finally {
+        // Runs in every case. Without it, the timer would stay pending after a fast answer.
+        clearTimeout(timeoutTimer);
+      }
+    }
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    `mp.sendHttpRequest` has no timeout setting and a request can't be cancelled. What you can do is stop *waiting*: start a timeout next to the request, and let whichever finishes first report the result. The `finished` flag makes sure `onDone` is called only once.
+
+    ```lua title="server.lua"
+    local REQUEST_TIMEOUT_MS = 5000
+
+    -- Like getJson, but calls onDone(nil) when the answer takes longer than REQUEST_TIMEOUT_MS.
+    local function getJsonWithTimeout(url, onDone)
+      local finished = false
+
+      mp.setTimeout(function()
+        if finished then
+          return -- the answer arrived in time
+        end
+
+        finished = true
+        print(string.format('Request to %s took longer than %s ms. Not waiting any longer.', url, REQUEST_TIMEOUT_MS))
+        onDone(nil)
+      end, REQUEST_TIMEOUT_MS)
+
+      getJson(url, function(data)
+        if finished then
+          return -- too late, we already gave up
+        end
+
+        finished = true
+        onDone(data)
+      end)
+    end
+    ```
+  </TabItem>
+</Tabs>
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="server.js"
+    // Usage: apichecktimed <url>
+    mp.commands.add('apichecktimed', async (player, args) => {
+      const data = await getJsonWithTimeout(args[0]);
+      if (data !== null) {
+        console.log('The API answered in time:', data);
+      }
+    });
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="server.lua"
+    -- Usage: apichecktimed <url>
+    mp.commands.add('apichecktimed', function(player, args)
+      getJsonWithTimeout(args[1], function(data)
+        if data ~= nil then
+          print('The API answered in time: ' .. json.encode(data))
+        end
+      end)
+    end)
+    ```
+  </TabItem>
+</Tabs>
+
+:::note[JS: `AbortSignal.timeout`]
+Node's shortcut `fetch(url, { signal: AbortSignal.timeout(5000) })` works in server scripts too, but when it fires, the rejection value is the plain string `'TimeoutError'` instead of an error object, so `error.name` and `error.message` are `undefined`. The `AbortController` version above gives you a normal error.
+:::
+
+## Good to know
+
+- **The answer arrives later, and things change in the meantime.** If you look something up for a player, that player may have disconnected when the answer comes in. Keep the player's ID, and check `mp.players.exists(playerId)` in the code that handles the answer. [Timers and scheduled work](/guides/server/timers/#the-world-changes-while-you-wait) shows the pattern.
+- **Don't send a request for every small event.** One request per connecting player is fine. One per `damage` or `shootAction` event is hundreds per minute, and most APIs limit how fast you may call them. Discord, for instance, answers with HTTP 429 when you post too quickly. Collect things and send them in one message, or drop what isn't important.
+- **Redirects are followed** in both languages. In Lua you can switch that off with the last argument: `mp.sendHttpRequest(url, callback, 'GET', nil, nil, { followRedirects = false })`. You then get the 3xx status itself, with the target in the `Location` response header.
+- **The default `User-Agent`** is `node` for `fetch` and `lua-HTTP` for `mp.sendHttpRequest`. Some APIs ask you to identify your application; pass your own `User-Agent` header in that case.
+- **Lua: empty tables.** `json.encode({})` produces `[]`. For most APIs that makes no difference, but when a field must be an empty *object*, write `json.object({})`; `json.array({})` states the opposite explicitly.
+- **JS: you have the rest of Node too.** `URL` and `URLSearchParams` for building query strings, `Headers`, `FormData` and `WebSocket` are available as globals, and Node modules can be loaded with `require` (see [Saving data](/guides/server/saving-data/#files-in-javascript)).
+
+## Next steps
+
+- [Timers and scheduled work](/guides/server/timers/): retry later, or check an API on a repeat.
+- [Saving data](/guides/server/saving-data/): keep what you fetched, and hash passwords before you send or store them.
+- [Working with Players](/guides/server/players/#player-lifecycle): the events you will usually send requests from.
+- [`mp.sendHttpRequest`](/reference/lua/server/#mp-sendhttprequest): the Lua reference entry.
