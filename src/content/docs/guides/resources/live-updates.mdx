@@ -1,21 +1,21 @@
 ---
 title: Live updates
-description: CyberMP Server Configuration
+description: Apply script changes to a running CyberMP server by restarting a single resource instead of the whole server.
 ---
 import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
 import { SCRIPT_LANG_TAB_SYNC_KEY } from '../../../../lib/const';
 
-One of the most powerful features of the CyberMP Server is the ability to update your scripts without restarting the entire server process. This is essential for fast iteration and debugging.
+When you change a script, you don't need to restart the whole server. Restarting just the resource you edited is enough: the server stops it and loads its files again from disk.
 
-### Prerequisites
+## Prerequisites
 - A running CyberMP Server.
-- Access to the Server Console.
-- An active resource (e.g., the `hello_world` resource from the [previous](/guides/resources/creating-resource) guide).
+- Access to the [server console](/reference/server/console).
+- A running resource, for example `hello_world` from the [previous](/guides/resources/creating-resource) guide.
 
-### Steps
+## Steps
 
 <Steps>
-    1. #### Modify the Script
+    1. #### Modify the script
 
         <Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
             <TabItem label="JS">
@@ -23,45 +23,95 @@ One of the most powerful features of the CyberMP Server is the ability to update
 
                 ```js title="server.js" ins={2}
                 console.log('Hello World from CyberMP Server!');
-                console.log("The resource has been updated live!");
+                console.log('The resource has been updated live!');
                 ```
             </TabItem>
             <TabItem label="Lua">
-                 Open `resources/hello_world/server.lua` and add a new line of code:
+                Open `resources/hello_world/server.lua` and add a new line of code:
 
                 ```lua title="server.lua" ins={2}
-                print("Hello World from CyberMP Server!")
-                print("The resource has been updated live!")
+                print('Hello World from CyberMP Server!')
+                print('The resource has been updated live!')
                 ```
             </TabItem>
         </Tabs>
 
-    2. #### Issue the Restart Command
-        In your Server Console, execute the restart command followed by your resource folder name:
+        Saving the file changes nothing yet: the server keeps running the version it loaded earlier.
+
+    2. #### Restart the resource
+        In the server console, type `restart` followed by the resource folder name:
         ```shell
         restart hello_world
         ```
 
-    3. #### Verify the Output
-        The server will immediately stop the old instance and initialize the new code. You should see the updated logs appear:
-
-        The following content should be in your console:
+    3. #### Check the output
+        The server stops the old instance, then runs the new code. Your console shows:
         ```ansi
-        [38;2;179;133;0m[00:00:00] [Resources][0m Stopped resource hello_world
-        [38;2;179;133;0m[00:00:00] [script:hello_world][0m Hello World from CyberMP Server!
-        [38;2;179;133;0m[00:00:00] [script:hello_world][0m The resource has been updated live!
-        [38;2;179;133;0m[00:00:00] [Resources][0m Loaded resource hello_world
+        [38;2;179;133;0m[00:00:00] [resources][0m Stopped resource hello_world
+        [38;2;179;133;0m[00:00:00] [hello_world][0m Hello World from CyberMP Server!
+        [38;2;179;133;0m[00:00:00] [hello_world][0m The resource has been updated live!
+        [38;2;179;133;0m[00:00:00] [resources][0m Loaded resource hello_world
         >
         ```
 
 </Steps>
 
-## Client-Side Updates
+## What a restart resets
 
-The restart command also applies to Client Scripts. When you restart a resource on the server, all connected clients will automatically re-download and restart that specific resource's client-side logic.
+A restart throws the old script instance away and runs the file again from the top, so its variables, event handlers, commands and timers (`setTimeout`, `setInterval`) start from scratch. The resource gets a `resourceStop` event before it stops and a `resourceStart` event when it starts again. (`resourceStop` belongs to `stop` and `restart` only: it does not fire when the server itself shuts down with `quit`, so [don't save data there](/guides/server/saving-data/#when-to-save).)
 
-## Automated Updates
+:::caution
+Entities created by the resource (vehicles, peds, objects, pickups) are **not** removed when it stops. Destroy them in a `resourceStop` handler, otherwise every restart leaves another copy in the world.
+:::
 
-If you find manually typing restart inconvenient during heavy development, you can automate this process.
+Two things are **not** reset, because they live in the server and not in your script:
 
-Check out the [Hotreload](/guides/recipes/hotreload) Guide to learn how to set up an automated development environment.
+| Survives a restart | What to do about it |
+| :--- | :--- |
+| Entities the resource created | Destroy them in `resourceStop` (see the caution above). |
+| Global [metadata](/guides/server/meta/) | Nothing, usually. It is a handy place for small state you want to keep across restarts while developing. |
+
+Connected players stay connected too, and `playerConnected` does not fire again for them. If your script builds per-player state in that event, also build it at startup for the players who are already there:
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+    <TabItem label="JS">
+        ```js title="server.js"
+        function setUpPlayer(player) {
+          console.log(`Setting up ${player.nickname}`);
+        }
+
+        mp.events.on('playerConnected', (playerId) => {
+          setUpPlayer(mp.players.at(playerId));
+        });
+
+        // After a restart: players who connected before this script was loaded.
+        for (const player of mp.players.toArray()) {
+          setUpPlayer(player);
+        }
+        ```
+    </TabItem>
+    <TabItem label="Lua">
+        ```lua title="server.lua"
+        local function setUpPlayer(player)
+          print(string.format("Setting up %s", player.nickname))
+        end
+
+        mp.events.add('playerConnected', function(playerId)
+          setUpPlayer(mp.players.at(playerId))
+        end)
+
+        -- After a restart: players who connected before this script was loaded.
+        for _, player in ipairs(mp.players.toArray()) do
+          setUpPlayer(player)
+        end
+        ```
+    </TabItem>
+</Tabs>
+
+## Client-side updates
+
+The restart command also applies to client scripts. When you restart a resource on the server, all connected clients automatically re-download and restart that resource's client-side scripts.
+
+## Automated updates
+
+If typing `restart` after every save gets tedious, you can automate it. The [Hotreload](/guides/recipes/hotreload) recipe shows how to watch your files and restart the resource when they change.

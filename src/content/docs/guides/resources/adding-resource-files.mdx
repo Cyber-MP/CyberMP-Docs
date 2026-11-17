@@ -1,36 +1,43 @@
 ---
 title: Adding resource files
-description: Learn how to include external assets, game mods, and UI files using the file property.
+description: Use the file property of resource.toml to send game archives, UI pages and other assets to players.
 ---
-The `file` property in your `resource.toml` manifest is used to specify which additional assets and client-side files need to be recognized, loaded, and streamed by the CyberMP server runtime.
+Scripts are not the only thing a resource can ship. Game mods, map archives and the HTML, CSS and images of a browser UI also have to reach the player's machine. The `file` property in `resource.toml` is the list of those extra files: what you list there is sent to players, what you don't list stays on the server.
 
-In this guide, we will focus entirely on how to configure the `file` property to manage your resource assets.
+## The `file` property
 
-## Understanding the `file` Property
+`file` is an array of paths, relative to the resource folder. Any asset that your client script or UI page needs must be listed in it. This includes custom game mods, map assets, 3D models, textures, and user interface files (HTML, CSS and JS for CEF, the embedded browser).
 
-   Any asset that your client script or UI page needs to access must be explicitly defined here. This includes custom game mods, map assets, 3D models, textures, and user interface files (HTML, CSS, JS for CEF).
+```toml title="resource.toml"
+file = [
+  "./assets/in_world_navigation.archive",
+  "./assets/de_dust2/*",
+  "./ui/*",
+  "./ui/assets/*"
+]
+```
 
-   Here is an example configuration utilizing the `file` array:
+:::note
+A file that exists in the folder but is missing from `file` is not sent to players. If a UI page shows up without its styles or images, check this list first.
+:::
 
-   ```toml title="resource.toml"
-   file = [
-     "./assets/in_world_navigation.archive",
-     "./assets/de_dust2/*",
-     "./ui/*",
-     "./ui/assets/*"
-   ]
-   ```
+## Wildcard patterns (`*`)
 
-## Using Wildcard Patterns (`*`)
+Listing dozens of UI icons or map assets one by one gets old quickly, so a path can end with `*` to include a whole folder.
 
-   Manually listing dozens of UI icons or map assets can quickly clutter your configuration file. To solve this, the `file` array supports wildcard matching using the `*` symbol.
+* `./ui/*` includes every file that sits directly inside the `ui` folder.
 
-   * `./ui/*` — Directs CyberMP to include every file sitting inside the root of the `browser` folder.
-   > **Note:** Wildcard tracking is directory-specific. If you have subfolders inside a path (like a dedicated assets folder inside your browser UI), make sure to add a separate pattern for it, such as `./ui/assets/*`.
+The wildcard covers **one directory level only**. Files in subfolders are not picked up, so each subfolder needs its own pattern. That is why the example above lists both `./ui/*` and `./ui/assets/*`.
 
-## Supported Asset Types vs. Scripting Files
+## Game assets and script files
 
-   When you declare assets in the `file` array, CyberMP automatically loads them directly into the game at startup.
+When you declare game assets in the `file` array, CyberMP loads them into the game at startup.
 
-   * **Supported Game Assets & Mods:** Custom archives, placement data, and engine tweaks such as `.archive`, `.xl`, `.tweak`, `.redscripts`, `.yaml` and `.yml` files are fully supported and injected directly into the game.
-   * **Scripting Restrictions:** This automatic injection **does not apply** to standalone scripting files like `.js` (aside from frontend CEF scripts) or `.lua`. Game-level scripts must be handled through `client_script` property of resource rather than the raw asset pipeline. (except for redscript files, these should be compiled and included into file property)
+* **Supported game assets and mods:** custom archives, placement data and engine tweaks such as `.archive`, `.xl`, `.tweak`, `.redscripts`, `.yaml` and `.yml` files are supported and injected directly into the game.
+* **Script files are different:** this automatic loading does **not** apply to `.js` or `.lua` files. A script that should run in the game goes into the `client_script` property of the resource, not into `file`. The JavaScript used by a CEF page is the exception, because it is part of the UI and has to be listed like any other UI file. Redscript must be compiled, and the resulting `.redscripts` file listed in `file`.
+
+## Related
+
+- The page a resource shows is set with `cef_url`; see [Creating your first CEF UI](/guides/client/first-cef-ui).
+- Large files make joining slower. [CDN](/guides/server/cdn) explains how to serve them from somewhere other than the game server.
+- After you change `file` on a running server, run `refresh` in the console so the manifest is read again (see [Interacting with resources](/guides/resources/interacting-with-resources)).

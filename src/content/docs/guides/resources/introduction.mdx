@@ -1,18 +1,21 @@
 ---
 title: Introduction to resources
+description: What a CyberMP resource is, how its folder is laid out and what goes into resource.toml.
 ---
 import { FileTree, Tabs, TabItem } from '@astrojs/starlight/components';
 import { SCRIPT_LANG_TAB_SYNC_KEY } from '../../../../lib/const';
 
 ## What are resources
 
-Resources are a fundamental part of the CyberMP server. They consist of modular files, assets, data, and game scripts executed on both the server-side and client-side. These resources provide custom features, gameplay mechanics, and content within the CyberMP multiplayer environment.
+A resource is a folder that holds one piece of your server: its scripts, a small manifest and any files players need to download. A resource can be a whole gamemode or a single feature such as a chat, a speedometer or a set of admin commands.
 
-Resources are organized in subfolders within the `resources/` directory located at the root of the CyberMP server. Each resource folder acts as an isolated package containing specific files and scripts that contribute to the server's overall operation and gameplay experience.
+Everything you add to a CyberMP server is a resource. Splitting your work into several of them lets you start, stop and restart each part on its own while the server keeps running.
+
+Resources live in the `resources/` directory at the root of the server. The folder name is the resource's name: it is what you list in `server.toml`, type in the console and see in the logs.
 
 ## Structure
 
-The `resources/` directory contains all the resources currently installed on the server. Each resource is contained within its own subfolder and requires a configuration manifest (such as `resource.toml`) to be present.
+Each resource has its own subfolder with a `resource.toml` manifest in it. Apart from the manifest, the layout inside the folder is up to you.
 
 <Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
     <TabItem label="JS">
@@ -41,9 +44,53 @@ The `resources/` directory contains all the resources currently installed on the
     </TabItem>
 </Tabs>
 
+In this example, `freeroam` is one resource made of three parts:
 
-Within the provided example, the `freeroam` directory represents a single resource on the server, containing the following components:
+* **client:** scripts that are sent to every player and run inside their game.
+* **server:** scripts that run on the server and never leave it.
+* **resource.toml:** the manifest. It tells the server which scripts to run on which side and which extra files to send to players.
 
-* **client:** Contains all client-side scripts and UI files that are downloaded and executed on the player's machine.
-* **server:** Contains all server-side scripts, database logic, and synchronization rules executed directly by the host server.
-* **resource.toml:** Defines the configuration settings, entry points, dependencies, and metadata for the resource.
+A resource doesn't need both sides: leave out `client_script` and it runs on the server only.
+
+## The manifest
+
+`resource.toml` for the example above would look like this:
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+    <TabItem label="JS">
+        ```toml title="resource.toml"
+        server_script = './server/index.js'
+        client_script = './client/index.js'
+        ```
+    </TabItem>
+    <TabItem label="Lua">
+        ```toml title="resource.toml"
+        server_script = './server/index.lua'
+        client_script = './client/index.lua'
+        ```
+    </TabItem>
+</Tabs>
+
+Paths are relative to the resource folder. These are the keys you will meet in the guides:
+
+| Key | What it does |
+| :--- | :--- |
+| `server_script` | Script to run on the server. A path, or an array of paths. |
+| `client_script` | Script to run in each player's game. A path, or an array of paths. |
+| `file` | Extra files players download: game archives, UI pages, images. See [Adding resource files](/guides/resources/adding-resource-files). |
+| `cef_url` | HTML page to load as the resource's browser UI. See [Creating your first CEF UI](/guides/client/first-cef-ui). |
+| `use_game_natives` | Set to `true` to let client scripts call the game's own functions. See [Spawning the player](/guides/client/spawning-player). |
+
+The complete list is in the [Resource Configuration](/reference/server/resource-configuration) reference.
+
+## Loading resources
+
+A resource only runs if the server is told to start it. The `resources` array in `server.toml` lists the ones to start at boot, in order:
+
+```toml title="server.toml"
+resources = ['freeroam']
+```
+
+While the server is running you can also start, stop and restart resources from the console; see [Interacting with resources](/guides/resources/interacting-with-resources).
+
+Ready to write one? Continue with [Creating resources](/guides/resources/creating-resource).

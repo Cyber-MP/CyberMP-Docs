@@ -1,0 +1,60 @@
+---
+title: Resource Configuration
+description: Reference for resource.toml, the manifest that tells the server which scripts and files a resource is made of.
+---
+
+import SchemaTable from '../../../../components/SchemaTable.astro';
+
+{/* The table below is generated from src/schemas/resource.schema.json; these are its descriptions. */}
+
+export const keyNotes = {
+  "server_script": "Script, or list of scripts, to run on the server. `.js` and `.lua` files are supported.",
+  "client_script": "Script, or list of scripts, sent to every player and run inside their game. `.js` and `.lua` files are supported.",
+  "shared_script": "Script, or list of scripts, shared by both the server and the client. On the server it runs before `server_script`; for JavaScript both run in the same script context, so globals defined by the shared script are visible to the server script.",
+  "cef_url": "Entry point of the resource's browser UI. See [Your first CEF UI](/guides/client/first-cef-ui).",
+  "file": "Extra files players download: game archives, UI pages, images. `*` matches the files of one folder, not its subfolders. See [Adding resource files](/guides/resources/adding-resource-files).",
+  "use_game_natives": "Lets the resource's client scripts call the game's native functions through `mp.game`. See [Working with game natives](/reference/client/working-with-game-natives)."
+};
+
+Every resource has a `resource.toml` file in its folder. It is the manifest: it tells the server which scripts to run on which side, which page to load as the UI and which extra files players have to download. The folder name is the resource's name; the manifest doesn't set it.
+
+For an introduction to resources themselves, see [Introduction to resources](/guides/resources/introduction).
+
+## TOML schema & example
+
+To get autocomplete and validation in editors that support TOML schemas (such as the Even Better TOML VS Code extension), add the schema header at the top of the file:
+
+```toml title="resource.toml"
+#:schema https://schemas.cyber.mp/resource/schema.json
+
+server_script = './server/index.js'
+client_script = './client/index.js'
+
+cef_url = './ui/index.html'
+file = ['./ui/*', './assets/*']
+
+use_game_natives = true
+```
+
+All paths are relative to the resource folder.
+
+## Keys
+
+Every key is optional. A resource with only `server_script` never sends anything to players; one with only `client_script` runs in the game only.
+
+<SchemaTable schema="resource" notes={keyNotes} />
+
+A list of scripts is loaded in the order you write it:
+
+```toml title="resource.toml"
+client_script = ['./dist/client.js', './dist/main.lua']
+```
+
+## Other keys
+
+The six keys above are the ones defined by the [official schema](https://schemas.cyber.mp/resource/schema.json). The manifest accepts keys beyond them, and the server ignores those it doesn't know. Two uses are common:
+
+- **Describing the resource.** Keys such as `author`, `description` and `version` are plain metadata for whoever reads the file.
+- **Passing options to other resources.** A resource can read any manifest with `mp.resources.getTOML(name)` in JavaScript (`mp.resources.getTomlFile(name)` in Lua). The [hotreload](/guides/recipes/hotreload) watcher works this way: it restarts the resources whose manifest contains `hotreload = true`.
+
+After you change a `resource.toml` while the server is running, type [`refresh`](/reference/server/console) in the server console so the server reads it again, then `restart` the resource.

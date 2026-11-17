@@ -6,7 +6,8 @@
     "dev": "astro dev --host",
     "build": "astro build",
     "preview": "astro preview",
-    "astro": "astro"
+    "astro": "astro",
+    "sync:schemas": "curl -sfL https://schemas.cyber.mp/server/schema.json -o src/schemas/server.schema.json && curl -sfL https://schemas.cyber.mp/resource/schema.json -o src/schemas/resource.schema.json"
   },
   "engines": {
     "node": ">=20"

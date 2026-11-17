@@ -1,31 +1,50 @@
 ---
 title: Introduction
-description: CyberMP documentation structure and first run
+description: What CyberMP is, how a server, its resources and scripts fit together, and where to start reading.
 ---
+import { CardGrid, LinkCard } from '@astrojs/starlight/components';
 
-CyberMP is a dedicated-server multiplayer platform for Cyberpunk 2077 where game logic runs through server-loaded JavaScript or Lua resources. This documentation is strictly for developers, not players.
+CyberMP is a multiplayer platform for Cyberpunk 2077. You run a dedicated server, players connect to it with the CyberMP client, and what happens on your server (spawning, vehicles, chat, game modes, UI) is decided by scripts you write.
 
-{/* ## First run*/}
+These docs are for people who build servers: scripters and server owners. If you only want to play, you don't need anything here.
 
-{/* <CardGrid>
+## How the pieces fit
+
+| Piece | What it is |
+| :--- | :--- |
+| **Server** | A standalone program (Windows, Linux or Docker). It accepts connections, keeps players and entities in sync, and runs your server scripts. It is configured with one file, `server.toml`. |
+| **Resource** | A folder inside `resources/` that holds one feature or a whole gamemode: scripts, a `resource.toml` manifest and any files the client needs. The server loads the resources you list in `server.toml`. |
+| **Server script** | Code that runs on the server. It owns everything players must agree on: who is connected, which vehicles exist, who is allowed to do what. |
+| **Client script** | Code that the server sends to each player and that runs inside their game. It can call the game's own functions, so this is where you spawn the local player or change how the game behaves. |
+| **Browser UI (CEF)** | An HTML page drawn on top of the game with CEF, the Chromium Embedded Framework. You use it for HUDs, menus and anything else that is easier to build as a web page. |
+
+The three sides talk to each other with events: a client script can send an event to the server and the other way round, and a client script can exchange events with its browser page.
+
+Server and client scripts can be written in **JavaScript** or **Lua**. Both give you the `mp` API (a few functions are named differently between the two), and the examples in these guides come in both. Pick whichever you prefer.
+
+## Where to go next
+
+<CardGrid>
   <LinkCard
-    title="Install the client"
-    href="/guides/getting-started/install-client"
-    description="Cyberpunk 2077 and the CyberMP client"
-  />
-  <LinkCard
-    title="Install the server"
-    href="/guides/getting-started/install-server"
-    description="Docker or binary, server.toml"
-  />
-  <LinkCard
-    title="Run the server"
-    href="/guides/getting-started/run-server"
-    description="Start the process and verify the port"
+    title="Getting started"
+    href="/guides/getting-started"
+    description="Download the server, write a server.toml and start it."
   />
   <LinkCard
     title="Create a resource"
     href="/guides/resources/creating-resource"
-    description="Hello World in resources/"
+    description="Hello World: one server script, one client script."
   />
-</CardGrid>*/}
+  <LinkCard
+    title="Server scripting"
+    href="/guides/server/players"
+    description="Players, vehicles, events, commands and meta."
+  />
+  <LinkCard
+    title="Client scripting"
+    href="/guides/client/spawning-player"
+    description="Spawn the player, handle events, build a CEF UI."
+  />
+</CardGrid>
+
+Once you know your way around, the [reference](/reference/server/configuration) section has every `server.toml` option, the [console commands](/reference/server/console) and the full API for the server, the client and the browser.

@@ -95,6 +95,7 @@ export default defineConfig({
                       collapsed: true,
                     },
                     "reference/server/configuration",
+                    "reference/server/resource-configuration",
                     "reference/server/console",
                   ],
                 },

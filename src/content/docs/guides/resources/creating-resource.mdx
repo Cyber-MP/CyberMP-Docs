@@ -1,27 +1,26 @@
 ---
 title: Creating resources
-description: .
+description: Build a Hello World resource with a server script and a client script, load it from server.toml and check the output on both sides.
 ---
 import { FileTree, Tabs, TabItem, Steps } from '@astrojs/starlight/components';
 import { SCRIPT_LANG_TAB_SYNC_KEY } from '../../../../lib/const';
 
-This tutorial will guide you through creating a simple "Hello World" resource to learn the basic structure of CyberMP resource scripting.
+Here you build the smallest useful resource: one script that prints a message in the server console and one that prints a message in the player's game console. It shows the three things every resource needs: a folder, a manifest and an entry in `server.toml`.
 
-By the end of this guide, you will have a resource that prints a message to the both client and server console when it starts.
+You need a server that starts. If you don't have one yet, follow [Getting started](/guides/getting-started) first.
 
 <Steps>
 
-1. ## Create the Resource Folder
+1. ## Create the resource folder
 
-    CyberMP identifies resources by their folder names within the resources directory.
+    CyberMP identifies a resource by the name of its folder inside `resources`.
 
-    - Navigate to your server's resources folder.
-    - Create a new folder named `hello_world`. This is your resource directory.
-    ---
+    - Navigate to your server's `resources` folder.
+    - Create a new folder named `hello_world`. This is your resource directory, and `hello_world` is the resource's name from now on.
 
-2. ## Configure the Resource
+2. ## Configure the resource
 
-    Every resource requires a `resource.toml` file to define its entry points and behavior.
+    Every resource needs a `resource.toml` file. It tells the server which script to run on the server and which one to send to players.
 
     - Inside the `hello_world` folder, create a file named `resource.toml`.
     - Paste the following configuration into the file:
@@ -41,14 +40,11 @@ By the end of this guide, you will have a resource that prints a message to the 
         </TabItem>
     </Tabs>
 
-3. ## Write the Script
-
-    Now, create the actual logic for your resource.
-
+3. ## Write the scripts
 
     <Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
         <TabItem label="JS">
-            - In the same folder, create a two files `client.js` and `server.js`
+            - In the same folder, create two files: `server.js` and `client.js`.
             - Add the following code:
 
             ```js title="server.js" ins={1}
@@ -58,49 +54,8 @@ By the end of this guide, you will have a resource that prints a message to the 
             ```js title="client.js" ins={1}
             console.log('Hello World from CyberMP Client!');
             ```
-        </TabItem>
-        <TabItem label="Lua">
-            - In the same folder, create a two files `client.lua` and `server.lua`
-            - Add the following code:
 
-            ```lua title="server.lua" ins={1}
-            print('Hello World from CyberMP Server!')
-            ```
-
-            ```lua title="client.lua" ins={1}
-            print('Hello World from CyberMP Client!')
-            ```
-        </TabItem>
-    </Tabs>
-
-
-4. ## Load the Resource
-
-    To see your resource in action, you need to tell the server to load it.
-
-    - Open your `server.toml` (located in the server root directory).
-    - Locate the resources array and add your folder name:
-
-    ```toml title="server.toml" ins={7}
-    tcp_host = "0.0.0.0:2077"
-    udp_host = "0.0.0.0:2077"
-
-    connection_host_addr = "127.0.0.1:2077"
-    max_players = 20
-
-    resources = ['hello_world']
-
-    disable_VoIP_server = false
-
-    steam_api_key = "none"
-    ```
-
-5. ## Verify the Result
-
-
-    <Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
-        <TabItem label="JS">
-            Your final structure should look something like this:
+            Your folder should now look like this:
             <FileTree>
                 - resources
                     - hello_world
@@ -111,7 +66,18 @@ By the end of this guide, you will have a resource that prints a message to the 
             </FileTree>
         </TabItem>
         <TabItem label="Lua">
-            Your final structure should look something like this:
+            - In the same folder, create two files: `server.lua` and `client.lua`.
+            - Add the following code:
+
+            ```lua title="server.lua" ins={1}
+            print('Hello World from CyberMP Server!')
+            ```
+
+            ```lua title="client.lua" ins={1}
+            print('Hello World from CyberMP Client!')
+            ```
+
+            Your folder should now look like this:
             <FileTree>
                 - resources
                     - hello_world
@@ -123,15 +89,38 @@ By the end of this guide, you will have a resource that prints a message to the 
         </TabItem>
     </Tabs>
 
-    Start your server. If everything is configured correctly, you will see your message in the console logs during the initialization phase:
+4. ## Load the resource
 
-    ```ansi {3}
-    [38;2;179;133;0m[00:00:00] [Server][0m CyberMP server starting...
-    [38;2;179;133;0m[00:00:00] [Server][0m Resources initializing...
-    [38;2;179;133;0m[00:00:00] [script:hello_world][0m Hello World from CyberMP!
-    [38;2;179;133;0m[00:00:00] [Resources][0m Loaded resource hello_world
+    The server only starts the resources listed in its configuration.
+
+    - Open your `server.toml` (located in the server root directory).
+    - Add the folder name to the `resources` array and leave the rest of the file as it is:
+
+    ```toml title="server.toml" ins={2}
+    # Names of the resource folders to load, in order.
+    resources = ['hello_world']
     ```
 
-    If you connect to the server, and press `F8` to open client console, you should see client log.
+5. ## Verify the result
+
+    Start your server. The server script runs while the resource is loading, so its message shows up in the startup logs, prefixed with the resource name:
+
+    ```ansi {4}
+    [38;2;179;133;0m[00:00:00] [server][0m CyberMP server starting...
+    [38;2;179;133;0m[00:00:00] [server][0m Resources initializing...
+    [38;2;179;133;0m[00:00:00] [resources][0m Loaded resource cybermp_core
+    [38;2;179;133;0m[00:00:00] [hello_world][0m Hello World from CyberMP Server!
+    [38;2;179;133;0m[00:00:00] [resources][0m Loaded resource hello_world
+    [38;2;179;133;0m[00:00:00] [server][0m Succesfully binded host 0.0.0.0:2077
+    [38;2;179;133;0m[00:00:00] [server][0m Server started
+    ```
+
+    The client script runs in the game, so its message never appears in the server console. To see it, connect to the server and press `F8` to open the client console: it shows `Hello World from CyberMP Client!`.
 
 </Steps>
+
+## What's next
+
+- Change a script and reload it without restarting the server: [Live updates](/guides/resources/live-updates).
+- Start and stop resources from the console: [Interacting with resources](/guides/resources/interacting-with-resources).
+- Do something real on the server: [Players](/guides/server/players) and [Events](/guides/server/events).

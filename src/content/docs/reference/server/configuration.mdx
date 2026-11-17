@@ -3,9 +3,78 @@ title: Server Configuration
 description: Complete reference for the CyberMP server.toml configuration file, gameplay core settings, and environment overrides.
 ---
 
-The CyberMP server is configured using the `server.toml` file located in the server root directory. At runtime, server scripts can read these configuration parameters via `mp.config` in JavaScript or `json.decode(mp.getServerTomlFile())` in Lua.
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import { SCRIPT_LANG_TAB_SYNC_KEY } from '../../../../lib/const';
+import SchemaTable from '../../../../components/SchemaTable.astro';
 
----
+{/* The tables on this page are generated from src/schemas/server.schema.json.
+    The schema decides which keys exist, their type and whether they are required.
+    The texts below are the longer explanations shown in the Description column. */}
+
+export const rootNotes = {
+  "tcp_host": "TCP bind host and port for control connections.",
+  "udp_host": "UDP bind host and port for gameplay synchronization.",
+  "connection_host_addr": "The public endpoint clients use to connect. Broadcasted in masterlist heartbeats. Without it the server still starts, but logs `[Warn] connection_host_addr is null`.",
+  "max_players": "Maximum number of concurrent player slots.",
+  "resources": "Ordered list of resource folder names to load on startup. The built-in `cybermp_core` resource is always loaded first and doesn't need to be listed.",
+  "private_token": "Masterlist server token. Leave empty for private/local servers.",
+  "disable_voice": "When `true`, disables the built-in 3D positional VoIP server. See [Voice chat](/guides/server/voice-chat/).",
+  "cef_debug": "Enables Chromium remote debugging for CEF interfaces on port `9222`.",
+  "ep2_dlc_enabled": "Enables content from the Phantom Liberty expansion DLC."
+};
+
+export const rootDefaults = {
+  "tcp_host": "\"0.0.0.0:2077\"",
+  "udp_host": "\"0.0.0.0:2077\"",
+  "connection_host_addr": "\"127.0.0.1:2077\"",
+  "resources": "[]",
+  "private_token": "\"\"",
+  "cef_debug": "false"
+};
+
+export const coreNotes = {
+  "nametags": "Renders `[ID] Nickname` overhead markers within 8 meters.",
+  "death_autostand": "Automatically plays stand-up animation if health regenerates above 0.",
+  "disable_switch_seats": "Prevents players from switching seats while inside vehicles.",
+  "default_gameplay_restrictions": "Enforces standard multiplayer restrictions (disables Photo Mode, scanning, fast travel, and phone calls).",
+  "disable_drop_points": "Disables singleplayer drop point containers across Night City.",
+  "disable_location_dependent_quests": "Automatically completes tracked vanilla journal quests to prevent narrative conflicts.",
+  "disable_garage": "Prevents vanilla vehicle summoning from opening the singleplayer garage interface.",
+  "delete_map_objects": "Removes vanilla map objects from the world.",
+  "files": "Optional list of archives or redscripts from `cybermp_core/files/` streamed to clients."
+};
+
+export const coreDefaults = {
+  "nametags": "true",
+  "death_autostand": "true",
+  "disable_switch_seats": "true",
+  "default_gameplay_restrictions": "true",
+  "disable_drop_points": "true",
+  "disable_location_dependent_quests": "true",
+  "disable_garage": "true",
+  "delete_map_objects": "true",
+  "files": "[]"
+};
+
+export const overrideNotes = {
+  "change_player_on_death_logic": "Overrides `PlayerPuppet.OnDeath` so server scripts control death and respawn handling.",
+  "disable_side_quests_notifications": "Suppresses quest tracking popups and journal notifications on the client HUD.",
+  "change_vehicles_logic": "Overrides vanilla vehicle summoning, vehicle hijacking, and mounting checks.",
+  "disable_player_inventory_encumbrance": "Disables character movement slow-down when carrying excess weight.",
+  "player_extended_customization": "Enables character mirror customization in NewGame edit mode.",
+  "disable_time_skip": "Disables the wait/skip time menu.",
+  "disable_turrets": "Disables hostile automated security turrets in the world.",
+  "disable_surveillance_cameras": "Disables security surveillance camera devices.",
+  "disable_vending_machines": "Disables interactive vending machines.",
+  "disable_generic_devices": "Disables interactive doors, netrunner panels, and security lockers.",
+  "disable_no_combat": "Removes peaceful \"No Combat\" zone restrictions across the city."
+};
+
+The CyberMP server is configured with the `server.toml` file. The server reads it, and the `resources` folder, from the directory it is started in.
+
+At runtime, server scripts can read the configuration via `mp.config` in JavaScript or `json.decode(mp.getServerTomlFile())` in Lua. Both contain only the keys that are present in the file, not the defaults.
+
+To see the values the running server actually uses, and whether each one comes from the file or from an environment variable, type [`config`](/reference/server/console) in the server console.
 
 ## TOML Schema & Example
 
@@ -38,6 +107,7 @@ default_gameplay_restrictions = true
 disable_drop_points = true
 disable_location_dependent_quests = true
 disable_garage = true
+delete_map_objects = true
 files = []
 
 [core.overrides]
@@ -54,68 +124,85 @@ disable_generic_devices = true
 disable_no_combat = true
 ```
 
----
-
 ## Root Configuration Keys
+
+<SchemaTable schema="server" notes={rootNotes} defaults={rootDefaults} />
+
+These keys are accepted by the server but are not in the schema yet, so they are listed by hand:
 
 | Parameter | Type | Required | Default | Description |
 | :--- | :--- | :--- | :--- | :--- |
-| `tcp_host` | `string` | **Yes** | `"0.0.0.0:2077"` | TCP bind host and port for control connections. |
-| `udp_host` | `string` | **Yes** | `"0.0.0.0:2077"` | UDP bind host and port for gameplay synchronization. |
-| `connection_host_addr` | `string` | **Yes** | `"127.0.0.1:2077"` | The public endpoint clients use to connect. Broadcasted in masterlist heartbeats. |
-| `max_players` | `integer` | No | `20` | Maximum number of concurrent player slots. |
-| `resources` | `string[]` | **Yes** | `[]` | Ordered list of resource folder names to load on startup. |
-| `private_token` | `string` | No | `""` | Masterlist server token. Leave empty for private/local servers. |
-| `disable_voice` | `boolean` | No | `false` | When `true`, disables the built-in 3D positional VoIP server. |
-| `cef_debug` | `boolean` | No | `false` | Enables Chromium remote debugging for CEF interfaces on port `9222`. |
-| `ep2_dlc_enabled` | `boolean` | No | `false` | Enables content from the Phantom Liberty expansion DLC. |
 | `duplicatePlayers` | `integer` | No | `50` | Maximum connections allowed from a single IP address (anti-DDoS safeguard). |
 | `useCdn` | `boolean` | No | `false` | Streams the packed client files from the resource CDN instead of the server itself. Requires the CDN subscription feature; otherwise the server logs a warning and serves files itself. See [CDN](/guides/server/cdn/). |
 | `cdnUrl` | `string` | No | `""` | Base URL of the CDN that hosts the packed resource files; used when `useCdn = true`. |
 
----
+Players need to reach the server over both TCP and UDP, so open both in your firewall.
+
+`tcp_host` and `udp_host` are written as `address:port` with a numeric IP address, for example `0.0.0.0:2077`.
+
+The [official schema](https://schemas.cyber.mp/server/schema.json) requires `tcp_host`, `udp_host` and `resources`. `duplicatePlayers`, `useCdn` and `cdnUrl` are read by the server but are not in the schema yet, so a schema-aware editor may underline them; that warning can be ignored.
 
 ## `[core]` Gameplay Runtime Settings
 
 The `[core]` table configures default features shipped with the mandatory `cybermp_core` runtime package sent to every connecting client:
 
-:::important[Required Section]
+:::caution[Required Section]
 Always keep the `[core]` table in your `server.toml`. Without it, `cybermp_core` fails to initialize properly on clients, disabling nametags, death logic, and gameplay restrictions.
 :::
 
-| Property | Type | Default | Description |
-| :--- | :--- | :--- | :--- |
-| `nametags` | `boolean` | `true` | Renders `[ID] Nickname` overhead markers within 8 meters. |
-| `death_autostand` | `boolean` | `true` | Automatically plays stand-up animation if health regenerates above 0. |
-| `disable_switch_seats`| `boolean` | `true` | Prevents players from switching seats while inside vehicles. |
-| `default_gameplay_restrictions` | `boolean` | `true` | Enforces standard multiplayer restrictions (disables Photo Mode, scanning, fast travel, and phone calls). |
-| `disable_drop_points` | `boolean` | `true` | Disables singleplayer drop point containers across Night City. |
-| `disable_location_dependent_quests` | `boolean` | `true` | Automatically completes tracked vanilla journal quests to prevent narrative conflicts. |
-| `disable_garage` | `boolean` | `true` | Prevents vanilla vehicle summoning from opening the singleplayer garage interface. |
-| `delete_map_objects` | `boolean` | `true` | Removes vanilla map objects from the world. |
-| `files` | `string[]` | `[]` | Optional list of archives or redscripts from `cybermp_core/files/` streamed to clients. |
-
----
+<SchemaTable schema="server" section="core" notes={coreNotes} defaults={coreDefaults} />
 
 ## `[core.overrides]` REDengine Hooks
 
 The `[core.overrides]` table controls native method interceptors installed by `cybermp_core`:
 
-| Flag | Description |
-| :--- | :--- |
-| `change_player_on_death_logic` | Overrides `PlayerPuppet.OnDeath` so server scripts control death and respawn handling. |
-| `disable_side_quests_notifications` | Suppresses quest tracking popups and journal notifications on the client HUD. |
-| `change_vehicles_logic` | Overrides vanilla vehicle summoning, vehicle hijacking, and mounting checks. |
-| `disable_player_inventory_encumbrance` | Disables character movement slow-down when carrying excess weight. |
-| `player_extended_customization` | Enables character mirror customization in NewGame edit mode. |
-| `disable_time_skip` | Disables the wait/skip time menu. |
-| `disable_turrets` | Disables hostile automated security turrets in the world. |
-| `disable_surveillance_cameras`| Disables security surveillance camera devices. |
-| `disable_vending_machines` | Disables interactive vending machines. |
-| `disable_generic_devices` | Disables interactive doors, netrunner panels, and security lockers. |
-| `disable_no_combat` | Removes peaceful "No Combat" zone restrictions across the city. |
+<SchemaTable schema="server" section="core.overrides" notes={overrideNotes} />
 
----
+## Your own settings
+
+The server ignores keys and tables it does not know, and scripts can read the whole file. That makes `server.toml` a convenient place for your gamemode's settings: add a table of your own and read it when your resource starts.
+
+```toml title="server.toml"
+[my_gamemode]
+start_money = 750
+```
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="server.js"
+    // The table is missing if nobody added it to server.toml, so fall back to defaults.
+    const gamemodeConfig = mp.config.my_gamemode || {};
+
+    let startMoney = 500;
+    if (typeof gamemodeConfig.start_money === 'number') {
+      startMoney = gamemodeConfig.start_money;
+    }
+
+    console.log(`New players start with ${startMoney} eddies`);
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="server.lua"
+    local serverConfig = json.decode(mp.getServerTomlFile())
+
+    -- The table is missing if nobody added it to server.toml, so fall back to defaults.
+    local gamemodeConfig = serverConfig.my_gamemode or {}
+
+    local startMoney = 500
+    if type(gamemodeConfig.start_money) == 'number' then
+      startMoney = gamemodeConfig.start_money
+    end
+
+    print(string.format("New players start with %s eddies", startMoney))
+    ```
+  </TabItem>
+</Tabs>
+
+Things to know:
+
+- You get the file as written, not the effective configuration. A value overridden by an [environment variable](#environment-variable-overrides) still reads as the value from the file, and a key that is absent from the file is absent here, even if the server applies a default.
+- A table with no keys in it (a bare `[core]` line, for example) reads as `null`.
+- `private_token` is part of the file, so it is readable by every server script. Don't log the whole object.
 
 ## Command-line Flags
 
@@ -126,11 +213,9 @@ Launch arguments are executed as console commands with one leading `-` stripped:
 | `-run` | `run` | Loads `server.toml`, starts `cybermp_core` and every resource listed in `resources`. |
 | `--justpack` | `-justpack` | Loads `server.toml` the same way, then writes the packed client files of every started resource (resources marked `server_only` are skipped) plus `connect.json` into `cdn_upload/`, and exits. This is the CDN packaging step; see [CDN](/guides/server/cdn/). |
 
----
-
 ## Environment Variable Overrides
 
-Any value in `server.toml` can be overridden using system environment variables without modifying the file. This is useful in Docker containers and CI/CD pipelines:
+The root keys of `server.toml` can be overridden with environment variables, without modifying the file. This is useful in Docker containers and CI/CD pipelines.
 
 | Variable | Overrides Key |
 | :--- | :--- |
@@ -146,3 +231,5 @@ Any value in `server.toml` can be overridden using system environment variables 
 | `CYBERMP_DUPLICATE_PLAYERS` | `duplicatePlayers` |
 | `CYBERMP_USE_CDN` | `useCdn` |
 | `CYBERMP_CDN_URL` | `cdnUrl` |
+
+A key can also be set by its variable alone, without being in the file. The server logs each override at startup, for example `config: tcp_host set from CYBERMP_TCP_HOST`, and the `config` console command shows the variable name in its `source` column.
