@@ -7,6 +7,14 @@ The server-side Lua API is exposed through the global `mp` table in `.lua` files
 
 Hashes, vectors and scheduler primitives are shared with the client runtime; this page documents the server-side surface of the `mp` table.
 
+The runtime is Lua 5.3 and also provides the globals `json` (`json.encode`, `json.decode`) and `msgpack`. Behaviour notes marked "observed" were checked by running server v4.0.4-beta.1 without a game client.
+
+:::caution[Integers and Floats]
+Lua 5.3 keeps integers (`90`) and floats (`90.0`) apart, and this API does not convert between them. A float field given an integer, or an integer field given a float, is silently ignored or stored as a meaningless value. `yaw`, `health`, `streamingRadius` and the components of a position table need floats; `dimension` needs an integer. The affected entries below say so.
+:::
+
+Several yes/no functions and fields return `1` for yes and `false` for no instead of a Lua boolean. Both work in an `if`, but `value == true` never matches `1`.
+
 ---
 
 
@@ -20,9 +28,11 @@ The server runtime provides five synchronized entity pools: `mp.players`, `mp.ve
 
 #### pool.exists(entityOrId)
 
-> **pool.exists**(`entityOrId`): `boolean`
+> **pool.exists**(`entityOrId`): `1` | `false`
 
-Checks whether the entity still exists. Accepts an entity object or a numeric network ID.
+Checks whether the entity still exists. Accepts an entity object or a numeric network ID. Returns `1` when it exists and `false` otherwise.
+
+The pool itself is not checked: any existing entity ID gives `1`, so `mp.peds.exists(vehicleId)` and `mp.players.exists(vehicleId)` are both `1` (observed). Read the entity's `type` when you need to know what the ID refers to.
 
 <a id="pool-at"></a>
 
@@ -30,7 +40,7 @@ Checks whether the entity still exists. Accepts an entity object or a numeric ne
 
 > **pool.at**(`entityOrId`): `Entity`
 
-Returns the entity object. Raises an error when the entity does not exist, so call `exists` first.
+Returns the entity object. Raises `entity id is not valid` when no entity has that ID, so call `exists` first. Like `exists`, it does not check the pool: `mp.peds.at(vehicleId)` returns an object whose `type` is `2`.
 
 <a id="pool-toarray"></a>
 
@@ -56,13 +66,15 @@ Creates a synchronized entity and returns its object. Available on vehicles, obj
 
 Removes the entity. Available on vehicles, objects, peds and pickups — not on `mp.players`. Returns nothing.
 
+The removal takes effect on the next tick: until then `exist` still reads `1`. An unknown ID is ignored. The pool is not checked, so `mp.pickups.destroy(vehicleId)` removes the vehicle (observed).
+
 <a id="mp-players-kick"></a>
 
 #### mp.players.kick(playerOrId, reason)
 
 > **mp.players.kick**(`playerOrId`, `reason`): `nil`
 
-Disconnects the specified player. Returns nothing.
+Disconnects the specified player. Returns nothing. An ID that is not a connected player is ignored.
 
 ---
 
@@ -70,6 +82,8 @@ Disconnects the specified player. Returns nothing.
 ## Entity Objects
 
 An entity object is a table containing `{ id = networkId }` backed by a metatable that reads the current value from the server core on every field access. Two objects for the same entity are different tables: compare their `id`, not the objects themselves.
+
+An object is only an ID, so it can outlive its entity. Reading a field of an entity that is gone does not raise: `exist` is `false`, `type` and `dimension` are `0`, `position` is `0, 0, 0`. IDs are reused: once a destroy has taken effect, the next `create` can return the same ID, and an object you kept then refers to the new entity (observed).
 
 ### Shared Properties (All Entities)
 
@@ -87,15 +101,15 @@ Unique network ID assigned to the entity. Treat as read-only: assigning it retar
 
 > **type**: `number`
 
-Entity type, read-only: `1` Player, `2` Vehicle, `3` Object, `4` Ped, `5` Pickup, `6` Door, `0` not found.
+Entity type, read-only: `1` Player, `2` Vehicle, `3` Object, `4` Ped, `5` Pickup, `6` GameObject, `0` not found.
 
 <a id="entity-exist"></a>
 
 #### exist
 
-> **exist**: `boolean`
+> **exist**: `1` | `false`
 
-`true` while the entity remains active on the server. Read-only.
+`1` while the entity remains active on the server, `false` once it is gone. Read-only.
 
 <a id="entity-position"></a>
 
@@ -129,13 +143,17 @@ Entity heading in degrees. Read-only.
 
 Virtual world dimension (`0` for the default shared world). Read / write.
 
+Assign an integer. A float is not converted: `entity.dimension = 4.0` read back as `1082130432`. Assigning `-1`, `2147483648` or `4294967295` left the value unchanged (observed).
+
 <a id="entity-streamingradius"></a>
 
 #### streamingRadius
 
 > **streamingRadius**: `number`
 
-Distance at which clients stream this entity in. Read / write.
+Distance at which clients stream this entity in. Read / write. A new vehicle, ped or object reads `230.0`; a new pickup read `5.916`.
+
+Assign a float. An integer is ignored: after `entity.streamingRadius = 50` the value is still `230.0`, while `= 50.0` works. Also observed: `0.0` is ignored, a negative value is stored as its absolute value, and a string such as `'90'` reads back as `inf`.
 
 <a id="entity-owner"></a>
 
@@ -143,7 +161,17 @@ Distance at which clients stream this entity in. Read / write.
 
 > **owner**: `Player` | `-1` | `nil`
 
-Player object of the network owner client, or `-1` when unowned. Read / write; assignable for non-player entities (pass a player object or network ID).
+Player object of the network owner client, or the number `-1` when nobody owns the entity (always the case for a script-created entity while no client is connected). Read / write; assignable for non-player entities (pass a player object or network ID).
+
+Assigning an ID that is not an existing entity raises `entity id is not valid`. That includes `-1` and `nil`, so a script cannot clear the owner this way (observed).
+
+<a id="entity-firstowner"></a>
+
+#### firstOwner
+
+> **firstOwner**: `any`
+
+Read-only. `-1` for an entity created by a script: observed on vehicles, peds, objects and pickups with no client connected. What it holds once a client has owned the entity could not be observed without a game client. Assigning it only stores a key on the Lua table.
 
 <a id="entity-getmeta"></a>
 
@@ -162,7 +190,7 @@ Same as `mp.meta.getPlayer` / `mp.meta.getEntity`.
 Stores the value without syncing it to clients. To sync, use `mp.meta` with `sync = true`.
 
 :::caution[Property Assignment]
-Only `dimension`, `streamingRadius` and `owner` can be assigned directly on entity objects. Assigning any other property (for example `entity.position = vec`) only stores a key on the Lua table; it does not move or change the entity in the engine.
+Only `dimension`, `streamingRadius` and `owner` can be assigned directly on entity objects. Assigning any other property (for example `entity.position = vec`) only stores a key on the Lua table; it does not move or change the entity in the engine. Worse, that object then returns the stored key instead of the live value every time you read the field.
 :::
 
 ### Player Objects
@@ -249,6 +277,8 @@ Sends a network event to this client (`mp.events.addServer` on the client).
 
 Mutes (`true`) or unmutes (`false`) the player's voice transmission.
 
+On server v4.0.4-beta.1 the voice script API has no effect. The functions behind it, `mp.voiceChat.mutePlayer`, `mp.voiceChat.isPlayerMuted` and `mp.voiceChat.createChannel`, only log `[Warning] Can't find function with this hash - <n>.` and change nothing, with `disable_voice` set to `true` or `false`; `isPlayerMuted(id)` returns its argument instead of a mute state (observed). `player:mute` itself could not be called without a connected player. See [Voice Chat: the script API](/guides/server/voice-chat/#the-script-api).
+
 <a id="player-getmeta"></a>
 
 #### player:getMeta(key)
@@ -289,7 +319,7 @@ Appearance CName hash. Read-only.
 
 > **health**: `number`
 
-Current vehicle body health. Read-only.
+Current vehicle body health. Read-only. With no client connected it reads back the `health` given to `create`, provided that was a float (see [Creating Entities](#creating-entities)).
 
 <a id="vehicle-velocity"></a>
 
@@ -387,7 +417,7 @@ Appearance CName hash. Read-only.
 
 > **health**: `number`
 
-Current ped health. Read-only.
+Current ped health. Read-only. With no client connected it read `0.0`, whatever `health` was given to `create` (observed).
 
 <a id="ped-destroy"></a>
 
@@ -411,7 +441,7 @@ Pickup TweakDBID hash. Read-only.
 
 > **pickupType**: `number`
 
-Pickup type. Read-only.
+Pickup type. Read-only. With no client connected it read `0` for every `type` passed to `create` (observed).
 
 <a id="pickup-destroy"></a>
 
@@ -458,12 +488,14 @@ Resource reference hash (archive `.ent` paths).
 
 > **mp.getHashFromName**(`name`, `kind`): `string`
 
-Same as the helpers above; `kind` is `'cname'`, `'tweakdbid'` or `'resref'`.
+Same as the helpers above; `kind` is `'cname'`, `'tweakdbid'` or `'resref'`. Any other `kind` returns the string `'unknown hash type'` instead of raising, and a missing `kind` raises `native ... aborted: argument 1 is null`.
 
 The server has no reverse `from*` helpers; they exist only on the client with `use_game_natives = true`.
 
 :::caution[Hash Rules]
 Never pass the string itself to a native or `create`: it arrives as a pointer instead of a hash. Do not hash a vehicle or ped record with `toCname`, do not hash an `.ent` path with `toTweakdbid`, and do not pass `appearance = 0` — clients can disagree on the look. Use `toTweakdbid` for vehicle, ped and pickup models, `toResref` for object models, and `toCname` for appearances.
+
+Only pass strings to the hash helpers. Passing a number (`mp.hashes.toCname(5)`, `mp.hashes.toTweakdbid(5)`, `mp.getHashFromName(5, 'cname')`) terminated the server process in testing; `pcall` does not catch it. A missing argument raises a normal Lua error.
 :::
 
 ---
@@ -471,10 +503,18 @@ Never pass the string itself to a native or `create`: it arrives as a pointer in
 
 ## Creating Entities
 
-Every `create` call returns an entity object whose `id` is assigned by the server. Options are plain Lua tables; unknown fields are ignored.
+Every `create` call returns an entity object whose `id` is assigned by the server. Options are plain Lua tables; unknown fields are ignored. The options table itself is required: `create()` raises, while `create({})` creates an entity whose model is `0`.
+
+IDs are handed out from `65534` downward. The ID of a destroyed entity is free again as soon as the destroy has taken effect (the next tick), and the next `create` reuses it (observed).
 
 :::caution[Position Format]
 `position` must be a `vector3` or a table with named fields `x`, `y` and `z` (default `0, 0, 0`). A plain array such as `position = {-1392.6, 1271.5, 123.0}` is not read: the server reads `position.x`, `position.y` and `position.z`, so the entity is created at the origin. Always write `vector3(-1392.6, 1271.5, 123.0)` or `position = { x = -1392.6, y = 1271.5, z = 123.0 }`.
+
+In a plain table the three components must be floats: `{ x = 1, y = 2, z = 3 }` read back as `1.4e-45, 2.8e-45, 4.2e-45`. `vector3(1, 2, 3)` converts for you and is the safer form.
+:::
+
+:::caution[Number Types in Options]
+`yaw` and `health` must be floats and `dimension` must be an integer. Observed: `yaw = 90` read back as `1.26e-43` while `yaw = 90.0` read `90.0`; `health = 500` read `7.0e-43` while `health = 500.0` read `500.0`; `dimension = 2.0` read `1073741824`.
 :::
 
 ### Vehicles
@@ -509,7 +549,7 @@ Integer CName hash. Use a real appearance; `0` is not reliable.
 
 > **yaw**: `number`
 
-Heading in degrees. Default `0`.
+Heading in degrees, as a float (`90.0`, not `90`). Default `0`.
 
 <a id="vehicles-create-health"></a>
 
@@ -517,7 +557,9 @@ Heading in degrees. Default `0`.
 
 > **health**: `number`
 
-Starting body health. Default `300`.
+Starting body health, as a float. Default `300`.
+
+When `health` is omitted, `vehicle.health` read back as `4.2e-43` rather than `300.0`: the same value an integer `300` produces. Pass `health = 300.0` explicitly if you rely on it (observed).
 
 <a id="vehicles-create-dimension"></a>
 
@@ -559,7 +601,7 @@ Integer CName hash.
 
 > **yaw**: `number`
 
-Heading in degrees. Default `0`.
+Heading in degrees, as a float (`90.0`, not `90`). Default `0`.
 
 <a id="peds-create-health"></a>
 
@@ -567,7 +609,7 @@ Heading in degrees. Default `0`.
 
 > **health**: `number`
 
-Starting health. Default `200`.
+Starting health, as a float. Default `200`.
 
 <a id="peds-create-dimension"></a>
 
@@ -601,7 +643,7 @@ Integer ResRef hash of an `.ent` archive path.
 
 > **yaw**: `number`
 
-Heading in degrees. Default `0`.
+Heading in degrees, as a float (`90.0`, not `90`). Default `0`.
 
 <a id="objects-create-dynamic"></a>
 
@@ -609,7 +651,7 @@ Heading in degrees. Default `0`.
 
 > **dynamic**: `boolean`
 
-`false` creates a static prop that does not react to physics. Default `true`.
+`false` creates a static prop that does not react to physics. Default `true`. (The server JS runtime defaults `dynamic` to `false`; the Lua default cannot be read back on the server, so this was not verified.)
 
 <a id="objects-create-dimension"></a>
 
@@ -635,7 +677,7 @@ Integer TweakDBID of an `Items.*` record.
 
 > **type**: `number`
 
-`1` clothes, `2` weapon, `3` other. Read it back with `pickup.pickupType`.
+`1` clothes, `2` weapon, `3` other. The matching read-only field is `pickup.pickupType`; with no client connected it read `0` for every value passed here (observed).
 
 <a id="pickups-create-position"></a>
 
@@ -651,7 +693,7 @@ Integer TweakDBID of an `Items.*` record.
 
 > **yaw**: `number`
 
-Heading in degrees. Default `0`.
+Heading in degrees, as a float (`90.0`, not `90`). Default `0`.
 
 <a id="pickups-create-dimension"></a>
 
@@ -674,7 +716,7 @@ Applied right after the pickup is created. Default `0`.
 
 > **mp.events.add**(`name`, `fn`): `handlerId`
 
-Registers a listener for platform events and for custom events triggered inside the server process. Returns a numeric handler ID.
+Registers a listener for platform events and for custom events sent with `mp.events.trigger` from any server resource. Returns a numeric handler ID.
 
 <a id="mp-events-remove-serverref"></a>
 
@@ -688,9 +730,17 @@ Unregisters a handler registered by `add` or `addClient`. Passing the function i
 
 #### mp.events.trigger(name, ...)
 
-> **mp.events.trigger**(`name`, `...`): `boolean`
+> **mp.events.trigger**(`name`, `...`): `1` | `false`
 
-Emits a local event. Returns `false` when a handler cancelled it; use `mp.events.isCanceled()` to inspect the last cancellation flag.
+Emits a local event. Returns `false` when a handler cancelled it and `1` otherwise; use `mp.events.isCanceled()` to inspect the last cancellation flag.
+
+Observed behaviour:
+
+- Handlers run before `trigger` returns, in every server Lua resource that registered the name, not only the calling one. They do not run in registration order.
+- A handler cancels by returning exactly `false`; `nil`, `0` and `'false'` do not cancel. Every handler still runs after one of them has cancelled.
+- A handler that returns `false` after an `mp.wait` is too late: `trigger` has already returned `1`.
+- An error in one handler is printed to the console and does not stop the others.
+- `nil` arguments are passed through and keep their position.
 
 <a id="mp-events-addclient-serverref"></a>
 
@@ -712,9 +762,11 @@ Same as `addClient`, but the first argument is the numeric player ID.
 
 #### mp.events.triggerClient(playerOrId, name, ...)
 
-> **mp.events.triggerClient**(`playerOrId`, `name`, `...`): `boolean`
+> **mp.events.triggerClient**(`playerOrId`, `name`, `...`): `number` | `false`
 
-Sends an event to one client (`mp.events.addServer` there). Pass `-1` to broadcast to all players. Returns `false` and prints a message when a player object no longer exists.
+Sends an event to one client (`mp.events.addServer` there). Pass `-1` to broadcast to all players. Returns `false` and prints `player doesn't exists!` when given an object whose entity no longer exists.
+
+In every other case the return value is a number with no documented meaning; it is not a delivery report. A numeric ID is not validated: `mp.events.triggerClient(999, 'evt')` returns the same kind of number although no such player exists (observed). `name` must be a string; a table or `nil` raises.
 
 <a id="mp-events-triggerclientraw-serverref"></a>
 
@@ -724,13 +776,38 @@ Sends an event to one client (`mp.events.addServer` there). Pass `-1` to broadca
 
 Same with an explicit numeric ID.
 
+<a id="mp-events-triggerunreliable-serverref"></a>
+
+#### mp.events.triggerUnreliable(playerOrId, name, arg, ...)
+
+> **mp.events.triggerUnreliable**(`playerOrId`, `name`, `arg`, `...`): `number` | `false`
+
+Present in the runtime but not described anywhere official. It declares one more named parameter than `triggerClient`, in third position, before the variable arguments.
+
+Observed without a game client:
+
+- `playerOrId` is checked like in `triggerClient`: `-1` and numeric IDs are accepted, and an object whose entity does not exist prints `player doesn't exists!` and returns `false`. A non-numeric string raises `native ... aborted: invalid stoi argument`.
+- `name` is handled like the name in `triggerClient`: a string or number is accepted, while a boolean, a table or `nil` raises `attempt to concatenate`.
+- `arg` accepted every type tried (number, string, boolean, table) and may be omitted.
+- The return value is a number with no documented meaning.
+
+Not observable without a game client: what `arg` is for, whether it differs from the other payload values, how the event is transported, and which client function receives it.
+
+<a id="mp-events-triggerunreliableraw-serverref"></a>
+
+#### mp.events.triggerUnreliableRaw(playerId, name, arg, ...)
+
+> **mp.events.triggerUnreliableRaw**(`playerId`, `name`, `arg`, `...`): `number`
+
+Same with an explicit numeric ID. A boolean or a table as `playerId` raises `native ... aborted: invalid stoi argument` (observed). The same limits apply: nothing about delivery could be verified.
+
 <a id="mp-events-iscanceled-serverref"></a>
 
 #### mp.events.isCanceled()
 
-> **mp.events.isCanceled**(): `boolean`
+> **mp.events.isCanceled**(): `1` | `false`
 
-Returns `true` when the last local event was cancelled.
+Returns `1` when the last local event was cancelled and `false` otherwise.
 
 Handlers receive payload values as separate arguments: an array arrives as a Lua table with indexes from `1`, an object arrives as a table with named fields.
 
@@ -866,7 +943,7 @@ Cancellable.
 
 > **playerMetaChange**(`id`, `key`, `newValue`, `oldValue`): `nil`
 
-Not cancellable.
+Fires on every `setPlayer` / `player:setMeta` call, synced or not. See [Entity Metadata](#entity-metadata). Not cancellable.
 
 <a id="globalmetachange-event"></a>
 
@@ -874,7 +951,7 @@ Not cancellable.
 
 > **globalMetaChange**(`key`, `newValue`, `oldValue`): `nil`
 
-Not cancellable.
+Fires on every `setGlobal` call, synced or not, even when the value did not change. `oldValue` is `nil` the first time a key is set. See [Entity Metadata](#entity-metadata). Not cancellable.
 
 #### Vehicles
 
@@ -886,6 +963,8 @@ Not cancellable.
 
 `data` is an array: `vehicleId`, `seat`. Cancellable.
 
+The official JS typings name this event `playerEnterVehicle(playerId, vehicleId, seat)`. Which name the Lua runtime fires could not be verified without a game client.
+
 <a id="exitvehicle-event"></a>
 
 ##### exitVehicle(playerId, data)
@@ -893,6 +972,8 @@ Not cancellable.
 > **exitVehicle**(`playerId`, `data`): `nil`
 
 `data` is an array: `vehicleId`. Cancellable.
+
+The official JS typings name this event `playerExitVehicle(playerId, vehicleId)`. Which name the Lua runtime fires could not be verified without a game client.
 
 <a id="vehiclespawn-event"></a>
 
@@ -950,7 +1031,7 @@ Cancellable.
 
 > **entitySpawn**(`id`, `type`): `nil`
 
-Not cancellable.
+Fires right after the type-specific event (`vehicleSpawn`, `pedSpawn`, `objectSpawn`, `pickupSpawn`) for the same entity. `type` is the [entity type](#entity-type) number. Not cancellable.
 
 <a id="entitydespawn-event"></a>
 
@@ -958,7 +1039,7 @@ Not cancellable.
 
 > **entityDespawn**(`id`, `type`): `nil`
 
-Not cancellable.
+Fires right after the type-specific despawn event for the same entity. Not cancellable.
 
 <a id="entitymetachange-event"></a>
 
@@ -966,7 +1047,7 @@ Not cancellable.
 
 > **entityMetaChange**(`id`, `key`, `newValue`, `oldValue`): `nil`
 
-Not cancellable.
+Fires on every `setEntity` / `entity:setMeta` call, synced or not, even when the value did not change. `oldValue` is `nil` the first time a key is set. See [Entity Metadata](#entity-metadata). Not cancellable.
 
 <a id="pedspawn-event"></a>
 
@@ -1104,7 +1185,7 @@ This resource started. Not cancellable.
 
 > **resourceStop**(): `nil`
 
-This resource is stopping. Not cancellable.
+This resource is stopping. Fires when the resource is stopped or restarted (console `stop` / `restart`, `mp.resources.stop` / `restart`). It does not fire when the server shuts down with `quit`, so do not rely on it to save data at shutdown. Not cancellable.
 
 <a id="resourcesrefresh-event"></a>
 
@@ -1136,7 +1217,7 @@ Not cancellable.
 
 > **anyServerResourceStart**(`resourceName`): `nil`
 
-Not cancellable.
+Fires one tick after `anyResourceStart`. At server start it fires once the server is up, once for every loaded resource, including `cybermp_core` and the listening resource itself (observed). Not cancellable.
 
 <a id="anyserverresourcestop-event"></a>
 
@@ -1157,7 +1238,7 @@ Not cancellable.
 
 > **mp.commands.add**(`name`, `fn`)
 
-Registers a console command. `fn(player, args)` is described below.
+Registers a console command. `fn(player, args)` is described below. Registering a name that already exists replaces its handler.
 
 <a id="mp-commands-addraw-serverref"></a>
 
@@ -1173,7 +1254,7 @@ Same, but the first argument is the numeric player ID.
 
 > **mp.commands.remove**(`name`)
 
-Removes a registered command.
+Removes a registered command. An unknown name is ignored. The command does not have to belong to the calling resource: removing a command registered by another resource works too (observed).
 
 <a id="mp-commands-execute-serverref"></a>
 
@@ -1181,7 +1262,9 @@ Removes a registered command.
 
 > **mp.commands.execute**(`line`)
 
-Runs a console command line.
+Runs a command registered by a resource (this one or another), with the same parsing as the console. The handler runs before `execute` returns and receives `0` as `player`, as if typed in the server terminal.
+
+Built-in console commands cannot be run this way: `version`, `refresh`, `stop`, `max_players` and `add_var` all printed `you dont admin!` and did nothing (observed). Use `mp.resources.*` and `mp.addVar` instead. An unknown command prints `<name> command doesn't exist!`.
 
 <a id="mp-commands-getall-serverref"></a>
 
@@ -1189,12 +1272,12 @@ Runs a console command line.
 
 > **mp.commands.getAll**(): `table`
 
-Returns a table with the registered command names.
+Returns an array of command names: the built-in console commands and the commands of every resource, not only the calling one. Some built-in names appear twice.
 
 The handler callback receives three arguments:
 
 - `player` — the invoking player's object when the command comes from a client F8 console. When the command is typed into the **server terminal**, `player` is the **number `0`**, not `nil`; when the player no longer exists, it is the numeric player ID. Test `player == 0` and never rely on a truthiness check, because `0` is truthy in Lua.
-- `args` — a Lua table of whitespace-delimited argument strings, indexed from `1`.
+- `args`: a Lua table of whitespace-delimited argument strings, indexed from `1`. Repeated spaces are collapsed, and double quotes group words: `say "two words" 3` gives `{ 'two words', '3' }`.
 - `raw` — the full command line as typed, including the command name.
 
 Commands run as coroutines, so `mp.wait` works inside them. All commands of a resource are removed when the resource stops.
@@ -1212,7 +1295,7 @@ Commands run as coroutines, so `mp.wait` works inside them. All commands of a re
 >
 > **mp.meta.getGlobal**(`key`): `any`
 
-Global server value. `sync = true` replicates the value to clients; an omitted `sync` means the value is kept locally.
+Global server value. `sync = true` replicates the value to clients; an omitted `sync` means the value is kept locally. Values can be strings, numbers, booleans or tables (nested tables round-trip). A missing key reads as `nil`, and setting `nil` clears the key.
 
 <a id="mp-meta-setplayer-serverref"></a>
 
@@ -1232,7 +1315,7 @@ One player.
 >
 > **mp.meta.getEntity**(`entityOrId`, `key`): `any`
 
-Vehicle, ped, object or pickup.
+Vehicle, ped, object or pickup. With an ID that is not an existing entity, the setters do nothing and the getters return `nil`; neither raises (observed, also for `setPlayer` / `getPlayer`).
 
 <a id="entity-getmeta-serverref"></a>
 
@@ -1244,7 +1327,7 @@ Vehicle, ped, object or pickup.
 
 Same store on the entity object. `setMeta` never syncs; the entity proxies ignore a third `setMeta` argument, so use `mp.meta.setPlayer` / `mp.meta.setEntity` with `sync = true` for keys that clients must read.
 
-When synced metadata changes, the server fires `playerMetaChange(id, key, newValue, oldValue)`, `entityMetaChange(id, key, newValue, oldValue)` and `globalMetaChange(key, newValue, oldValue)`.
+Every call to a setter fires the matching change event: `playerMetaChange(id, key, newValue, oldValue)`, `entityMetaChange(id, key, newValue, oldValue)` or `globalMetaChange(key, newValue, oldValue)`. This is not limited to synced keys, and the event also fires when the new value equals the old one, so compare `newValue` and `oldValue` yourself if you only care about real changes. `oldValue` is `nil` the first time a key is set. The event is delivered on a later tick, after the setter has returned (observed for global and entity metadata).
 
 ---
 
@@ -1255,25 +1338,25 @@ When synced metadata changes, the server fires `playerMetaChange(id, key, newVal
 
 ### mp.resources.start(name)
 
-> **mp.resources.start**(`name`): `boolean`
+> **mp.resources.start**(`name`): `1` | `false`
 
-Starts an installed resource folder.
+Starts an installed resource folder. Returns `false` for an unknown name and `1` otherwise, including when the resource is already running (nothing happens then). The resource's script has run by the time the call returns.
 
 <a id="mp-resources-stop"></a>
 
 ### mp.resources.stop(name)
 
-> **mp.resources.stop**(`name`): `boolean`
+> **mp.resources.stop**(`name`): `1` | `false`
 
-Stops an active resource.
+Stops an active resource. Returns `false` for an unknown name and `1` otherwise, including when the resource was already stopped. The resource's `resourceStop` handlers have run by the time the call returns.
 
 <a id="mp-resources-restart"></a>
 
 ### mp.resources.restart(name)
 
-> **mp.resources.restart**(`name`): `boolean`
+> **mp.resources.restart**(`name`): `1` | `false`
 
-Stops and starts an active resource.
+Stops and starts an active resource. Returns `false` for an unknown name and `1` otherwise. A resource that is currently stopped is simply started.
 
 <a id="mp-resources-refreshall"></a>
 
@@ -1281,7 +1364,7 @@ Stops and starts an active resource.
 
 > **mp.resources.refreshAll**()
 
-Rescans the resources folder, like the `refresh` console command.
+Rescans the resources folder, like the `refresh` console command, and fires `resourcesRefresh`. Returned `false` in testing; do not use the return value.
 
 <a id="mp-resources-getstate"></a>
 
@@ -1289,7 +1372,7 @@ Rescans the resources folder, like the `refresh` console command.
 
 > **mp.resources.getState**(`name`): `number`
 
-`0` not found, `1` starting, `2` started, `3` stopped (or found but never started).
+`0` only for a name the server does not know, `1` starting, `2` started, `3` stopped or found but never started. A resource reads `1` for itself while its script file is being run at start, and `2` afterwards. The built-in core resource is named `cybermp_core`.
 
 <a id="mp-resources-gettomlfile"></a>
 
@@ -1297,7 +1380,7 @@ Rescans the resources folder, like the `refresh` console command.
 
 > **mp.resources.getTomlFile**(`name`): `string` | `nil`
 
-The resource's `resource.toml` as a JSON string.
+The resource's `resource.toml` as a JSON string; works for a resource that was never started. `nil` for an unknown name.
 
 <a id="mp-resources-loadfile"></a>
 
@@ -1305,7 +1388,7 @@ The resource's `resource.toml` as a JSON string.
 
 > **mp.resources.loadFile**(`name`, `path`): `string` | `nil`
 
-Content of a file inside that resource, as a string.
+Content of a file inside that resource, as a string. `nil` when the resource or the file does not exist.
 
 <a id="mp-resources-getcurrentname"></a>
 
@@ -1329,11 +1412,23 @@ Stopping or restarting a resource closes its Lua state: event handlers, tasks, t
 > **mp.sendHttpRequest**(`url`, `callback`, `method`, `data`, `headers`, `options`)
 
 - `url` — request address.
-- `callback` — `function(status, body, headers, err)`. On success `status` is the HTTP code, `body` is the response string with `err` set to `nil`. On failure `body` is `nil` and `err` holds the error text.
-- `method` — HTTP method string; defaults to `'GET'`.
-- `data` — request body string (pass an encoded string, not a table).
+- `callback`: `function(status, body, headers, err)`. It runs later as a coroutine, so `mp.wait` works inside it. The three possible outcomes are listed below.
+- `method`: HTTP method string; defaults to `'GET'`. It is sent as written, so use upper case: `'post'` reached the test server as an invalid method.
+- `data`: request body string (pass an encoded string such as `json.encode(t)`; a table raises `bad cast`). Without a `Content-Type` header the body is sent as `application/x-www-form-urlencoded`.
 - `headers` — table of header names to values.
-- `options` — optional table; the supported field is `followRedirects` (boolean, default `true`).
+- `options`: optional table; the supported field is `followRedirects` (boolean, default `true`). With `false`, a redirect is returned as is (`302`, with its body and `Location` header).
+
+The function returns nothing. What the callback receives (observed):
+
+| Outcome | `status` | `body` | `headers` | `err` |
+| :--- | :--- | :--- | :--- | :--- |
+| Response with a status below `400` | HTTP code | response string (`''` when empty) | table of response headers | `nil` |
+| Response with status `400` or above | HTTP code | `nil` | empty table | `'HTTP <code>: <response body>'` |
+| No response (connection refused, bad URL) | `0` | `nil` | empty table | text starting with `Error in curl:` |
+
+A header sent several times (`Set-Cookie`) arrives as an array of strings. On an error status the response body is only available inside `err`.
+
+There is no timeout option: a request to a test server that accepted the connection and never answered had still not called back after 5 seconds, with or without `timeout` in `options`. A refused connection took about 2 seconds to report.
 
 ---
 
@@ -1348,15 +1443,15 @@ Stopping or restarting a resource closes its Lua state: event handlers, tasks, t
 
 > **mp.generateBcryptHash**(`password`): `string`
 
-Returns the bcrypt hash as a string.
+Returns the bcrypt hash as a 60-character string (`$2a$11$...`). The salt is random, so hashing the same password twice gives two different strings.
 
 <a id="mp-verifybcrypthash"></a>
 
 #### mp.verifyBcryptHash(password, hash)
 
-> **mp.verifyBcryptHash**(`password`, `hash`): `boolean`
+> **mp.verifyBcryptHash**(`password`, `hash`): `1` | `false`
 
-Returns `true` when the password matches the stored hash.
+Returns `1` when the password matches the stored hash and `false` otherwise, including when `hash` is not a bcrypt hash. Test it with `if mp.verifyBcryptHash(...) then`, not with `== true`.
 
 ### Console Variables (CVars)
 
@@ -1366,7 +1461,7 @@ Returns `true` when the password matches the stored hash.
 
 > **mp.getVar**(`name`): `string`
 
-Value of the variable. Raises an error when the variable does not exist.
+Value of the variable, always as a string (`'4'` for `max_players`). Raises `native ... aborted: argument 1 is null` when the variable does not exist, so wrap it in `pcall` or use `getVarInt` for a name that may be missing.
 
 <a id="mp-getvarint"></a>
 
@@ -1374,7 +1469,7 @@ Value of the variable. Raises an error when the variable does not exist.
 
 > **mp.getVarInt**(`name`): `number`
 
-Value as an integer; `'true'` reads as `1`, a missing variable reads as `0`.
+Value as an integer; `'true'` reads as `1`, a missing variable reads as `0`. Text that is not a number also reads as `0`, and `'1.9'` reads as `1`.
 
 <a id="mp-addvar"></a>
 
@@ -1382,7 +1477,7 @@ Value as an integer; `'true'` reads as `1`, a missing variable reads as `0`.
 
 > **mp.addVar**(`name`, `value`)
 
-Sets a variable, like the console command `add_var`. Pass both values as strings: the number `0` is converted to `nil` and the call fails.
+Sets a variable, like the console command `add_var`, or overwrites it. The value is stored as text: `7` reads back as `'7'`, `0` as `'0'`, `1.5` as `'1.5'` and `true` as `'true'` (observed).
 
 ### Reading server.toml
 
@@ -1402,15 +1497,15 @@ Returns the parsed `server.toml` as a JSON string; a resource's own `resource.to
 
 > **mp.getTimer**(): `number`
 
-Millisecond counter for measuring intervals.
+Millisecond counter for measuring intervals, as an integer. It starts near zero when the server starts.
 
 <a id="mp-isserver-serverref"></a>
 
 #### mp.isServer()
 
-> **mp.isServer**(): `boolean`
+> **mp.isServer**(): `1`
 
-Always `true` on the server.
+Always truthy on the server: it returns the number `1`, not `true`.
 
 <a id="mp-log-serverref"></a>
 
@@ -1418,7 +1513,7 @@ Always `true` on the server.
 
 > **mp.log**(`text`): `nil`
 
-Writes raw text to the console.
+Writes raw text to the console. Only the first argument is written and no line break is added, so the next console line continues on the same line. Use `print` for ordinary messages.
 
 ### Script Scheduling
 
@@ -1436,7 +1531,7 @@ Runs `fn` as a coroutine on the next scheduler pass.
 
 > **mp.spawnTaskImmediatly**(`fn`): `boolean`
 
-Runs `fn` as a coroutine immediately, up to its first `mp.wait`. The name is spelled this way in the API.
+Runs `fn` as a coroutine immediately, up to its first `mp.wait`. The name is spelled this way in the API. Returns `true`, or `false` when `fn` raised an error before its first wait (the error is printed).
 
 <a id="mp-wait-serverref"></a>
 
@@ -1444,7 +1539,7 @@ Runs `fn` as a coroutine immediately, up to its first `mp.wait`. The name is spe
 
 > **mp.wait**(`ms`): `nil`
 
-Suspends the current coroutine for `ms` milliseconds. `mp.wait(0)` resumes on the next pass.
+Suspends the current coroutine for `ms` milliseconds. `mp.wait(0)` resumes on the next pass, which came 50 ms later on an idle server.
 
 <a id="mp-settimeout-serverref"></a>
 
@@ -1460,6 +1555,31 @@ Runs `fn` as a coroutine after `ms` milliseconds. Returns nothing and cannot be 
 
 > **mp.onUpdateLoop**(`fn`): `nil`
 
-Calls `fn` on every script tick. There is no way to remove it.
+Calls `fn` on every script tick. There is no way to remove it. On an idle server it ran 18 times in about one second.
 
-`mp.wait` works only inside a coroutine; event handlers, command handlers, tasks and timeouts are coroutines, while the main body of a script file is not.
+`mp.wait` works only inside a coroutine; event handlers, command handlers, tasks, timeouts and HTTP callbacks are coroutines, while the main body of a script file is not. Calling `mp.wait` there raises `attempt to yield from outside a coroutine`: wrap the code in `mp.spawnTask`.
+
+---
+
+
+## Resource Exports
+
+Server-side Lua has its own `mp.exports`, separate from the client one. It was checked between two server Lua resources.
+
+<a id="mp-exports-register-serverref"></a>
+
+### mp.exports(name, fn)
+
+> **mp.exports**(`name`, `fn`): `nil`
+
+Registers a function under `name`. Assigning a field instead (`mp.exports.name = fn`) raises `you cant set args here`.
+
+<a id="mp-exports-call-serverref"></a>
+
+### mp.exports.resource:name(...)
+
+> **mp.exports.`resource`:name**(`...`): `any`
+
+Calls an export of another server resource and returns everything it returns. Call with `:`. With `.` the first argument is dropped.
+
+A missing export, an unknown resource or a stopped resource raises `Cant find <name> in <resource>`.

@@ -196,7 +196,11 @@ A world object entered the streaming radius.
 
 A world object left the streaming radius.
 
-The internal `CyberMP_Core` resource does not emit the `any*` resource notifications. `resourcesRefresh`, `anyServerResourceStart` and `anyServerResourceStop` are server-only and do not fire on the client. Use [Network Mapping](#network-mapping-mpnetwork) to convert `netID` to `gameID` and back.
+The internal `CyberMP_Core` resource does not emit the `any*` resource notifications. `resourcesRefresh`, `anyServerResourceStart` and `anyServerResourceStop` are server-only and do not fire on the client.
+
+The official client JS typings disagree on two points, and neither could be checked without a game client: they list `anyServerResourceStart`, `anyServerResourceStop` and `resourcesRefresh` among the client events, and they do not list `anyClientResourceStart` / `anyClientResourceStop`.
+
+Use [Network Mapping](#network-mapping-mpnetwork) to convert `netID` to `gameID` and back.
 
 ### CEF Page Events
 
@@ -282,6 +286,8 @@ Removes a client-only ped.
 > **mp.client.despawnObject**(`handle`): `boolean`
 
 Removes a client-only object.
+
+The official client JS typings declare the three `despawn*` functions as returning nothing, not a boolean; not verified.
 
 ---
 
@@ -471,6 +477,8 @@ Returns a one-time **authorization code**, or `''` while pending. `scopes` is a 
 
 Returns an **access token** from the Discord Game SDK, or `''` while pending. The SDK is initialized once with the first app id passed.
 
+The official client JS typings declare a second parameter, `getOAuth2Token(discordAppId, scopes)`; whether the Lua function reads it was not verified.
+
 Both authorization calls are asynchronous: the first call starts the request and returns an empty string, the value arrives on a later call, and the code is returned once. If Discord is not running they keep returning an empty string, so always validate the result. Exchange the authorization code on **your server**; never put a Discord client secret in a client resource.
 
 ---
@@ -554,6 +562,8 @@ Millisecond counter. Compare two readings to measure elapsed time.
 > **mp.commands.add**(`name`, `fn`)
 
 Registers a console command that runs when the player types `name` in the client console (`F8`). The optional third argument is the admin flag.
+
+The client JS typings declare the handler as `(id, args)` and have no admin flag, `execute` or `getAll`; the Lua handler arguments were not verified.
 
 <a id="mp-commands-remove-clientref"></a>
 
@@ -651,7 +661,9 @@ Connected endpoint, for example `127.0.0.1:2077`, or `nil` while the session is 
 
 > **mp.getLauncherSettings**(): `string`
 
-The launcher `--settings` payload as a JSON string, or nothing when the launcher did not pass it. Decode it with `json.decode`; fields change between launcher builds.
+The launcher `--settings` payload as a JSON string, or nothing when the launcher did not pass it. Decode it with `json.decode`; fields change between launcher builds. The fields sent by launcher 1.0.2 are listed in [Launcher Settings](/guides/client/launcher-settings/).
+
+In the client JS typings the names differ: `mp.getLauncherSettingsJSON()` returns the string and `mp.getLauncherSettings()` returns the decoded object.
 
 <a id="mp-iskypressed"></a>
 
@@ -747,6 +759,8 @@ A missing export or a stopped resource raises `Cant find <field> in <resource>`;
 
 Game instance and global functions: `Game.GetPlayer()`, `Game.GetStatsSystem()`, `Game.GetStatPoolsSystem()`, `Game.GetTeleportationFacility()`. Call object methods with `:`.
 
+The built-in core resource (`cybermp_core/dist/main.lua`) also uses `Game.FindEntityByID(id)`, `Game.GetStatusEffectSystem()` and the global `GetPlayer()`.
+
 <a id="newobject"></a>
 
 #### NewObject(typeName)
@@ -754,6 +768,8 @@ Game instance and global functions: `Game.GetPlayer()`, `Game.GetStatsSystem()`,
 > **NewObject**(`typeName`): `object` | `nil`
 
 Instantiates a REDengine class by name, for example `NewObject('ForceCloseHubMenuEvent')`. Returns `nil` when the type is unknown.
+
+Game classes are also exposed as globals with a `.new()` constructor, and enums as globals indexed by member name. The core resource uses both forms: `gameDeathEvent.new()`, `TweakDBID.new('GameplayRestriction.NoCombat')`, `vehicleCameraPerspective.TPPMedium`.
 
 <a id="getsingleton"></a>
 
