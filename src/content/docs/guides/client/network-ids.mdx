@@ -1,67 +1,221 @@
 ---
 title: Network IDs
-description: Learn how to map between server-assigned network IDs and REDengine game IDs in JavaScript and Lua.
+description: Understand the two IDs every synced entity has on the client, the server's network ID and the game's own ID, and how to convert between them.
 ---
 
 import { Tabs, TabItem } from '@astrojs/starlight/components';
 import { SCRIPT_LANG_TAB_SYNC_KEY } from '../../../../lib/const';
 
-In CyberMP, the server identifies entities using lightweight **Network IDs** (`netId`), while REDengine tracks entities in memory using internal **Game IDs** (`gameId` / `EntityID`). Passing a `netId` directly into a game native or transmitting a local `gameId` to the server will result in lookup failures.
+On the client, every player, vehicle, ped and object that the server syncs has two different IDs:
 
-For complete API signatures and types, see the [`MpNetwork`](/reference/client/api/global/mpnetwork/) reference, or the [Lua Client API Reference](/reference/lua/client/). Client-only entities and per-frame loops are covered in [Local Entities](/guides/client/local-entities/).
+- The **network ID** (`netId`) is the number the server gave the entity. It is the same on the server and on every client. It is what you see as `player.id` or `vehicle.id` in server scripts, and what CyberMP's own APIs expect: [metadata](/guides/server/meta/), events, anything you send to the server.
+- The **game ID** (`gameId`) is the number the local game uses for its own copy of that entity. It is the `hash` of the entity's `EntityID`, so it is what you get from `entity.GetEntityID().hash` and what [game natives](/reference/client/working-with-game-natives/) work with. It only means something on this client.
 
----
+The two are not interchangeable. Give a network ID to a native, or send a game ID to the server, and the lookup finds nothing, or finds the wrong entity. `mp.network` converts between them.
 
-## ID Translation (`mp.network`)
+Full signatures are in the [`MpNetwork`](/reference/client/api/global/mpnetwork/) reference and the [Lua client reference](/reference/lua/client/#network-mapping-mpnetwork).
 
-When an entity enters streaming range, the client receives both its `netID` and its active `gameID`. The `mp.network` namespace provides helper functions to convert between them:
+## Converting IDs
 
-| Method | Return Value | Target Entity Type |
+| Method | Returns | For |
 | :--- | :--- | :--- |
-| `getVehicleGameId(netId)` / `getVehicleId(gameId)` | `gameId` or `netId` | Vehicles |
-| `getPlayerGameId(netId)` / `getPlayerId(gameId)` | `gameId` or `netId` | Connected Players |
-| `getPedGameId(netId)` / `getPedId(gameId)` | `gameId` or `netId` | Pedestrians / NPCs |
-| `getObjectGameId(netId)` / `getObjectId(gameId)` | `gameId` or `netId` | World Objects |
-| `getLocalPlayerId()` | `number` | The local client's permanent Network ID |
-| `getStreamedPlayers()` | `Array<gameId>` | All remote players currently streamed in |
-| `getStreamedPool(poolName)` | `Array<gameId>` | Entities in `'CVehicle'`, `'CPed'`, `'CObject'`, `'CPickup'` |
-| `getServerAddress()` | `string` | Connected session endpoint (e.g. `127.0.0.1:2077`) |
+| `getPlayerGameId(netId)` | `gameId` | Players |
+| `getPlayerId(gameId)` | `netId` | Players |
+| `getVehicleGameId(netId)` | `gameId` | Vehicles |
+| `getVehicleId(gameId)` | `netId` | Vehicles |
+| `getPedGameId(netId)` | `gameId` | Peds (NPCs) |
+| `getPedId(gameId)` | `netId` | Peds (NPCs) |
+| `getObjectGameId(netId)` | `gameId` | World objects |
+| `getObjectId(gameId)` | `netId` | World objects |
+
+Use the pair that matches the entity type.
+
+The stream events hand you both IDs at once, so that is usually where you first learn them:
 
 <Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
   <TabItem label="JS">
     ```js title="client.js"
     mp.events.on('vehicleStreamIn', (netID, gameID) => {
-      // Look up entity metadata using netID
+      // CyberMP APIs take the network ID
       const isLocked = mp.meta.getEntityMeta(netID, 'locked');
 
-      // Convert gameID back to netID
-      const originalNetID = mp.network.getVehicleId(gameID);
+      // Going back from the game ID gives the same network ID
+      const sameNetID = mp.network.getVehicleId(gameID);
 
       console.log(`Streamed vehicle: NetID=${netID}, GameID=${gameID}, Locked=${isLocked}`);
     });
-
-    const localNetID = mp.network.getLocalPlayerId();
-    const streamedPlayers = mp.network.getStreamedPlayers();
     ```
   </TabItem>
   <TabItem label="Lua">
     ```lua title="client.lua"
     mp.events.add('vehicleStreamIn', function(netID, gameID)
-      -- Look up entity metadata using netID
+      -- CyberMP APIs take the network ID
       local isLocked = mp.meta.getEntity(netID, 'locked')
 
-      -- Convert gameID back to netID
-      local originalNetID = mp.network.getVehicleId(gameID)
+      -- Going back from the game ID gives the same network ID
+      local sameNetID = mp.network.getVehicleId(gameID)
 
       print(string.format("Streamed vehicle: NetID=%s, GameID=%s, Locked=%s", netID, gameID, tostring(isLocked)))
     end)
-
-    local localNetID = mp.network.getLocalPlayerId()
-    local streamedPlayers = mp.network.getStreamedPlayers()
     ```
   </TabItem>
 </Tabs>
 
-:::caution[Streaming Range Requirement]
-ID conversions are only valid while the entity is currently within streaming range. An entity that has despawned or not yet streamed into the client scene has no active `gameID`.
+:::caution[Conversions only work while the entity is streamed]
+The game only creates its copy of an entity while that entity is **streamed in**, meaning close enough to the local player to exist in their game. Before `...StreamIn` and after `...StreamOut` the entity has no game ID on this client, so a conversion has nothing to return. Check the result before you use it, and don't keep game IDs around after the entity streams out.
 :::
+
+## Listing what is streamed
+
+These calls tell you who you are and what currently exists around the local player:
+
+| Method | Returns | Description |
+| :--- | :--- | :--- |
+| `getLocalPlayerId()` | `netId` | The local player's own network ID. It doesn't depend on the player entity being spawned. |
+| `getStreamedPlayers()` | `gameId[]` | Game IDs of the remote players currently streamed in. |
+| `getStreamedPool(poolName)` | `gameId[]` | Game IDs of the streamed entities in one pool. `poolName` is exactly `'CVehicle'`, `'CPed'`, `'CObject'` or `'CPickup'`. |
+| `getServerAddress()` | `string` | Address of the server you are connected to, for example `127.0.0.1:2077`. In Lua this one is `mp.getServerAddress()`, not `mp.network.getServerAddress()`. |
+
+Both list calls return game IDs. Convert them when you need the network ID:
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="client.js"
+    const localNetID = mp.network.getLocalPlayerId();
+
+    for (const gameID of mp.network.getStreamedPlayers()) {
+      const netID = mp.network.getPlayerId(gameID);
+      console.log(`Player ${netID} is nearby (I am ${localNetID})`);
+    }
+
+    const nearbyVehicles = mp.network.getStreamedPool('CVehicle');
+    console.log(`${nearbyVehicles.length} vehicles streamed in`);
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="client.lua"
+    local localNetID = mp.network.getLocalPlayerId()
+
+    for _, gameID in ipairs(mp.network.getStreamedPlayers()) do
+      local netID = mp.network.getPlayerId(gameID)
+      print(string.format("Player %s is nearby (I am %s)", netID, localNetID))
+    end
+
+    local nearbyVehicles = mp.network.getStreamedPool('CVehicle')
+    print(string.format("%d vehicles streamed in", #nearbyVehicles))
+    ```
+  </TabItem>
+</Tabs>
+
+## Example: reading the data of the vehicle in front of you
+
+This is the conversion you will write most often. Game natives tell you *which* vehicle the player is sitting in or looking at, but they hand you the game's entity. The data your server attached to that vehicle (owner, fuel, lock state) is stored under its network ID. So you go from the entity to its game ID, from the game ID to the network ID, and then read the [synced metadata](/guides/server/meta/#entity-metadata-vehicles-peds-objects-pickups).
+
+The example adds a `vehicle-info` console command. It uses game natives, so the resource needs `use_game_natives = true`.
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="client.js"
+    // The vehicle the player sits in, otherwise the one they look at, otherwise null
+    const findTargetVehicle = () => {
+      const player = mp.game.GetPlayer();
+      if (!player) return null;
+
+      const mountedVehicle = mp.game.GetMountedVehicle(player);
+      if (mountedVehicle) return mountedVehicle;
+
+      const targetingSystem = mp.game.ScriptGameInstance.GetTargetingSystem();
+      const lookedAtObject = targetingSystem.GetLookAtObject(player, false, false);
+      if (lookedAtObject && lookedAtObject.IsA('vehicleBaseObject')) {
+        return lookedAtObject;
+      }
+
+      return null;
+    };
+
+    mp.commands.add('vehicle-info', () => {
+      const vehicle = findTargetVehicle();
+      if (!vehicle) {
+        console.log('Sit in a vehicle or look at one first.');
+        return;
+      }
+
+      // Natives gave us the game's entity. CyberMP wants the network ID.
+      const gameId = vehicle.GetEntityID().hash;
+      const netId = mp.network.getVehicleId(gameId);
+
+      // A vehicle the server did not create has no network ID
+      if (!netId) {
+        console.log('This vehicle is not synced by the server.');
+        return;
+      }
+
+      // Values the server stored with sync = true
+      const fuel = mp.meta.getEntityMeta(netId, 'fuel');
+      const isLocked = mp.meta.getEntityMeta(netId, 'isLocked');
+
+      console.log(`Vehicle ${netId}: fuel=${fuel}, locked=${isLocked}`);
+    });
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="client.lua"
+    -- The vehicle the player sits in, otherwise the one they look at, otherwise nil
+    local function findTargetVehicle()
+      local player = Game.GetPlayer()
+      if not player then return nil end
+
+      local mountedVehicle = Game.GetMountedVehicle(player)
+      if mountedVehicle then return mountedVehicle end
+
+      local targetingSystem = Game.GetTargetingSystem()
+      local lookedAtObject = targetingSystem:GetLookAtObject(player, false, false)
+      if lookedAtObject and lookedAtObject:IsA('vehicleBaseObject') then
+        return lookedAtObject
+      end
+
+      return nil
+    end
+
+    mp.commands.add('vehicle-info', function()
+      local vehicle = findTargetVehicle()
+      if not vehicle then
+        print('Sit in a vehicle or look at one first.')
+        return
+      end
+
+      -- Natives gave us the game's entity. CyberMP wants the network ID.
+      local gameId = vehicle:GetEntityID().hash
+      local netId = mp.network.getVehicleId(gameId)
+
+      -- A vehicle the server did not create has no network ID.
+      -- 0 counts as true in Lua, so it is checked by hand.
+      if not netId or netId == 0 then
+        print('This vehicle is not synced by the server.')
+        return
+      end
+
+      -- Values the server stored with sync = true
+      local fuel = mp.meta.getEntity(netId, 'fuel')
+      local isLocked = mp.meta.getEntity(netId, 'isLocked')
+
+      print(string.format('Vehicle %s: fuel=%s, locked=%s', netId, tostring(fuel), tostring(isLocked)))
+    end)
+    ```
+  </TabItem>
+</Tabs>
+
+A few details that matter here:
+
+- **Only synced values are visible.** A key the server set without `sync = true`, or never set, reads as empty on the client. Print the value before you build logic on it.
+- **Not every vehicle has a network ID.** [Local entities](/guides/client/local-entities/) exist in this player's game only, so the lookup finds nothing for them. Always handle that case.
+- **Reading is free, deciding is not.** The client's copy of the metadata is what the server last sent. It is fine for drawing a fuel gauge or a "locked" hint. When the player acts on it (unlock, refuel), send the network ID to the server and let the server check its own value.
+- **Ask when you need it.** `findTargetVehicle` calls several natives. Run it on a key press, a command or a slow timer, not on every frame.
+
+## Next steps
+
+- [Working with Events](/guides/client/events/): the stream-in and stream-out events that deliver both IDs.
+- [Local Entities](/guides/client/local-entities/): entities you spawn on one client only, which have no network ID at all.
+- [Working with Game Natives](/reference/client/working-with-game-natives/): what you can do with an entity once you have its game ID.
+- [Streaming: what the client can see](/guides/client/streaming/): why an ID sometimes has no game object yet.
+- [Reading synced data on the client](/guides/client/meta/): read the values the server attached to a network ID.

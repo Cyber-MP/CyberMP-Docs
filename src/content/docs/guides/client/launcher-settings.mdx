@@ -1,0 +1,268 @@
+---
+title: Launcher settings
+description: Read what the player chose in the CyberMP launcher (voice chat, push-to-talk key, gender and more) from a client script, and handle missing fields safely, in JavaScript and Lua.
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import { SCRIPT_LANG_TAB_SYNC_KEY } from '../../../../lib/const';
+
+Before joining a server, a player sets a few things in the CyberMP launcher: whether voice chat is on, which key is push-to-talk, the gender of their character, and so on. When the launcher starts the game it hands those settings over, and a client script can read them with `mp.getLauncherSettings()`.
+
+You need this when your resource should follow a choice the player already made, instead of asking again: show the right push-to-talk key in your HUD, hide voice hints for players who turned voice off, pick a default body type in a character creator.
+
+Two rules shape everything on this page:
+
+- **The settings are read-only.** A resource can look at them, not change them. The player changes them in the launcher and restarts the game.
+- **The field list is not a stable API.** It is whatever the player's launcher version sends. Fields can be added, renamed or removed in any launcher update, so your code must work when a field is missing.
+
+## Reading the settings
+
+The call differs slightly between the two languages:
+
+| | Call | Returns |
+| :--- | :--- | :--- |
+| JS | `mp.getLauncherSettings()` | The settings, already parsed into an object. |
+| JS | `mp.getLauncherSettingsJSON()` | The same settings as raw JSON text. |
+| Lua | `mp.getLauncherSettings()` | The settings as JSON text, or nothing when the launcher did not pass any. Decode it with `json.decode`. |
+
+Wrap the call in a small function that always gives you something usable. If the settings are missing or damaged, it returns an empty object, and the rest of your code falls back to its defaults without any special case.
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="client.js"
+    function readLauncherSettings() {
+      const settings = mp.getLauncherSettings();
+
+      // Nothing usable came from the launcher: carry on with an empty object,
+      // so every field simply reads as "missing".
+      if (typeof settings !== 'object' || settings === null) {
+        return {};
+      }
+
+      return settings;
+    }
+
+    const launcherSettings = readLauncherSettings();
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="client.lua"
+    local function readLauncherSettings()
+      local settingsJson = mp.getLauncherSettings()
+
+      -- The launcher passed nothing: carry on with an empty table,
+      -- so every field simply reads as "missing".
+      if type(settingsJson) ~= 'string' or settingsJson == '' then
+        return {}
+      end
+
+      -- pcall catches the error json.decode raises on damaged text
+      local decodedOk, settings = pcall(json.decode, settingsJson)
+      if not decodedOk or type(settings) ~= 'table' then
+        return {}
+      end
+
+      return settings
+    end
+
+    local launcherSettings = readLauncherSettings()
+    ```
+  </TabItem>
+</Tabs>
+
+The settings are handed to the game once, when the launcher starts it. They do not change during a session, so read them once and keep the result.
+
+## See what your launcher sends
+
+Because the fields depend on the launcher version, look at the real thing before you write code against it. Print the field names once, join your server, and read the output in the client console (`F8`).
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="client.js"
+    for (const fieldName of Object.keys(launcherSettings)) {
+      const fieldValue = launcherSettings[fieldName];
+      console.log(`[launcher] ${fieldName} (${typeof fieldValue})`);
+    }
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="client.lua"
+    for fieldName, fieldValue in pairs(launcherSettings) do
+      print(string.format('[launcher] %s (%s)', fieldName, type(fieldValue)))
+    end
+    ```
+  </TabItem>
+</Tabs>
+
+The loop prints names and types, not values, on purpose: see the caution about personal data [below](#fields-sent-by-launcher-102).
+
+## Fields sent by launcher 1.0.2
+
+This list comes from the official launcher, version 1.0.2: it is the set of settings that launcher passes to the game. The client typings declare the result as `any` and list no fields, so treat the table as a snapshot of one launcher version, not as a promise.
+
+| Field | Type | Launcher default | What it is |
+| :--- | :--- | :--- | :--- |
+| `username` | `string` | none | The name the player typed in the launcher. |
+| `gender` | `string`: `'male'` or `'female'` | `'male'` | "Player gender" in the launcher. |
+| `voiceChatEnabled` | `boolean` | `false` | The "Voice chat" switch. |
+| `pushToTalk` | `boolean` | `false` | The "Push to talk" switch. |
+| `pushToTalkKey` | `number` | `66` (the `B` key) | Key code of the push-to-talk key. |
+| `audioInputName` | `string` | absent | Chosen microphone. Missing until the player picks one. |
+| `audioOutputName` | `string` | absent | Chosen output device. Missing until the player picks one. |
+| `audioInputVolume` | `number`, 0 to 100 | `100` | "Input volume". |
+| `audioOutputVolume` | `number`, 0 to 100 | `100` | "Output volume". |
+| `cefSharedTexture` | `boolean` | `true` | "GPU accelerated cef": how the in-game browser is drawn. |
+| `edgerunner` | `boolean` | `false` | The "Im edgerunner!" switch, which changes the look of the launcher. |
+| `disableRtx` | `boolean` | `false` | "Disable RTX". |
+| `enableConsole` | `boolean` | `false` | "Enable console". |
+| `gameLocation` | `string` | none | Path of the game on the player's disk. |
+
+Some launcher settings are **not** sent to the game, so a script can't read them: the launcher's own language, "Auto close after connected" and the local server address. In particular, there is no language field. If your UI is translated, let the player pick the language in your own interface.
+
+:::caution[Personal data]
+`gameLocation` is a folder path on the player's PC and can contain their Windows user name. `audioInputName` and `audioOutputName` describe their hardware. Don't log these values, don't show them on screen and don't send them to your server. Read the fields you need and leave the rest alone.
+:::
+
+## Reading one field safely
+
+A field can be missing (older or newer launcher) or have a type you did not expect. Check the type before you use a value, and decide what your resource does otherwise. Two small helpers cover most fields:
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="client.js"
+    function readBooleanSetting(settings, fieldName, fallback) {
+      const value = settings[fieldName];
+      if (typeof value !== 'boolean') {
+        return fallback;
+      }
+      return value;
+    }
+
+    function readNumberSetting(settings, fieldName, fallback) {
+      const value = settings[fieldName];
+      if (typeof value !== 'number') {
+        return fallback;
+      }
+      return value;
+    }
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="client.lua"
+    local function readBooleanSetting(settings, fieldName, fallback)
+      local value = settings[fieldName]
+      if type(value) ~= 'boolean' then
+        return fallback
+      end
+      return value
+    end
+
+    local function readNumberSetting(settings, fieldName, fallback)
+      local value = settings[fieldName]
+      if type(value) ~= 'number' then
+        return fallback
+      end
+      return value
+    end
+    ```
+  </TabItem>
+</Tabs>
+
+Pick each fallback to be the harmless choice. For `voiceChatEnabled` that is `false`: if you can't tell, don't promise the player that others can hear them.
+
+## Example: a voice hint for the HUD
+
+A common use is a line in the HUD that tells the player how voice works for them. The function below turns the launcher settings into one sentence. It uses `launcherSettings` and the two helpers from the sections above.
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="client.js"
+    const KEY_CODE_B = 66; // the launcher's default push-to-talk key
+
+    // Letters and digits have a key code equal to their character code,
+    // so they can be shown as the character itself. Other keys keep their number.
+    function describeKey(keyCode) {
+      const isDigit = keyCode >= 48 && keyCode <= 57;
+      const isLetter = keyCode >= 65 && keyCode <= 90;
+
+      if (isDigit || isLetter) {
+        return String.fromCharCode(keyCode);
+      }
+      return `key ${keyCode}`;
+    }
+
+    function buildVoiceHint(settings) {
+      const voiceEnabled = readBooleanSetting(settings, 'voiceChatEnabled', false);
+      if (!voiceEnabled) {
+        return 'Voice chat is off. You can turn it on in the launcher settings.';
+      }
+
+      const usesPushToTalk = readBooleanSetting(settings, 'pushToTalk', false);
+      if (!usesPushToTalk) {
+        return 'Voice chat is on.';
+      }
+
+      const pushToTalkKey = readNumberSetting(settings, 'pushToTalkKey', KEY_CODE_B);
+      return `Hold ${describeKey(pushToTalkKey)} to talk.`;
+    }
+
+    console.log(buildVoiceHint(launcherSettings));
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="client.lua"
+    local KEY_CODE_B = 66 -- the launcher's default push-to-talk key
+
+    -- Letters and digits have a key code equal to their character code,
+    -- so they can be shown as the character itself. Other keys keep their number.
+    local function describeKey(keyCode)
+      local isDigit = keyCode >= 48 and keyCode <= 57
+      local isLetter = keyCode >= 65 and keyCode <= 90
+
+      if isDigit or isLetter then
+        return string.char(keyCode)
+      end
+      return string.format('key %d', keyCode)
+    end
+
+    local function buildVoiceHint(settings)
+      local voiceEnabled = readBooleanSetting(settings, 'voiceChatEnabled', false)
+      if not voiceEnabled then
+        return 'Voice chat is off. You can turn it on in the launcher settings.'
+      end
+
+      local usesPushToTalk = readBooleanSetting(settings, 'pushToTalk', false)
+      if not usesPushToTalk then
+        return 'Voice chat is on.'
+      end
+
+      local pushToTalkKey = readNumberSetting(settings, 'pushToTalkKey', KEY_CODE_B)
+      return string.format('Hold %s to talk.', describeKey(pushToTalkKey))
+    end
+
+    print(buildVoiceHint(launcherSettings))
+    ```
+  </TabItem>
+</Tabs>
+
+With the launcher defaults this prints `Voice chat is off. You can turn it on in the launcher settings.`. With voice and push to talk switched on, it prints `Hold B to talk.`.
+
+The example prints the sentence to keep it short. To show it in your interface, send the text to your page with a CEF event: see [Your first CEF UI](/guides/client/first-cef-ui/).
+
+:::note
+The hint describes the player's own launcher. It says nothing about the server: if the server runs with `disable_voice = true`, there is no voice whatever the launcher says. A client script can't read `server.toml`, so have the server tell its clients, for example with [synced global metadata](/guides/server/meta/#global-metadata).
+:::
+
+## Things to keep in mind
+
+- **Don't trust these values on the server.** They come from the player's machine, and a modified client can send anything. They are fine for cosmetic choices (a hint, a default selection), not for permissions or anything that affects other players. For the player's name, use `player.nickname` on the server rather than `username`.
+- **Missing settings are normal.** The Lua function returns nothing when the launcher passed no settings. What the JS function returns in that case is not documented, which is why `readLauncherSettings` checks the type instead of assuming an object.
+- **Keep the list of fields you depend on short.** Every field you read is a field a launcher update can take away. Log the field names again after a launcher update if something stops working.
+- **Reading is all there is.** No function writes launcher settings or changes the voice setup from a script.
+
+## Next steps
+
+- [Voice chat](/guides/server/voice-chat/): what the built-in voice server does and what you control on the server side.
+- [Local Storage](/guides/client/local-storage/): keep your *own* per-player preferences between sessions.
+- [Your first CEF UI](/guides/client/first-cef-ui/): show values like the voice hint in a HUD.
+- [`MpClient` reference](/reference/client/api/global/mpclient/#getlaunchersettings) and [Lua client reference](/reference/lua/client/#mp-getlaunchersettings): the function signatures.

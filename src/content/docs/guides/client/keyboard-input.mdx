@@ -1,0 +1,322 @@
+---
+title: Reading keyboard input
+description: React to key presses in a client script with the game's key events, poll a key from Lua, handle keys inside a focused CEF page, and toggle a panel without repeats.
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import { SCRIPT_LANG_TAB_SYNC_KEY } from '../../../../lib/const';
+
+Sooner or later a gamemode needs its own keys: `F2` opens a menu, `E` uses a door, `T` opens the chat. CyberMP has no key-binding system of its own. What you get is the game's stream of key events, a way to ask whether a key is down (Lua only), and the normal browser key events inside your CEF page. This page shows each one and when it applies.
+
+## Which approach to use
+
+| Approach | JavaScript | Lua | Works when |
+| :--- | :--- | :--- | :--- |
+| Key events from the game | `mp.game.onInputKeyEvent(fn)` | `mp.registerGameState('onInputKeyEvent', fn)` | The game has the keyboard. Needs `use_game_natives = true`. |
+| Ask if a key is down | Not available | `mp.isKeyPressed(keyCode)` | You call it yourself, usually every frame. |
+| Browser key events | `keydown` / `keyup` in the page | Same, the page is always JavaScript | The CEF page has focus. |
+
+Which one applies depends on **who has the keyboard**. Normally the game does. After `mp.cef.setFocus(true, ...)` keyboard input goes to your CEF page instead, until you give it back (see [Creating Your First CEF UI](/guides/client/first-cef-ui/#step-3-wire-it-up-in-the-client-script)). A key that opens a menu is read in the client script. A key pressed while the menu is open and focused is read in the page.
+
+## Key events from the game
+
+The game reports every key going down and coming up. Your callback receives two numbers: `action` says what happened, `key` says which key.
+
+| `action` | Name | Meaning |
+| :--- | :--- | :--- |
+| `1` | `IACT_Press` | The key went down. |
+| `2` | `IACT_Release` | The key came up. |
+| `3` | `IACT_Axis` | An analog input moved, for example a stick or the mouse. Ignore it for keys. |
+
+The `key` values for the keys you will bind most often:
+
+| Key | Code | Key | Code |
+| :--- | :--- | :--- | :--- |
+| `A` to `Z` | `65` to `90` | `F1` to `F12` | `112` to `123` |
+| `0` to `9` (top row) | `48` to `57` | Arrow left, up, right, down | `37`, `38`, `39`, `40` |
+| Enter | `13` | Left Shift, Right Shift | `160`, `161` |
+| Escape | `27` | Left Ctrl | `162` |
+| Space | `32` | Tab | `9` |
+| Left, right, middle mouse button | `1`, `2`, `3` | Gamepad A / Cross | `136` |
+
+These are the game's `EInputAction` and `EInputKey` enums. For the usual keyboard keys the codes are the same as Windows virtual-key codes. The same enum lists mouse and gamepad buttons, so expect more than keyboard keys in the callback and always compare `key` with the one you want.
+
+This example prints a line when `E` goes down and another when it comes up:
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="client.js"
+    const ACTION_PRESS = 1;
+    const ACTION_RELEASE = 2;
+    const KEY_E = 69;
+
+    mp.game.onInputKeyEvent((action, key) => {
+      if (key !== KEY_E) return;
+
+      if (action === ACTION_PRESS) {
+        console.log('E is down');
+      }
+
+      if (action === ACTION_RELEASE) {
+        console.log('E is up');
+      }
+    });
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="client.lua"
+    local ACTION_PRESS = 1
+    local ACTION_RELEASE = 2
+    local KEY_E = 69
+
+    mp.registerGameState('onInputKeyEvent', function(action, key)
+      if key ~= KEY_E then return end
+
+      if action == ACTION_PRESS then
+        print('E is down')
+      end
+
+      if action == ACTION_RELEASE then
+        print('E is up')
+      end
+    end)
+    ```
+  </TabItem>
+</Tabs>
+
+:::note[Lua: check the values once]
+The Lua reference lists the arguments of `onInputKeyEvent` as `action, key` and says nothing about their type. The example assumes they are the same numbers as in JavaScript. If the comparison never matches, print both arguments once and compare with what you see.
+:::
+
+Things to know:
+
+- **`use_game_natives = true` is required** in `resource.toml`, because the events come from the game layer. See [Working with Game Natives](/reference/client/working-with-game-natives/).
+- **The callback cannot be removed.** Register it once at the top of your script and decide inside it whether to act.
+- **You are only listening.** The key still does whatever the game has bound to it. Pick keys the game doesn't use, or accept that both things happen.
+- **Every key passes through your callback.** Leave on the first line when the key isn't yours, and keep the rest short.
+- **TypeScript:** import the enums instead of writing numbers, `import { EInputAction, EInputKey } from '@cybermp/client-types/enums'`. Plain JavaScript and Lua have no such import, which is why the examples define their own constants.
+
+## Example: a key that toggles a panel
+
+`F2` shows and hides a help panel in the CEF page. The panel is only displayed, it doesn't take focus, so the game keeps the keyboard the whole time.
+
+The one trap is the held key. If the player keeps `F2` down, you want one toggle, not a panel that flickers. The example remembers that the key is down and ignores further presses until it has been released.
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="client.js"
+    const ACTION_PRESS = 1;
+    const ACTION_RELEASE = 2;
+    const KEY_F2 = 113;
+
+    let isPanelVisible = false;
+    let isToggleKeyDown = false;
+
+    function togglePanel() {
+      isPanelVisible = !isPanelVisible;
+      mp.events.emitCef('helpPanel:setVisible', isPanelVisible);
+    }
+
+    mp.game.onInputKeyEvent((action, key) => {
+      if (key !== KEY_F2) return;
+
+      if (action === ACTION_RELEASE) {
+        isToggleKeyDown = false;
+        return;
+      }
+
+      if (action !== ACTION_PRESS) return;
+
+      // Still held from the press we already handled: do nothing
+      if (isToggleKeyDown) return;
+      isToggleKeyDown = true;
+
+      // The player is typing in a focused page (a chat box, a form): leave the key alone
+      if (mp.cef.isInFocus()) return;
+
+      togglePanel();
+    });
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="client.lua"
+    local ACTION_PRESS = 1
+    local ACTION_RELEASE = 2
+    local KEY_F2 = 113
+
+    local isPanelVisible = false
+    local isToggleKeyDown = false
+
+    local function togglePanel()
+      isPanelVisible = not isPanelVisible
+      mp.events.triggerCef('helpPanel:setVisible', isPanelVisible)
+    end
+
+    mp.registerGameState('onInputKeyEvent', function(action, key)
+      if key ~= KEY_F2 then return end
+
+      if action == ACTION_RELEASE then
+        isToggleKeyDown = false
+        return
+      end
+
+      if action ~= ACTION_PRESS then return end
+
+      -- Still held from the press we already handled: do nothing
+      if isToggleKeyDown then return end
+      isToggleKeyDown = true
+
+      -- The player is typing in a focused page (a chat box, a form): leave the key alone
+      if mp.cef.isInFocus() then return end
+
+      togglePanel()
+    end)
+    ```
+  </TabItem>
+</Tabs>
+
+The page shows or hides the panel when told to:
+
+```html title="index.html"
+<div id="help-panel" hidden>
+  <p>F2: help. T: chat. F8: console.</p>
+</div>
+
+<script>
+  mp.events.on('helpPanel:setVisible', (isVisible) => {
+    const helpPanel = document.getElementById('help-panel');
+    helpPanel.hidden = !isVisible;
+  });
+</script>
+```
+
+`helpPanel:setVisible` is a name chosen for this example. The client script owns the state (`isPanelVisible`) and the page only displays it. That keeps the two from disagreeing, and after a page reload you can send the state again from a `domReady` handler (see [Working with Events](/guides/client/events/#interacting-with-cef-browser-ui)).
+
+:::tip[Acting on release]
+Another way to get exactly one action per key press is to act on `IACT_Release` instead of `IACT_Press`: a key is released once, however long it was held. It feels a little slower to the player, because nothing happens until the finger comes up. It is fine for menus and wrong for anything that should feel immediate.
+:::
+
+## Polling a key in Lua
+
+Lua also has `mp.isKeyPressed(keyCode)`, which answers "is this key down right now?" with `true` or `false`. There is no event: you ask, usually once per frame. The reference lists it with the runtime helpers, outside the game layer.
+
+Asking every frame gives `true` on every frame while the key is held, so the same guard is needed. Compare the answer with the one from the previous frame and act only when it changes from up to down:
+
+```lua title="client.lua"
+local KEY_F2 = 113
+
+local isPanelVisible = false
+local wasKeyDown = false
+
+local function togglePanel()
+  isPanelVisible = not isPanelVisible
+  mp.events.triggerCef('helpPanel:setVisible', isPanelVisible)
+end
+
+mp.onUpdateLoop(function()
+  local isKeyDown = mp.isKeyPressed(KEY_F2)
+
+  -- True only on the first frame of a press, not while the key is held
+  local wasJustPressed = isKeyDown and not wasKeyDown
+  wasKeyDown = isKeyDown
+
+  if not wasJustPressed then return end
+  if mp.cef.isInFocus() then return end
+
+  togglePanel()
+end)
+```
+
+:::caution[What the reference does and doesn't say]
+The Lua reference describes `mp.isKeyPressed` as returning `true` "when the runtime reports the given integer key code as pressed", and states that the exact semantics are not documented. It doesn't name the code table either. The example uses the same number as the key events above; confirm it with a key of yours before building on it. JavaScript has no `isKeyPressed`: keep your own set of keys that are down, adding on `IACT_Press` and removing on `IACT_Release`.
+:::
+
+## Keys while the page has focus
+
+Once you call `mp.cef.setFocus(true, true)` for a menu, the keyboard belongs to the page. Typing goes into its inputs, and the keys for the menu itself, such as Escape to close, are handled in the page with ordinary browser events. The page then tells the client script what it wants, because only the client script can give focus back.
+
+```html title="index.html"
+<script>
+  document.addEventListener('keydown', (event) => {
+    // A held key fires keydown again and again: only react to the first one
+    if (event.repeat) return;
+
+    if (event.key === 'Escape') {
+      mp.events.emit('menu:closeRequested');
+    }
+  });
+</script>
+```
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="client.js"
+    function openMenu() {
+      mp.events.emitCef('menu:setVisible', true);
+      // Keyboard and mouse now go to the page
+      mp.cef.setFocus(true, true);
+    }
+
+    function closeMenu() {
+      mp.events.emitCef('menu:setVisible', false);
+      // Give the keyboard and mouse back to the game
+      mp.cef.setFocus(false, false);
+    }
+
+    mp.events.onCef('menu:closeRequested', () => {
+      closeMenu();
+    });
+
+    // Never leave the player with a stuck cursor
+    mp.events.on('resourceStop', () => {
+      mp.cef.setFocus(false, false);
+    });
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="client.lua"
+    local function openMenu()
+      mp.events.triggerCef('menu:setVisible', true)
+      -- Keyboard and mouse now go to the page
+      mp.cef.setFocus(true, true)
+    end
+
+    local function closeMenu()
+      mp.events.triggerCef('menu:setVisible', false)
+      -- Give the keyboard and mouse back to the game
+      mp.cef.setFocus(false, false)
+    end
+
+    mp.events.addCef('menu:closeRequested', function()
+      closeMenu()
+    end)
+
+    -- Never leave the player with a stuck cursor
+    mp.events.add('resourceStop', function()
+      mp.cef.setFocus(false, false)
+    end)
+    ```
+  </TabItem>
+</Tabs>
+
+Call `openMenu` from wherever the menu is opened: a key handler like the one above, a [client command](/guides/client/commands/) or a server event.
+
+:::caution[Check focus before acting on a game key]
+The typings don't say whether the game's key events keep firing while the page has focus, so don't build on either answer. Do what the examples do, and what the [official Freeroam gamemode](https://github.com/Cyber-MP/CyberMP-Freeroam) does before it forwards keys to its UI: in the client script, ignore your hotkeys while `mp.cef.isInFocus()` is true, and let the page handle the keys it needs. Otherwise a player typing "e" into a chat box may also open a door.
+:::
+
+The reverse also holds: a page without focus receives no key events. If a HUD element has to react to a key while the game has the keyboard, read the key in the client script and forward it to the page with `emitCef`, as the toggle example does.
+
+## Notes for experienced developers
+
+- **Keys are not actions.** Key events give you physical keys. They know nothing about the player's bindings in the game settings, so "the key bound to Use" is not available this way. The game's own input actions (named things such as `CameraMouseX`) reach `PlayerPuppet.OnAction`, which you can watch with an [observer](/guides/client/observes/). That is more work and needs NativeDB at hand; use it when you need bindings or analog values.
+- **Modifiers are keys too.** There is no "Ctrl+K" event. Track the modifier yourself: set a flag on its press, clear it on its release, and check the flag when `K` arrives.
+- **Keep the server out of it.** Read the key on the client and send the server what the player wants to do (`door:use`), not which key went down. The server then checks whether that is allowed. See [Working with Events](/guides/client/events/#communicating-with-the-server).
+- **Console and game menus.** While the `F8` console or a game menu is open, players still press keys. If a hotkey must not fire there, track that state yourself; `mp.cef.isInFocus()` only knows about your CEF page.
+
+## Next steps
+
+- [Creating Your First CEF UI](/guides/client/first-cef-ui/): the page side, focus and the cursor.
+- [Client commands](/guides/client/commands/): a typed alternative to a hotkey, handy while developing.
+- [Ticks and timers](/guides/client/tick-and-timers/): the per-frame loop used for polling.
+- [Observing Game Methods](/guides/client/observes/): watch the game's own input actions.

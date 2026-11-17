@@ -1,20 +1,22 @@
 ---
 title: Observing Game Methods
-description: Learn how to monitor REDengine method calls without altering their execution using observe hooks in JavaScript and Lua.
+description: Run your own code whenever the game calls one of its script methods, without changing what the method does.
 ---
 
 import { Tabs, TabItem } from '@astrojs/starlight/components';
 import { SCRIPT_LANG_TAB_SYNC_KEY } from '../../../../lib/const';
 
-The observe API allows client scripts to listen to internal REDengine methods whenever they are invoked by the game engine. Observers act as passive listeners: they do not modify return values or prevent the underlying game function from executing.
+An **observer** is a callback that runs every time the game calls a given method of a given class: a menu opening, the player mounting a vehicle, an input action firing. It only watches. The original method still runs, with the same arguments and the same result.
 
-For complete type signatures, see [`ObserveFunction`](/reference/client/api/global/observefunction/) and the [Lua Client Reference](/reference/lua/client/#method-hooks-observe--override).
+Use an observer when you need to *know* that something happened in the game. If you need to *change* what happens (block the call, edit its arguments, return something else), use an [override](/guides/client/overrides/) instead.
 
----
+Observers hook into the game, so the resource needs `use_game_natives = true` in its `resource.toml` (see [Working with Game Natives](/reference/client/working-with-game-natives/)). Full signatures are in [`ObserveFunction`](/reference/client/api/global/observefunction/) and the [Lua client reference](/reference/lua/client/#method-hooks-observe--override).
 
-## Registering an Observer
+## Registering an observer
 
-Register observers from the `onInit` lifecycle stage.
+You pass a class name, a method name and a callback. Class and method names are the ones listed on [NativeDB](https://nativedb.red4ext.com/).
+
+Register observers inside the `onInit` [lifecycle stage](/guides/client/lifecycle/), which is when the game's classes become available to scripts.
 
 <Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
   <TabItem label="JS">
@@ -22,13 +24,13 @@ Register observers from the `onInit` lifecycle stage.
     let settingsMenu = null;
 
     mp.game.onInit(() => {
-      // Observe when the settings menu controller opens
+      // The settings menu opened: remember its controller
       mp.game.observe('SettingsMainGameController', 'OnMenuChanged', (self) => {
         settingsMenu = self;
         console.log('Settings menu opened.');
       });
 
-      // Observe when the settings menu controller requests close
+      // The settings menu is closing: drop the reference
       mp.game.observe('SettingsMainGameController', 'RequestClose', (self) => {
         settingsMenu = null;
         console.log('Settings menu closed.');
@@ -41,13 +43,13 @@ Register observers from the `onInit` lifecycle stage.
     local settingsMenu = nil
 
     mp.registerGameState('onInit', function()
-      -- Observe when the settings menu controller opens
+      -- The settings menu opened: remember its controller
       mp.observe('SettingsMainGameController', 'OnMenuChanged', function(self)
         settingsMenu = self
         print("Settings menu opened.")
       end)
 
-      -- Observe when the settings menu controller requests close
+      -- The settings menu is closing: drop the reference
       mp.observe('SettingsMainGameController', 'RequestClose', function(self)
         settingsMenu = nil
         print("Settings menu closed.")
@@ -57,62 +59,145 @@ Register observers from the `onInit` lifecycle stage.
   </TabItem>
 </Tabs>
 
----
+Registering returns nothing, so there is no handle to remove an observer later. Observers are removed when the resource stops or restarts. To switch one off for a while, check a flag at the top of the callback.
 
-## Method Signatures and Arguments
+## What the callback receives
 
-Class and method names correspond directly to definitions found in [NativeDB](https://nativedb.red4ext.com/).
+- **Instance method:** `(self, arg1, arg2, ...)`. `self` is the game object the method was called on, followed by the method's own arguments.
+- **Static method:** `(arg1, arg2, ...)`, with no `self`.
+- **Overloaded method:** when a class has several methods with the same name, pick one by adding its parameter types after a `;`, for example `'IsSummoningVehiclesRestricted;GameInstance'`.
 
-- **Instance Methods:** The callback receives `(self, arg1, arg2, ...)`. The first argument is the instance of the game object executing the method.
-- **Static Methods:** The callback receives `(arg1, arg2, ...)` without a `self` reference.
-- **No Continuation Function:** Observers never receive `wrappedMethod`; it is appended only to overrides.
-- **Overloaded Signatures:** If a method has multiple signatures in NativeDB, supply the full signature suffix (e.g. `'ClassName'`, `'MethodName;Int32Bool'`).
-- **No Result Modification:** Observers receive `self` (for instance methods) and then the method arguments; they cannot alter return values or cancel function execution.
+Observers never receive the `wrappedMethod` continuation that [overrides](/guides/client/overrides/) get, and whatever the callback returns is ignored.
 
-:::warning[Weak References]
-The `self` reference passed into the callback is a weak pointer into the game engine's memory pool. Never assume a stored controller or entity reference remains valid once the corresponding entity or menu is closed or destroyed.
+:::caution[`self` is a weak reference]
+`self` points at an object that the game owns and can destroy at any time. If you store it (like `settingsMenu` above), clear it when the menu closes or the entity goes away, and never assume a stored reference is still valid later.
 :::
 
----
+## Choosing when the callback runs
 
-## Execution Timing & Variants
+There are six variants. They differ in two ways: whether the call is captured before or after the original method, and whether your callback is queued or run on the spot.
 
-The engine provides several observer variants to control capture timing and thread dispatching:
-
-| Method Variant | Capture Point | Dispatch Behavior |
+| Variant | Captured | Your callback runs |
 | :--- | :--- | :--- |
-| `observe` / `observeBefore` | Before original method executes | Queued onto the script thread (runs on next tick) |
-| `observeAfter` | After original method executes | Queued onto the script thread (runs on next tick) |
-| `observeRaw` / `observeBeforeRaw` | Before original method executes | Dispatched immediately without tick queuing |
-| `observeAfterRaw` | After original method executes | Dispatched immediately without tick queuing |
+| `observe` / `observeBefore` | Before the original method | Queued, on a later script tick |
+| `observeAfter` | After the original method | Queued, on a later script tick |
+| `observeRaw` / `observeBeforeRaw` | Before the original method | Immediately, inside the game call |
+| `observeAfterRaw` | After the original method | Immediately, inside the game call |
+
+`observe` is the same as `observeBefore`, and `observeRaw` is the same as `observeBeforeRaw`.
+
+For the queued variants, "before" and "after" describe when the call is captured, not when your code runs. The callback of a plain `observe` can run after the game method has already finished. That is fine for most uses (reacting to a menu, a mount, a state change), and it is the safe default.
+
+Reach for a raw variant only when you need to run during the call itself, or when the method fires so often that queuing every call is too slow, such as input actions:
 
 <Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
   <TabItem label="JS">
     ```js title="client.js"
+    // Goes up with every input. A timer can compare two readings:
+    // if the number did not change, the player has not touched anything.
+    let inputActionCount = 0;
+
     mp.game.onInit(() => {
-      // Immediate raw capture of player input actions
+      // Called for every input action (mouse moves included), so keep the body short
       mp.game.observeBeforeRaw('PlayerPuppet', 'OnAction', (self, action) => {
-        // Keep raw callback execution minimal and fast
+        inputActionCount = inputActionCount + 1;
       });
     });
     ```
   </TabItem>
   <TabItem label="Lua">
     ```lua title="client.lua"
+    -- Goes up with every input. A timer can compare two readings:
+    -- if the number did not change, the player has not touched anything.
+    local inputActionCount = 0
+
     mp.registerGameState('onInit', function()
-      -- Immediate raw capture of player input actions
+      -- Called for every input action (mouse moves included), so keep the body short
       mp.observeBeforeRaw('PlayerPuppet', 'OnAction', function(self, action)
-        -- Keep raw callback execution minimal and fast
+        inputActionCount = inputActionCount + 1
       end)
     end)
     ```
   </TabItem>
 </Tabs>
 
-:::warning[Raw callbacks run on the game thread]
-A raw observer runs synchronously inside the hooked game call, often on a job worker thread rather than the script thread, so the resource runtime is not freely available there. Keep raw callbacks to reading the arguments, and forward real work through the queued variants (`mp.observe`, `observeBefore`, `observeAfter`) or the client deferred queue (`setImmediate` in JS, `mp.setImmediate` in Lua).
+:::caution[Raw callbacks run inside the game call]
+A raw observer runs synchronously inside the hooked game call, often on a job worker thread rather than the script thread, so the resource runtime is not freely available there. Keep raw callbacks to reading the arguments, and hand real work over to a queued variant (`observe`, `observeBefore`, `observeAfter`) or to the deferred queue (`setImmediate` in JS, `mp.setImmediate` in Lua).
 :::
 
-:::tip[Observer vs Override]
-Observers cannot alter return values or prevent a game function from executing. If you need to intercept, replace, or block a game method, use [Method Overrides](/guides/client/overrides).
-:::
+## Example: hiding your UI while the pause menu is open
+
+Your [CEF page](/guides/client/first-cef-ui/) is drawn over everything, the game's own menus included. A HUD that stays on screen on top of the pause menu looks broken, so the usual fix is to hide the page while the menu is open. The game has no "menu opened" event for scripts, but it calls methods on the menu's class when that happens, and an observer can watch them.
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="client.js"
+    const setHudVisible = (visible) => {
+      mp.events.emitCef('setHudVisible', visible);
+    };
+
+    mp.game.onInit(() => {
+      // The player opened the pause menu
+      mp.game.observe('MenuScenario_PauseMenu', 'OnEnterScenario', () => {
+        setHudVisible(false);
+      });
+
+      // The player went from the pause menu into the settings: stay hidden
+      mp.game.observe('MenuScenario_PauseMenu', 'OnSwitchToSettings', () => {
+        setHudVisible(false);
+      });
+
+      // The player left the pause menu
+      mp.game.observe('MenuScenario_PauseMenu', 'OnLeaveScenario', () => {
+        setHudVisible(true);
+      });
+    });
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="client.lua"
+    local function setHudVisible(visible)
+      mp.events.triggerCef('setHudVisible', visible)
+    end
+
+    mp.registerGameState('onInit', function()
+      -- The player opened the pause menu
+      mp.observe('MenuScenario_PauseMenu', 'OnEnterScenario', function()
+        setHudVisible(false)
+      end)
+
+      -- The player went from the pause menu into the settings: stay hidden
+      mp.observe('MenuScenario_PauseMenu', 'OnSwitchToSettings', function()
+        setHudVisible(false)
+      end)
+
+      -- The player left the pause menu
+      mp.observe('MenuScenario_PauseMenu', 'OnLeaveScenario', function()
+        setHudVisible(true)
+      end)
+    end)
+    ```
+  </TabItem>
+</Tabs>
+
+The page does the hiding itself when the event arrives:
+
+```js title="ui/index.html (inside a script tag)"
+mp.events.on('setHudVisible', (visible) => {
+  document.body.style.visibility = visible ? 'visible' : 'hidden';
+});
+```
+
+What to expect from this pattern:
+
+- **These are queued observers**, so the page is hidden a moment after the menu appears, not in the same frame. For a HUD that is not noticeable, and it keeps your code off the game's own call.
+- **Each menu has its own class.** This covers the pause menu only. The hub menu (inventory, map, journal) is `MenuScenario_HubMenu`, and you watch it the same way. Look the class up on [NativeDB](https://nativedb.red4ext.com/) to see which methods it has.
+- **Send the state again when the page reloads.** A reloaded page comes back visible. If that can happen while a menu is open, remember the last value and resend it from the `domReady` handler (see [Working with Events](/guides/client/events/#interacting-with-cef-browser-ui)).
+- **If the page had focus, release it too.** Hiding the page does not give the keyboard back to the game. Call `mp.cef.setFocus(false, false)` when you hide a page that had taken focus.
+
+## Next steps
+
+- [Overriding Game Methods](/guides/client/overrides/): replace or block a game method instead of only watching it.
+- [Client Lifecycle & Stages](/guides/client/lifecycle/): what `onInit` is and what is safe to do in each stage.
+- [Working with Game Natives](/reference/client/working-with-game-natives/): calling methods on the objects your observers receive.
+- [Advanced game hooks](/guides/advanced/native-hooks/): overloads, out-parameters and raw observers in depth.

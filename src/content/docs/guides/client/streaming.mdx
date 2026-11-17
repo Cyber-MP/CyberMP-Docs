@@ -1,0 +1,379 @@
+---
+title: "Streaming: what the client can see"
+description: How a client only knows the players and entities near it, the stream-in and stream-out events, listing what is streamed right now, and cleaning up when things leave.
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import { SCRIPT_LANG_TAB_SYNC_KEY } from '../../../../lib/const';
+
+A server can hold thousands of players, vehicles and objects. No client receives all of them. Each client is only told about the ones close to its player, and its game only creates those. That selection is called **streaming**, and it shapes most client code: you can only touch an entity while this client has it.
+
+## The idea in plain words
+
+- An entity **streams in** when it comes close enough to the local player. The server starts sending it, and the game creates its own copy: a car you can see, a character you can shoot.
+- An entity **streams out** when it gets too far away, is destroyed, or otherwise stops being sent. The game removes its copy.
+- "Close enough" is the entity's **streaming radius**, a distance in meters the server keeps per entity. New entities start at `230`. A server script can change it, see [what all entities share](/guides/server/entities/#what-all-entities-share).
+- Entities are also separated by **dimension**. A dimension is a separate copy of the world on the same server, used for apartments and instanced missions. A client only gets players and entities from its own dimension, however close they are. See [virtual dimensions](/guides/server/players/#virtual-dimensions).
+
+For your code this means:
+
+- A player on the other side of the map doesn't exist on this client. You cannot read their position from the game, draw a label on them or look them up by game ID.
+- Everything you attach to an entity on the client (a label, a blip, a cached value) has to be set up when it streams in and thrown away when it streams out.
+- The same entity can stream in and out many times in one session, each time as a fresh copy in the game.
+
+Streaming is about **synced** entities, the ones the server created or the other players. [Local entities](/guides/client/local-entities/) that your own client script spawns are not part of it.
+
+## Stream events
+
+The client fires an event each time something streams in or out. Listen with `mp.events.on` in JavaScript and `mp.events.add` in Lua.
+
+| Event | Fires when |
+| :--- | :--- |
+| `remotePlayerStreamIn` / `remotePlayerStreamOut` | Another player entered or left streaming range. |
+| `vehicleStreamIn` / `vehicleStreamOut` | A vehicle entered or left streaming range. |
+| `pedStreamIn` / `pedStreamOut` | A synced ped (NPC) entered or left streaming range. |
+| `objectStreamIn` / `objectStreamOut` | A synced world object entered or left streaming range. |
+
+All eight handlers receive the same two arguments:
+
+| Argument | What it is |
+| :--- | :--- |
+| `netID` | The network ID: the number the server gave the entity, the same on the server and on every client. Use it for [metadata](/guides/client/meta/) and for anything you send to the server. |
+| `gameID` | The game ID: the number this client's game uses for its copy. Use it with game natives. It is only valid while the entity is streamed in. |
+
+[Network IDs](/guides/client/network-ids/) covers the two IDs and the functions that convert between them.
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="client.js"
+    mp.events.on('remotePlayerStreamIn', (playerNetId, playerGameId) => {
+      const nickname = mp.meta.getPlayerMeta(playerNetId, 'nickname');
+      console.log(`${nickname} (ID ${playerNetId}) is now in range`);
+    });
+
+    mp.events.on('remotePlayerStreamOut', (playerNetId, playerGameId) => {
+      console.log(`Player ${playerNetId} is out of range`);
+    });
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="client.lua"
+    mp.events.add('remotePlayerStreamIn', function(playerNetId, playerGameId)
+      local nickname = mp.meta.getPlayer(playerNetId, 'nickname')
+      print(string.format("%s (ID %s) is now in range", tostring(nickname), playerNetId))
+    end)
+
+    mp.events.add('remotePlayerStreamOut', function(playerNetId, playerGameId)
+      print(string.format("Player %s is out of range", playerNetId))
+    end)
+    ```
+  </TabItem>
+</Tabs>
+
+The `nickname` key is synced for every player by the built-in core resource, so this works without server code of your own.
+
+:::note[What has no stream event]
+The events are called `remotePlayer...` because they are about *other* players; the local player never streams in for itself. There is also no stream event for pickups in the typings or the Lua reference, although pickups can be listed with `getStreamedPool('CPickup')`.
+:::
+
+## Listing what is streamed right now
+
+Events tell you about changes. Two functions on `mp.network` give you the current picture:
+
+| Function | Returns |
+| :--- | :--- |
+| `mp.network.getStreamedPlayers()` | The game IDs of the other players currently streamed in. |
+| `mp.network.getStreamedPool(poolName)` | The game IDs of the streamed entities of one kind. `poolName` is exactly `'CVehicle'`, `'CPed'`, `'CObject'` or `'CPickup'`. |
+
+Both return **game IDs**. Convert each one with the matching function (`getPlayerId`, `getVehicleId`, `getPedId`, `getObjectId`) when you need the network ID.
+
+### Example: who is near me
+
+A `near` command for the `F8` console that prints every player in range. It needs no natives.
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="client.js"
+    mp.commands.add('near', () => {
+      const streamedPlayerGameIds = mp.network.getStreamedPlayers();
+
+      console.log(`${streamedPlayerGameIds.length} players in range:`);
+
+      for (const playerGameId of streamedPlayerGameIds) {
+        const playerNetId = mp.network.getPlayerId(playerGameId);
+
+        // The list can hold a player that is not fully set up yet: skip it
+        if (!playerNetId) continue;
+
+        const nickname = mp.meta.getPlayerMeta(playerNetId, 'nickname');
+        console.log(`  [${playerNetId}] ${nickname}`);
+      }
+    });
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="client.lua"
+    mp.commands.add('near', function()
+      local streamedPlayerGameIds = mp.network.getStreamedPlayers()
+
+      print(string.format("%d players in range:", #streamedPlayerGameIds))
+
+      for _, playerGameId in ipairs(streamedPlayerGameIds) do
+        local playerNetId = mp.network.getPlayerId(playerGameId)
+
+        -- The list can hold a player that is not fully set up yet: skip it.
+        -- 0 counts as true in Lua, so it has to be compared.
+        local hasNetId = playerNetId ~= nil and playerNetId ~= 0
+
+        if hasNetId then
+          local nickname = mp.meta.getPlayer(playerNetId, 'nickname')
+          print(string.format("  [%s] %s", playerNetId, tostring(nickname)))
+        end
+      end
+    end)
+    ```
+  </TabItem>
+</Tabs>
+
+The skip is not paranoia. The core resource's own nametag code ignores entries whose game ID is `0` and entries that don't convert to a network ID, on every frame.
+
+## Example: do something to each vehicle
+
+Say every vehicle should get a lock icon when the server marked it as locked. The obvious half is a `vehicleStreamIn` handler. The half that is easy to forget is the vehicles that are **already streamed in when your script starts**, which happens every time the resource is restarted while a player is in the world. So the example does both, and remembers which vehicles it has handled so none is handled twice.
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="client.js"
+    // Vehicles we have set up, by network ID
+    const knownVehicles = new Set();
+
+    function setUpVehicle(vehicleNetId) {
+      if (knownVehicles.has(vehicleNetId)) return;
+      knownVehicles.add(vehicleNetId);
+
+      const isLocked = mp.meta.getEntityMeta(vehicleNetId, 'isLocked') === true;
+      mp.events.emitCef('vehicleIcons:add', vehicleNetId, isLocked);
+    }
+
+    // Vehicles that come into range from now on
+    mp.events.on('vehicleStreamIn', (vehicleNetId, vehicleGameId) => {
+      setUpVehicle(vehicleNetId);
+    });
+
+    // Vehicles that were already in range before this script started
+    for (const vehicleGameId of mp.network.getStreamedPool('CVehicle')) {
+      const vehicleNetId = mp.network.getVehicleId(vehicleGameId);
+
+      if (vehicleNetId) {
+        setUpVehicle(vehicleNetId);
+      }
+    }
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="client.lua"
+    -- Vehicles we have set up, by network ID
+    local knownVehicles = {}
+
+    local function setUpVehicle(vehicleNetId)
+      if knownVehicles[vehicleNetId] then return end
+      knownVehicles[vehicleNetId] = true
+
+      local isLocked = mp.meta.getEntity(vehicleNetId, 'isLocked') == true
+      mp.events.triggerCef('vehicleIcons:add', vehicleNetId, isLocked)
+    end
+
+    -- Vehicles that come into range from now on
+    mp.events.add('vehicleStreamIn', function(vehicleNetId, vehicleGameId)
+      setUpVehicle(vehicleNetId)
+    end)
+
+    -- Vehicles that were already in range before this script started
+    for _, vehicleGameId in ipairs(mp.network.getStreamedPool('CVehicle')) do
+      local vehicleNetId = mp.network.getVehicleId(vehicleGameId)
+
+      if vehicleNetId and vehicleNetId ~= 0 then
+        setUpVehicle(vehicleNetId)
+      end
+    end
+    ```
+  </TabItem>
+</Tabs>
+
+`vehicleIcons:add` is a name chosen for this example; replace the body of `setUpVehicle` with whatever your gamemode does per vehicle. `isLocked` is [synced entity metadata](/guides/server/meta/#entity-metadata-vehicles-peds-objects-pickups) that the server set.
+
+## Example: clean up on stream-out
+
+Whatever you keep per entity has to go when the entity does. If it doesn't, two things go wrong. The table grows for as long as the player stays connected. And in the example above, a vehicle that leaves and comes back would be skipped, because it would still be in `knownVehicles`.
+
+This continues the previous example:
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="client.js"
+    mp.events.on('vehicleStreamOut', (vehicleNetId, vehicleGameId) => {
+      // Not one of ours: nothing to clean up
+      if (!knownVehicles.has(vehicleNetId)) return;
+
+      knownVehicles.delete(vehicleNetId);
+      mp.events.emitCef('vehicleIcons:remove', vehicleNetId);
+    });
+
+    // The resource is stopping: nothing of ours should stay on screen
+    mp.events.on('resourceStop', () => {
+      for (const vehicleNetId of knownVehicles) {
+        mp.events.emitCef('vehicleIcons:remove', vehicleNetId);
+      }
+
+      knownVehicles.clear();
+    });
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="client.lua"
+    mp.events.add('vehicleStreamOut', function(vehicleNetId, vehicleGameId)
+      -- Not one of ours: nothing to clean up
+      if not knownVehicles[vehicleNetId] then return end
+
+      knownVehicles[vehicleNetId] = nil
+      mp.events.triggerCef('vehicleIcons:remove', vehicleNetId)
+    end)
+
+    -- The resource is stopping: nothing of ours should stay on screen
+    mp.events.add('resourceStop', function()
+      for vehicleNetId in pairs(knownVehicles) do
+        mp.events.triggerCef('vehicleIcons:remove', vehicleNetId)
+      end
+
+      knownVehicles = {}
+    end)
+    ```
+  </TabItem>
+</Tabs>
+
+Key your own state by **network ID**, as these examples do. The network ID stays the same for the whole life of the entity on the server. The game ID belongs to one streamed-in copy and should not be kept after stream-out.
+
+## Why an ID sometimes doesn't resolve
+
+Sooner or later you hold a network ID and the client has nothing for it. The usual reasons:
+
+- **The entity is not streamed in on this client.** A server event told you "vehicle 42 is yours", but vehicle 42 is parked across town. `mp.network.getVehicleGameId(42)` has no game ID to give you. Check the result before using it, and in Lua compare with `0` as well, because `0` counts as true there.
+- **It has not streamed in *yet*.** The server created a vehicle and sent you its ID in the same moment. Your event can arrive before the vehicle does. Wait for its `vehicleStreamIn` instead of looking it up right away.
+- **It is in another dimension.** Distance doesn't matter then; the client is not told about it.
+- **The game object is a moment behind.** Even inside a `...StreamIn` handler, asking the *game* for the entity can come back empty for a short time while the game finishes creating it. The [official Freeroam gamemode](https://github.com/Cyber-MP/CyberMP-Freeroam) waits a moment in its `vehicleStreamIn` handler and still checks that the game returned an entity before using it.
+- **It streamed out while you were waiting.** Any code that pauses (a timer, an `await`, `mp.wait`) has to check again afterwards.
+
+The pattern that covers the first two cases: look in what is streamed now, and otherwise wait for the stream-in event.
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="client.js"
+    // Calls onReady(vehicleGameId) once the vehicle with this network ID is streamed in
+    function whenVehicleIsStreamed(wantedNetId, onReady) {
+      const currentGameId = mp.network.getVehicleGameId(wantedNetId);
+
+      // Already here: no need to wait
+      if (currentGameId) {
+        onReady(currentGameId);
+        return;
+      }
+
+      const handleStreamIn = (vehicleNetId, vehicleGameId) => {
+        if (vehicleNetId !== wantedNetId) return;
+
+        // Found it: stop listening, this handler has done its job
+        mp.events.off('vehicleStreamIn', handleStreamIn);
+        onReady(vehicleGameId);
+      };
+
+      mp.events.on('vehicleStreamIn', handleStreamIn);
+    }
+
+    // The server tells this client which vehicle it was given
+    mp.events.onServer('garage:vehicleDelivered', (vehicleNetId) => {
+      whenVehicleIsStreamed(vehicleNetId, (vehicleGameId) => {
+        console.log(`Vehicle ${vehicleNetId} is here, game ID ${vehicleGameId}`);
+      });
+    });
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="client.lua"
+    -- Calls onReady(vehicleGameId) once the vehicle with this network ID is streamed in
+    local function whenVehicleIsStreamed(wantedNetId, onReady)
+      local currentGameId = mp.network.getVehicleGameId(wantedNetId)
+
+      -- Already here: no need to wait
+      if currentGameId and currentGameId ~= 0 then
+        onReady(currentGameId)
+        return
+      end
+
+      local handlerId
+
+      handlerId = mp.events.add('vehicleStreamIn', function(vehicleNetId, vehicleGameId)
+        if vehicleNetId ~= wantedNetId then return end
+
+        -- Found it: stop listening, this handler has done its job
+        mp.events.remove('vehicleStreamIn', handlerId)
+        onReady(vehicleGameId)
+      end)
+    end
+
+    -- The server tells this client which vehicle it was given
+    mp.events.addServer('garage:vehicleDelivered', function(vehicleNetId)
+      whenVehicleIsStreamed(vehicleNetId, function(vehicleGameId)
+        print(string.format("Vehicle %s is here, game ID %s", vehicleNetId, vehicleGameId))
+      end)
+    end)
+    ```
+  </TabItem>
+</Tabs>
+
+`garage:vehicleDelivered` is a name chosen for this example. If the vehicle never comes into range, the handler stays registered until the resource stops; add a timeout if that can happen often in your gamemode.
+
+### From a game ID to the game object
+
+A game ID is a number. To call natives on the entity you need the game's object for it. In JavaScript you build an `entEntityID` with that number as its `hash` and ask the game, which is how the core resource does it. This needs `use_game_natives = true`.
+
+```js title="client.js"
+// Returns the game's entity object for a game ID, or nothing if the game doesn't have it (yet)
+function findEntityByGameId(gameId) {
+  const entityId = new mp.game.entEntityID();
+  entityId.hash = gameId;
+
+  return mp.game.ScriptGameInstance.FindEntityByID(entityId);
+}
+
+mp.events.on('vehicleStreamIn', (vehicleNetId, vehicleGameId) => {
+  const vehicle = findEntityByGameId(vehicleGameId);
+
+  // The game may still be creating it: don't assume
+  if (!vehicle) {
+    console.log(`Vehicle ${vehicleNetId} streamed in, but the game object isn't ready yet`);
+    return;
+  }
+
+  const position = vehicle.GetWorldPosition();
+  console.log(`Vehicle ${vehicleNetId} is at ${position.x}, ${position.y}, ${position.z}`);
+});
+```
+
+In Lua, `Game.FindEntityByID(entityId)` exists and the core resource calls it with an entity ID it received from the game. Building such an ID from a plain number is not covered by the Lua reference, so there is no Lua version of this helper here.
+
+## Notes for experienced developers
+
+- **Handlers run for every entity of that kind.** On a busy street `vehicleStreamIn` fires often. Keep the handler short and filter early, like `whenVehicleIsStreamed` does.
+- **Don't poll the lists every frame if an event will do.** `getStreamedPlayers()` and `getStreamedPool()` hand you a list on every call. Per-frame use is justified when you draw something for each player every frame, which is what the core nametags do; for bookkeeping, the events are cheaper.
+- **Stream-out is the "gone" signal on the client.** The handler gets the two IDs and no reason, so the client cannot tell an entity that drove away from one that was destroyed. If the difference matters, send an event from the server.
+- **Don't count on a replay after a restart.** Nothing says that entities already in range are announced again to a freshly started script. Read the current lists at startup, as the vehicle example does; the `knownVehicles` check makes it harmless if an event arrives as well.
+- **The server decides the radius.** If entities pop in too late or you receive more than you need, change `streamingRadius` on the server. There is no client-side setting for it.
+- **Order between stream-in and other data.** Nothing documents whether a server event sent right after creating an entity arrives before or after that entity's stream-in. Write the client so that either order works.
+
+## Next steps
+
+- [Network IDs](/guides/client/network-ids/): the two IDs in detail and every conversion function.
+- [Reading synced data on the client](/guides/client/meta/): the values you read for an entity once it is streamed in.
+- [Working with Events](/guides/client/events/): registering and removing handlers.
+- [World Entities: Objects, Peds, and Pickups](/guides/server/entities/): creating the entities that stream in, and their `streamingRadius` and `dimension`.
+- [Ticks and timers](/guides/client/tick-and-timers/): looping over streamed entities without paying for it on every frame.

@@ -1,18 +1,24 @@
 ---
 title: Teleporting the Player
-description: Learn how to safely teleport players in the game world, close active UI menus, and bind teleportation commands in JavaScript and Lua.
+description: Move the local player to new coordinates from a client script, close open game menus first, and coordinate with the server when changing dimension, in JavaScript and Lua.
 ---
 
 import { Tabs, TabItem } from '@astrojs/starlight/components';
 import { SCRIPT_LANG_TAB_SYNC_KEY } from '../../../../lib/const';
 
-Teleporting characters in REDengine requires safely closing any active pause or settings menus before moving the entity. Moving a character while a menu scenario is open can freeze the game's input pipeline and lock character controls.
+Teleporting moves a player who is already in the world to another position, using the game's own teleportation system. It runs on the client, because that is where the game's native functions live.
 
----
+There is one trap: if the pause or settings menu is open while the character is moved, the game can stop taking input and leave the player unable to move. So a safe teleport has two parts: close the menus, then move the character.
 
-## Tracking and Closing Active Menus
+:::note
+Everything on this page calls game natives, so your `resource.toml` needs `use_game_natives = true`. See [Working with Game Natives](/reference/client/working-with-game-natives).
+:::
 
-Set up method observers to keep track of active pause and settings menu controllers so they can be safely dismissed before moving the player:
+## Track and close open menus
+
+To close the pause or settings menu you need a reference to its controller, the game object that drives the menu while it is open. To get one, [observe](/guides/client/observes) the methods the game calls when those menus open, and keep the `self` each call hands you.
+
+Register the observers in the `onInit` stage. It is where hooks belong, and it runs once per resource, so the observers aren't registered a second time when the world reloads.
 
 <Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
   <TabItem label="JS">
@@ -20,8 +26,8 @@ Set up method observers to keep track of active pause and settings menu controll
     let pauseMenu = null;
     let settingsMenu = null;
 
-    mp.game.onGameLoaded(() => {
-      // Track Settings Menu
+    mp.game.onInit(() => {
+      // Settings menu: remember it while it is open
       mp.game.observe('SettingsMainGameController', 'OnMenuChanged', (self) => {
         settingsMenu = self;
       });
@@ -29,7 +35,7 @@ Set up method observers to keep track of active pause and settings menu controll
         settingsMenu = null;
       });
 
-      // Track Pause Menu
+      // Pause menu
       mp.game.observe('MenuScenario_PauseMenu', 'OnSwitchToSettings', (self) => {
         pauseMenu = self;
       });
@@ -39,6 +45,7 @@ Set up method observers to keep track of active pause and settings menu controll
     });
 
     const closeAllMenus = () => {
+      // Closes the hub menu (inventory, map, journal...)
       const player = mp.game.GetPlayer();
       if (player) {
         player.QueueEvent(new mp.game.ForceCloseHubMenuEvent());
@@ -55,7 +62,7 @@ Set up method observers to keep track of active pause and settings menu controll
     local settingsMenu = nil
 
     mp.registerGameState('onInit', function()
-      -- Track Settings Menu
+      -- Settings menu: remember it while it is open
       mp.observe('SettingsMainGameController', 'OnMenuChanged', function(self)
         settingsMenu = self
       end)
@@ -63,7 +70,7 @@ Set up method observers to keep track of active pause and settings menu controll
         settingsMenu = nil
       end)
 
-      -- Track Pause Menu
+      -- Pause menu
       mp.observe('MenuScenario_PauseMenu', 'OnSwitchToSettings', function(self)
         pauseMenu = self
       end)
@@ -73,6 +80,7 @@ Set up method observers to keep track of active pause and settings menu controll
     end)
 
     local function closeAllMenus()
+      -- Closes the hub menu (inventory, map, journal...)
       local player = Game.GetPlayer()
       if player then
         player:QueueEvent(NewObject('ForceCloseHubMenuEvent'))
@@ -85,74 +93,81 @@ Set up method observers to keep track of active pause and settings menu controll
   </TabItem>
 </Tabs>
 
----
+## Move the player
 
-## Executing Teleportation via Native Facility
-
-To move the player character, retrieve REDengine's `TeleportationFacility` and supply target spatial coordinates using `Vector4` along with an `EulerAngles` rotation struct:
+The game's `TeleportationFacility` does the move. Its `Teleport` method takes the object to move, a position as a `Vector4`, and an orientation as `EulerAngles` (roll, pitch, yaw). To turn a character you only need the yaw.
 
 <Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
   <TabItem label="JS">
     ```js title="client.js"
     const teleportPlayer = (x, y, z, yaw = 1.0) => {
-      // Always dismiss active menus before moving the player
+      // Always close open menus before moving the player
       closeAllMenus();
 
       const player = mp.game.GetPlayer();
       if (!player) return;
 
-      const targetPosition = new mp.game.Vector4(x, y, z, 1.0);
-      const targetRotation = new mp.game.EulerAngles(0, 0, yaw);
+      // Game structs are created empty, then filled in field by field
+      const targetPosition = new mp.game.Vector4();
+      targetPosition.x = x;
+      targetPosition.y = y;
+      targetPosition.z = z;
+      targetPosition.w = 1.0;
 
-      mp.game.ScriptGameInstance.GetTeleportationFacility().Teleport(
-        player,
-        targetPosition,
-        targetRotation
-      );
+      // Only the yaw matters for a character: it is the direction they face
+      const targetRotation = new mp.game.EulerAngles();
+      targetRotation.roll = 0;
+      targetRotation.pitch = 0;
+      targetRotation.yaw = yaw;
+
+      const teleportationFacility = mp.game.ScriptGameInstance.GetTeleportationFacility();
+      teleportationFacility.Teleport(player, targetPosition, targetRotation);
     };
     ```
   </TabItem>
   <TabItem label="Lua">
     ```lua title="client.lua"
     local function teleportPlayer(x, y, z, yaw)
-      -- Always dismiss active menus before moving the player
+      -- Always close open menus before moving the player
       closeAllMenus()
 
       local player = Game.GetPlayer()
       if not player then return end
 
       local targetPosition = Vector4.new(x, y, z, 1.0)
+
+      -- Only the yaw matters for a character: it is the direction they face.
+      -- The arguments are (roll, pitch, yaw).
       local targetRotation = EulerAngles.new(0, 0, yaw or 1.0)
 
-      Game.GetTeleportationFacility():Teleport(
-        player,
-        targetPosition,
-        targetRotation
-      )
+      local teleportationFacility = Game.GetTeleportationFacility()
+      teleportationFacility:Teleport(player, targetPosition, targetRotation)
     end
     ```
   </TabItem>
 </Tabs>
 
-:::note[Homogeneous Coordinate Requirement]
-In REDengine spatial math, point coordinates in `Vector4` require a `w` component of `1.0`.
+:::note[Why `w` is 1.0]
+A `Vector4` has a fourth component, `w`. When the vector is a position in the world, set it to `1.0`.
 :::
 
----
+`teleportPlayer` returns early when `GetPlayer()` has nothing to give, which is the case before the world has loaded and for a moment after a spawn. See [Client Lifecycle & Stages](/guides/client/lifecycle).
 
-## Registering Teleportation Commands
+The easiest way to get good coordinates is to stand on the spot and print your position: [Working with Game Natives](/reference/client/working-with-game-natives/#reading-the-players-position) has a command for that.
 
-Register client console commands to trigger navigation shortcuts or reset stuck menus from the in-game developer console (`F8`):
+## Add teleport commands
+
+Client commands are a quick way to try this out. They are typed in the client console, which opens with `F8`. The second command is worth keeping around: it closes a menu that got stuck.
 
 <Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
   <TabItem label="JS">
     ```js title="client.js"
-    // Teleport to the Afterlife club coordinates
+    // Teleport to the Afterlife club
     mp.commands.add('afterlife', () => {
       teleportPlayer(-1456.89, 1038.27, 16.82, 1.0);
     });
 
-    // Utility command to manually force-close stuck UI menus
+    // Force-close game menus that are stuck open
     mp.commands.add('close-menu', () => {
       closeAllMenus();
     });
@@ -160,12 +175,12 @@ Register client console commands to trigger navigation shortcuts or reset stuck 
   </TabItem>
   <TabItem label="Lua">
     ```lua title="client.lua"
-    -- Teleport to the Afterlife club coordinates
+    -- Teleport to the Afterlife club
     mp.commands.add('afterlife', function()
       teleportPlayer(-1456.89, 1038.27, 16.82, 1.0)
     end)
 
-    -- Utility command to manually force-close stuck UI menus
+    -- Force-close game menus that are stuck open
     mp.commands.add('close-menu', function()
       closeAllMenus()
     end)
@@ -173,13 +188,21 @@ Register client console commands to trigger navigation shortcuts or reset stuck 
   </TabItem>
 </Tabs>
 
----
+## Teleporting into another dimension
 
-## Cross-Dimension Teleportation
+A **dimension** is a separate copy of the world on the same server: players only see the players and entities that are in their own dimension. Dimensions are how you build private apartments or instanced missions.
 
-When teleporting between different server dimensions (for instance, entering a private apartment or instanced mission space), coordinate with the server:
+Only the server can change a player's dimension, and only the client can teleport, so moving someone into an instance takes a round trip:
 
-1. Client requests instance transition (e.g. `mp.events.emitServer('requestApartmentEntry', id)`).
-2. Server updates `player.dimension = instanceId` (see [Working with Players](/guides/server/players/#virtual-dimensions)).
-3. Server emits a confirmation event back to the client.
-4. Client executes `teleportPlayer(...)` to position the character inside the interior.
+1. The client asks the server, for example with `mp.events.emitServer('requestApartmentEntry', id)`.
+2. The server checks the request and sets `player.dimension = instanceId` (see [Working with Players](/guides/server/players/#virtual-dimensions)).
+3. The server sends a confirmation event back to that client.
+4. The client calls `teleportPlayer(...)` to place the character inside the interior.
+
+Sending and receiving those events is covered in [Working with Events](/guides/client/events/#communicating-with-the-server).
+
+## Next steps
+
+- [Spawning the Player](/guides/client/spawning-player): put the player into the world in the first place.
+- [Observing Game Methods](/guides/client/observes): more on the hooks used to track menus.
+- [Working with Game Natives](/reference/client/working-with-game-natives): how to call game systems and pass structs.

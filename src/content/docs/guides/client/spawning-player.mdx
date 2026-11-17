@@ -1,32 +1,41 @@
 ---
 title: Spawning the Player
-description: Learn how to configure player health stat pools and safely spawn the local player in JavaScript and Lua.
+description: Put the local player into the world from a client script, set their health first, and trigger the spawn at the right moment in JavaScript and Lua.
 ---
 
 import { Tabs, TabItem } from '@astrojs/starlight/components';
 import { SCRIPT_LANG_TAB_SYNC_KEY } from '../../../../lib/const';
 
-In CyberMP, player spawning is coordinated on the client. To properly initialize a character into Night City, your client script must configure health stat pools, invoke the client runtime's spawn method, and coordinate with game world loading states.
+In CyberMP the client script puts the player into the world: you choose a position and call `spawnPlayer`. A working spawn has three parts, covered in order on this page: give the player health, call the spawn method, and do both only once the game world has loaded.
 
-For method definitions, see [`MpLocal.spawnPlayer`](/reference/client/api/global/mplocal/#spawnplayer) and the [Lua Client Reference](/reference/lua/client/#local-entities-mpclient).
+The spawn method is [`mp.local.spawnPlayer`](/reference/client/api/global/mplocal/#spawnplayer) in JavaScript and [`mp.client.spawnPlayer`](/reference/lua/client/#local-entities-mpclient) in Lua.
 
 :::note
-You need `use_game_natives` in your `resource.toml` to make calls to game native functions:
+The health code below calls game native functions, which only work when your `resource.toml` enables them:
 ```toml title="resource.toml"
 use_game_natives = true
 ```
-For lifecycle phase requirements, see [Working with Game Natives](/reference/client/working-with-game-natives).
+See [Working with Game Natives](/reference/client/working-with-game-natives) for how native calls work.
 :::
 
----
+## Set the player's health
 
-## Initializing Health Stat Pools
+Set the health before you spawn. Otherwise the character can enter the world with an empty health pool and flatline on the spot.
 
-Before spawning, you must initialize the player's health pools to prevent the character from collapsing into an immediate flatlined state upon entering the world. REDengine uses designated stat pools and modifier IDs for character health:
+The game stores health in two places:
 
-- **Health Stat Pool Type:** `17` ([NativeDB](https://nativedb.red4ext.com/e/5923428624360168))
-- **Health Stat Type:** `787` ([NativeDB](https://nativedb.red4ext.com/e/8958699713058621))
-- **Additive Modifier Type:** `0` ([NativeDB](https://nativedb.red4ext.com/e/5896876661927857))
+- A **stat** holds the maximum. You change it by adding a *modifier* to the stat.
+- A **stat pool** holds the current value, which goes up and down between zero and that maximum.
+
+Both are identified by game enum values:
+
+| Constant | Value | Game enum |
+| :--- | :--- | :--- |
+| Health stat pool | `17` | `gamedataStatPoolType.Health` ([NativeDB](https://nativedb.red4ext.com/e/5923428624360168)) |
+| Health stat | `787` | `gamedataStatType.Health` ([NativeDB](https://nativedb.red4ext.com/e/8958699713058621)) |
+| Additive modifier | `0` | `gameStatModifierType.Additive` ([NativeDB](https://nativedb.red4ext.com/e/5896876661927857)) |
+
+`setMaxHealth` replaces the modifiers on the health stat, and `setHealth` sets the current value of the pool:
 
 <Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
   <TabItem label="JS">
@@ -53,6 +62,7 @@ Before spawning, you must initialize the player's health pools to prevent the ch
       const player = mp.game.GetPlayer();
       const playerGameId = player.GetEntityID();
 
+      // Drop the existing health modifiers, then add ours
       const statsSystem = mp.game.ScriptGameInstance.GetStatsSystem();
       statsSystem.RemoveAllModifiers(playerGameId, HEALTH_STAT_TYPE, true);
 
@@ -97,6 +107,7 @@ Before spawning, you must initialize the player's health pools to prevent the ch
       local player = Game.GetPlayer()
       local playerGameId = player:GetEntityID()
 
+      -- Drop the existing health modifiers, then add ours
       local statsSystem = Game.GetStatsSystem()
       statsSystem:RemoveAllModifiers(playerGameId, HEALTH_STAT_TYPE, true)
 
@@ -119,80 +130,202 @@ Before spawning, you must initialize the player's health pools to prevent the ch
   </TabItem>
 </Tabs>
 
----
+## Spawn the player
 
-## Executing the Spawn Routine
+`spawnPlayer(x, y, z, yaw)` takes a world position and the direction the character faces. Set the maximum health first, then the current health, then spawn.
 
-Apply the health parameters and call `spawnPlayer` with target coordinates. In JavaScript, local spawning is exposed on `mp.local.spawnPlayer`, while in Lua it is available on `mp.client.spawnPlayer`:
+A spawn point is easier to read and to pass around as one value with named fields, so the helper below takes it in that form:
 
 <Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
   <TabItem label="JS">
     ```js title="client.js"
     const SPAWN_HEALTH = 300;
-    // Coordinates near V's Megabuilding H10 apartment: [x, y, z, yaw]
-    const DEFAULT_SPAWN = [-1392.637, 1271.536, 123.082, 1.0];
 
-    const spawnPlayer = (x, y, z, yaw = 1.0) => {
+    // Next to V's apartment in Megabuilding H10
+    const DEFAULT_SPAWN = { x: -1392.637, y: 1271.536, z: 123.082, yaw: 1.0 };
+
+    const spawnPlayerAt = (spawnPoint) => {
       setMaxHealth(SPAWN_HEALTH);
       setHealth(SPAWN_HEALTH);
 
-      mp.local.spawnPlayer(x, y, z, yaw);
+      mp.local.spawnPlayer(spawnPoint.x, spawnPoint.y, spawnPoint.z, spawnPoint.yaw);
     };
     ```
   </TabItem>
   <TabItem label="Lua">
     ```lua title="client.lua"
     local SPAWN_HEALTH = 300
-    -- Coordinates near V's Megabuilding H10 apartment: [x, y, z, yaw]
-    local DEFAULT_SPAWN = {-1392.637, 1271.536, 123.082, 1.0}
 
-    local function spawnPlayer(x, y, z, yaw)
+    -- Next to V's apartment in Megabuilding H10
+    local DEFAULT_SPAWN = { x = -1392.637, y = 1271.536, z = 123.082, yaw = 1.0 }
+
+    local function spawnPlayerAt(spawnPoint)
       setMaxHealth(SPAWN_HEALTH)
       setHealth(SPAWN_HEALTH)
 
-      mp.client.spawnPlayer(x, y, z, yaw or 1.0)
+      mp.client.spawnPlayer(spawnPoint.x, spawnPoint.y, spawnPoint.z, spawnPoint.yaw)
     end
     ```
   </TabItem>
 </Tabs>
 
----
+:::caution[The spawn is asynchronous]
+`spawnPlayer` returns `true` when the spawn sequence has *started*, not when the character is ready. For a short while afterwards `GetPlayer()` can return nothing, and `GetGender()` on a fresh puppet can still report `None`. If you customize the character right after spawning (appearance, clothing, inventory), wait for the puppet first: see [Waiting for the puppet after a spawn](/guides/client/lifecycle/#waiting-for-the-puppet-after-a-spawn).
+:::
 
-## Coordinating with World Loading and Commands
+## Call it when the world is ready
 
-Always trigger spawn routines inside the `onGameLoaded` lifecycle event. Spawning inside `resourceStart` will fail because REDengine's native classes and world systems are not yet initialized:
+Game natives and world systems don't exist yet when your script starts, so a spawn at the top of the script or in `resourceStart` fails. Wait for the game-loaded stage. The "once" variant used here runs on the first world load only, which is what you want for the initial spawn. [Client Lifecycle & Stages](/guides/client/lifecycle) explains all the stages.
+
+A console command is handy for respawning by hand while you develop. Client commands are typed in the client console, which opens with `F8`:
 
 <Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
   <TabItem label="JS">
     ```js title="client.js"
     // Spawn automatically when the world is ready
     mp.game.onceGameLoaded(() => {
-      spawnPlayer(...DEFAULT_SPAWN);
+      spawnPlayerAt(DEFAULT_SPAWN);
     });
 
-    // Register a client console command for manual respawn (press F8)
+    // Type "spawn" in the client console (F8) to respawn
     mp.commands.add('spawn', () => {
-      spawnPlayer(...DEFAULT_SPAWN);
+      spawnPlayerAt(DEFAULT_SPAWN);
     });
     ```
   </TabItem>
   <TabItem label="Lua">
     ```lua title="client.lua"
     -- Spawn automatically when the world is ready
-    mp.registerGameState('onGameLoaded', function()
-      spawnPlayer(table.unpack(DEFAULT_SPAWN))
+    mp.registerGameState('onceGameLoaded', function()
+      spawnPlayerAt(DEFAULT_SPAWN)
     end)
 
-    -- Register a client console command for manual respawn (press F8)
+    -- Type "spawn" in the client console (F8) to respawn
     mp.commands.add('spawn', function()
-      spawnPlayer(table.unpack(DEFAULT_SPAWN))
+      spawnPlayerAt(DEFAULT_SPAWN)
     end)
     ```
   </TabItem>
 </Tabs>
 
-:::tip[Spawn Sequence Caveats]
-- **Close menus before spawning**: Leftover pause or settings menus can permanently freeze player inputs after spawning. Always dismiss open menus before spawning (see [Teleporting the Player](/guides/client/teleporting-player)).
-- **Asynchronous puppet streaming**: `spawnPlayer` returning `true` indicates only that the spawn sequence started. Wait until `GetPlayer()` returns a valid instance before applying custom appearances or inventory items (see [Client Lifecycle & Stages](/guides/client/lifecycle)).
-- **Gender sentinel value**: Right after spawn, calling `GetGender()` on the puppet can report `None` until character initialization completes. Wait for initialization before applying gender-specific clothing meshes.
+:::tip[Close menus before respawning]
+If the pause or settings menu is open when you spawn, it can stay stuck and freeze the player's input. Close the menus first, with the `closeAllMenus` helper from [Teleporting the Player](/guides/client/teleporting-player).
 :::
+
+## Respawning at the nearest spawn point
+
+`spawnPlayer` also works on a character who is dead: it puts them back into the world at the position you give, and the health code above brings them back to full health. So a respawn is the same call as the first spawn, and the only question is where.
+
+A common answer is "the closest point from a list". The example keeps a list of respawn points, measures the distance from the character to each of them, and spawns at the closest one. It runs when the server sends a `respawn` event, because the server is the one that knows a player died (its [`playerDeath`](/guides/server/players/#death-respawn-and-disconnect) event) and decides when they may come back.
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="client.js"
+    const RESPAWN_POINTS = [
+      { name: 'Megabuilding H10', x: -1392.637, y: 1271.536, z: 123.082, yaw: 1.0 },
+      { name: 'Afterlife', x: -1456.89, y: 1038.27, z: 16.82, yaw: 1.0 },
+    ];
+
+    // Straight-line distance between two points in the world
+    const getDistance = (from, to) => {
+      const deltaX = from.x - to.x;
+      const deltaY = from.y - to.y;
+      const deltaZ = from.z - to.z;
+      return Math.sqrt(deltaX * deltaX + deltaY * deltaY + deltaZ * deltaZ);
+    };
+
+    const findNearestRespawnPoint = (position) => {
+      let nearestPoint = RESPAWN_POINTS[0];
+      let nearestDistance = getDistance(position, nearestPoint);
+
+      for (const respawnPoint of RESPAWN_POINTS) {
+        const distance = getDistance(position, respawnPoint);
+        if (distance < nearestDistance) {
+          nearestPoint = respawnPoint;
+          nearestDistance = distance;
+        }
+      }
+
+      return nearestPoint;
+    };
+
+    mp.events.onServer('respawn', () => {
+      const player = mp.game.GetPlayer();
+
+      // Without a character there is no position to measure from
+      if (!player) {
+        spawnPlayerAt(DEFAULT_SPAWN);
+        return;
+      }
+
+      // A dead character still has a position: it is where they died
+      const deathPosition = player.GetWorldPosition();
+      const respawnPoint = findNearestRespawnPoint(deathPosition);
+
+      spawnPlayerAt(respawnPoint);
+      console.log(`Respawned at ${respawnPoint.name}`);
+    });
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="client.lua"
+    local RESPAWN_POINTS = {
+      { name = 'Megabuilding H10', x = -1392.637, y = 1271.536, z = 123.082, yaw = 1.0 },
+      { name = 'Afterlife', x = -1456.89, y = 1038.27, z = 16.82, yaw = 1.0 },
+    }
+
+    -- Straight-line distance between two points in the world
+    local function getDistance(from, to)
+      local deltaX = from.x - to.x
+      local deltaY = from.y - to.y
+      local deltaZ = from.z - to.z
+      return math.sqrt(deltaX * deltaX + deltaY * deltaY + deltaZ * deltaZ)
+    end
+
+    local function findNearestRespawnPoint(position)
+      local nearestPoint = RESPAWN_POINTS[1]
+      local nearestDistance = getDistance(position, nearestPoint)
+
+      for _, respawnPoint in ipairs(RESPAWN_POINTS) do
+        local distance = getDistance(position, respawnPoint)
+        if distance < nearestDistance then
+          nearestPoint = respawnPoint
+          nearestDistance = distance
+        end
+      end
+
+      return nearestPoint
+    end
+
+    mp.events.addServer('respawn', function()
+      local player = Game.GetPlayer()
+
+      -- Without a character there is no position to measure from
+      if not player then
+        spawnPlayerAt(DEFAULT_SPAWN)
+        return
+      end
+
+      -- A dead character still has a position: it is where they died
+      local deathPosition = player:GetWorldPosition()
+      local respawnPoint = findNearestRespawnPoint(deathPosition)
+
+      spawnPlayerAt(respawnPoint)
+      print('Respawned at ' .. respawnPoint.name)
+    end)
+    ```
+  </TabItem>
+</Tabs>
+
+Things to know before you build on this:
+
+- **Collect your own coordinates.** Stand where you want a respawn point and print your position; [Working with Game Natives](/reference/client/working-with-game-natives/#reading-the-players-position) has a command for that.
+- **The server is not asked where.** The position is chosen on the client, so a modified client can respawn anywhere. If the place matters (a prison, a faction base), let the server pick the point and send its coordinates with the event.
+- **Distance is measured in a straight line**, through walls and floors. With points on different levels of a megabuilding, the closest one is not always the quickest to reach.
+- **Send the event after a delay** if you want a death screen first. Nothing respawns the player between the death and your event.
+
+## Next steps
+
+- [Teleporting the Player](/guides/client/teleporting-player): move a player who is already spawned.
+- [Client Lifecycle & Stages](/guides/client/lifecycle): what is safe to call and when.
+- [Working with Players](/guides/server/players): the server side of a spawn, including the `playerSpawn` event.

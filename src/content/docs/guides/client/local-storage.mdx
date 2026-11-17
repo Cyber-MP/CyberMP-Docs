@@ -1,101 +1,241 @@
 ---
 title: Local Storage
-description: Learn how to persist client-side preferences and configuration data across game sessions using mp.localStorage in JavaScript and Lua.
+description: Keep small pieces of client-side data, such as UI settings and keybinds, on the player's machine between sessions with mp.localStorage.
 ---
 
 import { Tabs, TabItem } from '@astrojs/starlight/components';
 import { SCRIPT_LANG_TAB_SYNC_KEY } from '../../../../lib/const';
 
-The client runtime provides persistent key-value storage via `mp.localStorage`. Data saved here is written to the user's local machine and persists across game restarts and server reconnections without requiring server-side database storage.
+`mp.localStorage` is a small key-value store saved on the player's own machine. What you put there is still there after the player restarts the game or reconnects, so it suits per-player preferences that the server has no reason to keep: HUD layout, volume, keybinds, "don't show this again" flags.
 
-For complete method signatures, see the [`MpLocalStorage`](/reference/client/api/global/mplocalstorage/) reference and the [Lua Client Reference](/reference/lua/client/#local-storage-mplocalstorage).
+It is not a place for anything that matters to gameplay. The data lives on the player's PC, the server never sees it unless you send it, and the player can change or delete it.
 
----
+Full signatures are in the [`MpLocalStorage`](/reference/client/api/global/mplocalstorage/) reference and the [Lua client reference](/reference/lua/client/#local-storage-mplocalstorage).
 
-## API Overview
+## The five functions
 
-The `mp.localStorage` interface exposes five core operations:
-
-| Method | Description |
+| Function | What it does |
 | :--- | :--- |
-| `set(key, value)` | Associates a plaintext string value with the specified key in memory. |
-| `get(key)` | Retrieves the string value associated with the key, or `""` / `nil` if not found. |
-| `delete(key)` | Permanently removes a specific key-value entry from storage. |
-| `deleteAll()` | Clears all stored key-value entries for this storage database. |
-| `save()` | **Flushes in-memory data to physical disk.** |
+| `set(key, value)` | Stores a string under `key`, replacing any previous value. The value must be a non-empty string. |
+| `get(key)` | Returns the stored value as **JSON-encoded text** (see below). |
+| `delete(key)` | Removes one key. |
+| `deleteAll()` | Removes every key in the store. |
+| `save()` | Writes the store to disk. |
 
-:::important[Always Call `save()`]
-Mutations made via `set()`, `delete()`, or `deleteAll()` are held in memory until `mp.localStorage.save()` is called. If the game client or resource terminates before `save()` is executed, pending changes will be lost. Always invoke `save()` after writing or removing data.
+Three things trip people up. Each is covered below:
+
+1. Nothing is written to disk until you call `save()`.
+2. `get()` doesn't return exactly what you passed to `set()`: it returns it wrapped as JSON text.
+3. The store is shared by all resources of the server.
+
+:::caution[Always call `save()`]
+`set()`, `delete()` and `deleteAll()` only change the copy in memory. Nothing is saved automatically. If the game closes before you call `mp.localStorage.save()`, those changes are gone. Call `save()` right after you write or remove something.
 :::
 
----
+## Storing and reading values
 
-## Storing and Retrieving Values
+Values are strings. To store a number, an object or a table, turn it into a string first, usually with JSON.
 
-Values must be plaintext strings. To store structured data (such as objects, arrays, or tables), serialize them with JSON before saving:
+Reading needs one extra step. `get()` returns the stored string JSON-encoded: after `set('hud_theme', 'neon')`, `get('hud_theme')` returns `"neon"` *with the quotes*, and a key that doesn't exist comes back as the text `null`. So decode what `get()` returns once to get your string back. If that string is itself JSON you wrote, decode it a second time.
 
 <Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
   <TabItem label="JS">
     ```js title="client.js"
-    // 1. Store primitive string values
-    mp.localStorage.set('hud_theme', 'cyberpunk_neon');
-    mp.localStorage.set('master_volume', '0.85');
-
-    // 2. Store structured objects using JSON serialization
-    const customKeybinds = {
-      openPhone: 'T',
-      toggleRadio: 'R',
-      quickHeal: 'H'
+    // Returns the stored string, or null when the key is missing
+    const readString = (key) => {
+      const raw = mp.localStorage.get(key);
+      if (!raw) return null;
+      try {
+        return JSON.parse(raw); // unwrap the JSON encoding added by the store
+      } catch {
+        return raw;
+      }
     };
-    mp.localStorage.set('user_keybinds', JSON.stringify(customKeybinds));
 
-    // 3. Commit changes to physical disk
-    mp.localStorage.save();
+    // Write a plain string and an object
+    mp.localStorage.set('hud_theme', 'neon');
+    mp.localStorage.set('user_keybinds', JSON.stringify({ openPhone: 'T', toggleRadio: 'R' }));
+    mp.localStorage.save(); // write to disk
 
-    // 4. Retrieve values
-    const theme = mp.localStorage.get('hud_theme');
-    const rawKeybinds = mp.localStorage.get('user_keybinds');
-    const keybinds = rawKeybinds ? JSON.parse(rawKeybinds) : {};
+    // Read them back
+    const theme = readString('hud_theme'); // 'neon'
 
-    console.log(`Loaded theme: ${theme}, Phone keybind: ${keybinds.openPhone}`);
+    const keybindsJson = readString('user_keybinds'); // '{"openPhone":"T",...}'
+    const keybinds = keybindsJson ? JSON.parse(keybindsJson) : {};
+
+    console.log(`Theme: ${theme}, phone key: ${keybinds.openPhone}`);
     ```
   </TabItem>
   <TabItem label="Lua">
     ```lua title="client.lua"
-    -- 1. Store primitive string values
-    mp.localStorage.set('hud_theme', 'cyberpunk_neon')
-    mp.localStorage.set('master_volume', '0.85')
-
-    -- 2. Store structured tables using JSON serialization
-    local customKeybinds = {
-      openPhone = "T",
-      toggleRadio = "R",
-      quickHeal = "H"
-    }
-    mp.localStorage.set('user_keybinds', json.encode(customKeybinds))
-
-    -- 3. Commit changes to physical disk
-    mp.localStorage.save()
-
-    -- 4. Retrieve values: get() returns JSON-encoded text ('"abc"', 'null' when missing)
-    local rawTheme = mp.localStorage.get('hud_theme')
-    local theme = (rawTheme and rawTheme ~= 'null') and json.decode(rawTheme) or nil
-    local rawKeybinds = mp.localStorage.get('user_keybinds')
-    local keybinds = {}
-    if rawKeybinds and rawKeybinds ~= 'null' then
-      keybinds = json.decode(json.decode(rawKeybinds)) -- unwrap the store, then parse the value
+    -- Returns the stored string, or nil when the key is missing
+    local function readString(key)
+      local raw = mp.localStorage.get(key)
+      if not raw or raw == '' or raw == 'null' then return nil end
+      return json.decode(raw) -- unwrap the JSON encoding added by the store
     end
 
-    print(string.format("Loaded theme: %s, Phone keybind: %s", theme, keybinds.openPhone))
+    -- Write a plain string and a table
+    mp.localStorage.set('hud_theme', 'neon')
+    mp.localStorage.set('user_keybinds', json.encode({ openPhone = 'T', toggleRadio = 'R' }))
+    mp.localStorage.save() -- write to disk
+
+    -- Read them back
+    local theme = readString('hud_theme') -- 'neon'
+
+    local keybindsJson = readString('user_keybinds') -- '{"openPhone":"T",...}'
+    local keybinds = keybindsJson and json.decode(keybindsJson) or {}
+
+    print(string.format("Theme: %s, phone key: %s", theme, keybinds.openPhone))
     ```
   </TabItem>
 </Tabs>
 
----
+## Example: a settings object with defaults
 
-## Deleting Entries
+Real settings are rarely one value. Store them as one object under one key, and never trust what comes back: on a player's first visit there is nothing saved, an older version of your resource may have saved fewer settings, and the player can edit the file by hand. `loadSettings` below always returns a complete, usable object. It starts from the defaults and only takes a saved value when it is a setting you know and has the type you expect.
 
-Use `delete(key)` to remove a specific configuration entry, or `deleteAll()` to reset the storage database completely. Remember to call `save()` afterwards to commit the deletion:
+The example uses the `readString` helper from the previous section and connects the settings to a [CEF page](/guides/client/first-cef-ui/): the page receives them when it loads and reports each change.
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="client.js"
+    // Prefixed with the resource name: the store is shared with other resources
+    const SETTINGS_KEY = 'myresource:settings';
+
+    // What a player gets before they change anything
+    const DEFAULT_SETTINGS = {
+      hudScale: 1.0,
+      showSpeedometer: true,
+      chatFontSize: 14,
+    };
+
+    const loadSettings = () => {
+      // Start from a copy of the defaults
+      const settings = Object.assign({}, DEFAULT_SETTINGS);
+
+      // Nothing saved yet: this is the player's first visit
+      const savedJson = readString(SETTINGS_KEY);
+      if (!savedJson) return settings;
+
+      let savedSettings = null;
+      try {
+        savedSettings = JSON.parse(savedJson);
+      } catch {
+        // The saved text is damaged: keep the defaults
+        return settings;
+      }
+      if (savedSettings === null || typeof savedSettings !== 'object') return settings;
+
+      // Take over only the settings we know, and only with the expected type
+      for (const settingName of Object.keys(DEFAULT_SETTINGS)) {
+        const savedValue = savedSettings[settingName];
+        if (typeof savedValue === typeof DEFAULT_SETTINGS[settingName]) {
+          settings[settingName] = savedValue;
+        }
+      }
+
+      return settings;
+    };
+
+    const saveSettings = (settings) => {
+      mp.localStorage.set(SETTINGS_KEY, JSON.stringify(settings));
+      mp.localStorage.save();
+    };
+
+    const settings = loadSettings();
+
+    // The page has loaded: give it the settings to display
+    mp.events.onCef('domReady', () => {
+      mp.events.emitCef('settingsLoaded', settings);
+    });
+
+    // The player changed one setting in the page
+    mp.events.onCef('settingChanged', (settingName, newValue) => {
+      // The page is not trusted blindly either: skip unknown names and wrong types
+      const defaultValue = DEFAULT_SETTINGS[settingName];
+      if (defaultValue === undefined) return;
+      if (typeof newValue !== typeof defaultValue) return;
+
+      settings[settingName] = newValue;
+      saveSettings(settings);
+    });
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="client.lua"
+    -- Prefixed with the resource name: the store is shared with other resources
+    local SETTINGS_KEY = 'myresource:settings'
+
+    -- What a player gets before they change anything
+    local DEFAULT_SETTINGS = {
+      hudScale = 1.0,
+      showSpeedometer = true,
+      chatFontSize = 14,
+    }
+
+    local function loadSettings()
+      -- Start from a copy of the defaults
+      local settings = {}
+      for settingName, defaultValue in pairs(DEFAULT_SETTINGS) do
+        settings[settingName] = defaultValue
+      end
+
+      -- Nothing saved yet: this is the player's first visit
+      local savedJson = readString(SETTINGS_KEY)
+      if not savedJson then return settings end
+
+      -- pcall catches the error json.decode raises on damaged text
+      local decodedOk, savedSettings = pcall(json.decode, savedJson)
+      if not decodedOk or type(savedSettings) ~= 'table' then return settings end
+
+      -- Take over only the settings we know, and only with the expected type
+      for settingName, defaultValue in pairs(DEFAULT_SETTINGS) do
+        local savedValue = savedSettings[settingName]
+        if type(savedValue) == type(defaultValue) then
+          settings[settingName] = savedValue
+        end
+      end
+
+      return settings
+    end
+
+    local function saveSettings(settings)
+      mp.localStorage.set(SETTINGS_KEY, json.encode(settings))
+      mp.localStorage.save()
+    end
+
+    local settings = loadSettings()
+
+    -- The page has loaded: give it the settings to display
+    mp.events.addCef('domReady', function()
+      mp.events.triggerCef('settingsLoaded', settings)
+    end)
+
+    -- The player changed one setting in the page
+    mp.events.addCef('settingChanged', function(settingName, newValue)
+      -- The page is not trusted blindly either: skip unknown names and wrong types
+      local defaultValue = DEFAULT_SETTINGS[settingName]
+      if defaultValue == nil then return end
+      if type(newValue) ~= type(defaultValue) then return end
+
+      settings[settingName] = newValue
+      saveSettings(settings)
+    end)
+    ```
+  </TabItem>
+</Tabs>
+
+Why it is built this way:
+
+- **New settings just work.** Add a key to `DEFAULT_SETTINGS` in a later version and players who saved the old object get the default for it. A key you remove is dropped the next time the object is saved.
+- **`save()` writes the whole store to disk.** That is fine for a checkbox. For a slider that reports dozens of changes while it is dragged, update the object on every change but call `saveSettings` once, when the player lets go or closes the settings screen.
+- **One key, not one key per setting.** A single object is read and written in one go and leaves a single entry to prefix, version or delete.
+- **Settings stay on this PC.** A player on another computer starts from the defaults again. Preferences that should follow the account belong on the server.
+
+## Deleting entries
+
+`delete(key)` removes one entry and `deleteAll()` empties the store. Both need a `save()` afterwards, like any other change.
 
 <Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
   <TabItem label="JS">
@@ -104,7 +244,7 @@ Use `delete(key)` to remove a specific configuration entry, or `deleteAll()` to 
     mp.localStorage.delete('hud_theme');
     mp.localStorage.save();
 
-    // Clear all stored keys in local storage
+    // Remove everything in the store
     mp.localStorage.deleteAll();
     mp.localStorage.save();
     ```
@@ -115,16 +255,20 @@ Use `delete(key)` to remove a specific configuration entry, or `deleteAll()` to 
     mp.localStorage.delete('hud_theme')
     mp.localStorage.save()
 
-    -- Clear all stored keys in local storage
+    -- Remove everything in the store
     mp.localStorage.deleteAll()
     mp.localStorage.save()
     ```
   </TabItem>
 </Tabs>
 
----
+## Who shares the store
 
-## Storage Scope and Isolation
+- **One store per server.** Storage is separated by server address (`ip:port`), so what your server saves is not visible to another server the player joins.
+- **Shared by all resources of that server.** Every resource reads and writes the same store. Prefix your keys with the resource name (for example `'myresource:settings'`) so two resources don't overwrite each other, and remember that `deleteAll()` wipes the other resources' keys too.
+- **Client only.** Nothing here reaches the server by itself. If the server needs a stored preference, send it with a [server event](/guides/client/events/).
 
-- **Client-Side Only**: Local storage is completely isolated to the user's machine. It is not automatically transmitted to the server. If the server needs stored client preferences, forward them via [server events](/guides/client/events#communicating-with-the-server) or [RPC](/guides/recipes/rpc).
-- **Per-Server Isolation**: Local storage is partitioned per server address (`ip:port`). Resources running on the same server share the storage namespace. To avoid naming collisions between independent resources, prefix your keys with the resource name (e.g. `'myresource:settings'`).
+## Next steps
+
+- [Working with Events](/guides/client/events/): send a stored value to the server or to your CEF page.
+- [Creating Your First CEF UI](/guides/client/first-cef-ui/): build the settings screen whose values you store here.
