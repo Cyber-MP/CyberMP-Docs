@@ -1,0 +1,432 @@
+---
+title: Performance
+description: Find out what is slow in a server or client script with simple timing code, and fix the usual causes, with numbers measured on a real server.
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import { SCRIPT_LANG_TAB_SYNC_KEY } from '../../../../lib/const';
+
+A script that is fine with three players on your test server can make the whole server stutter with a hundred. The cause is rarely exotic. It is almost always the same handful of things: asking the server for the same information over and over, doing work for every player on every event, and doing too much in one go.
+
+This page shows how to measure first, and then goes through those causes. Every number on it was measured on server v4.0.4-beta.1 on one development machine with no players connected. Your numbers will differ; the proportions are what to take away.
+
+## Why one slow function hurts everybody
+
+Server scripts run on the server's main thread, one handler at a time. While your handler runs, nothing else does: no other handler, no other resource. A handler that takes 50 ms delays everything by 50 ms.
+
+The server tells you when this gets bad. After a script blocks it for a long time, the console shows:
+
+```
+[server] Server main thread LAG delay of 8867 ms
+```
+
+If you see that line, some script did a very large amount of work without a pause. (That one came from a benchmark for this page.)
+
+The client has the same rule with a tighter budget: a per-frame callback that takes 5 ms costs the player 5 ms on every frame.
+
+## Measure before you change anything
+
+Guessing which line is slow is unreliable. Timing it takes a minute.
+
+On the server, JavaScript has `performance.now()`, which returns milliseconds with a fractional part. Lua has `os.clock()`, which returns seconds of processor time as a decimal number; on the test machine it advanced in steps of one millisecond, so short work has to be repeated many times to get a usable figure.
+
+This helper runs a piece of code many times and prints the average:
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="server.js"
+    // Runs `work` many times and prints the average time of one call.
+    function measure(label, repeatCount, work) {
+      const startedAt = performance.now();
+
+      for (let i = 0; i < repeatCount; i += 1) {
+        work();
+      }
+
+      const totalMs = performance.now() - startedAt;
+      const microsecondsPerCall = (totalMs * 1000) / repeatCount;
+      console.log(`${label}: ${microsecondsPerCall.toFixed(2)} µs per call`);
+    }
+
+    measure('hash a vehicle name', 10000, () => {
+      mp.hashes.tweakdbid('Vehicle.v_sport2_porsche_911turbo_player');
+    });
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="server.lua"
+    -- Runs `work` many times and prints the average time of one call.
+    local function measure(label, repeatCount, work)
+      local startedAt = os.clock()
+
+      for i = 1, repeatCount do
+        work()
+      end
+
+      local totalMs = (os.clock() - startedAt) * 1000
+      local microsecondsPerCall = (totalMs * 1000) / repeatCount
+      print(string.format('%s: %.2f µs per call', label, microsecondsPerCall))
+    end
+
+    measure('hash a vehicle name', 10000, function()
+      mp.hashes.toTweakdbid('Vehicle.v_sport2_porsche_911turbo_player')
+    end)
+    ```
+  </TabItem>
+</Tabs>
+
+That tells you what an operation costs. To find out which of your handlers is slow on a live server, wrap them. This wrapper stays silent until a call takes longer than a limit you choose:
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="server.js"
+    // Wraps an event handler and reports the calls that take too long.
+    function warnWhenSlow(handlerName, handler) {
+      const SLOW_HANDLER_MS = 5;
+
+      return (...args) => {
+        const startedAt = performance.now();
+        const result = handler(...args);
+        const elapsedMs = performance.now() - startedAt;
+
+        if (elapsedMs > SLOW_HANDLER_MS) {
+          console.log(`[slow] ${handlerName} took ${elapsedMs.toFixed(1)} ms`);
+        }
+
+        // Pass the result on, so returning false still cancels the event.
+        return result;
+      };
+    }
+
+    mp.events.on('playerDeath', warnWhenSlow('playerDeath', (playerId, data) => {
+      // Your handler
+    }));
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="server.lua"
+    -- Wraps an event handler and reports the calls that take too long.
+    local function warnWhenSlow(handlerName, handler)
+      local SLOW_HANDLER_MS = 5
+
+      return function(...)
+        local startedAt = os.clock()
+        local result = handler(...)
+        local elapsedMs = (os.clock() - startedAt) * 1000
+
+        if elapsedMs > SLOW_HANDLER_MS then
+          print(string.format('[slow] %s took %.1f ms', handlerName, elapsedMs))
+        end
+
+        -- Pass the result on, so returning false still cancels the event.
+        return result
+      end
+    end
+
+    mp.events.add('playerDeath', warnWhenSlow('playerDeath', function(playerId, data)
+      -- Your handler
+    end))
+    ```
+  </TabItem>
+</Tabs>
+
+It measures the time until the handler returns. Work that an `async` JavaScript handler does after its first `await`, or that a Lua handler does after `mp.wait`, is not counted.
+
+## What things cost on the server
+
+These are the measurements the rest of the page is based on. One microsecond (µs) is a thousandth of a millisecond.
+
+| Operation | JavaScript | Lua |
+| :--- | :--- | :--- |
+| Reading your own `Map` or table | about 0.01 µs | about 0.02 µs |
+| `mp.hashes` call (name to hash) | 2 to 6 µs | 4 to 7 µs |
+| `mp.vehicles.exists(id)` | about 50 µs | about 100 µs |
+| `mp.vehicles.at(id)` | about 55 µs | about 100 µs |
+| Reading `vehicle.position` or `vehicle.dimension` | about 50 µs | 50 to 85 µs |
+| `vehicle.setMeta(key, value)` | 55 to 90 µs | 100 to 150 µs |
+| `mp.vehicles.toArray()` with 200 vehicles | about 0.6 ms | about 0.1 ms |
+| Looping over 200 vehicles and reading `position` | about 11 ms | about 11 ms |
+
+The cost of the single-entity calls did not change with 1, 20 or 200 vehicles on the server.
+
+The pattern is clear: **anything you keep in your own variables is thousands of times cheaper to read than anything you ask the server for.** A property such as `vehicle.position` is not a stored field. Every read is a call into the server core, and so is every `exists` and every `at`. One such call is nothing. A loop over all entities, with a few of them per entity, is milliseconds.
+
+## Fix 1: don't ask twice
+
+Since every property read is a call, read a property once and keep the result in a local variable for the rest of the function.
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="server.js"
+    // Three calls into the server for the same position
+    function isNearOriginSlow(vehicle) {
+      return Math.abs(vehicle.position[0]) < 50
+        && Math.abs(vehicle.position[1]) < 50
+        && Math.abs(vehicle.position[2]) < 50;
+    }
+
+    // One call
+    function isNearOrigin(vehicle) {
+      const position = vehicle.position;
+      return Math.abs(position[0]) < 50
+        && Math.abs(position[1]) < 50
+        && Math.abs(position[2]) < 50;
+    }
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="server.lua"
+    -- Three calls into the server for the same position
+    local function isNearOriginSlow(vehicle)
+      return math.abs(vehicle.position.x) < 50
+        and math.abs(vehicle.position.y) < 50
+        and math.abs(vehicle.position.z) < 50
+    end
+
+    -- One call
+    local function isNearOrigin(vehicle)
+      local position = vehicle.position
+      return math.abs(position.x) < 50
+        and math.abs(position.y) < 50
+        and math.abs(position.z) < 50
+    end
+    ```
+  </TabItem>
+</Tabs>
+
+The same goes for wrappers. `mp.vehicles.at(id)` builds a new object on every call, so get it once per function instead of writing `mp.vehicles.at(id).something` on several lines.
+
+Hashes are the mildest case, a few microseconds each, but the fix is free: compute the ones you use often once, at the top of the file, and use the constant. That also puts every model name in one place.
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="server.js"
+    const PORSCHE_MODEL = mp.hashes.tweakdbid('Vehicle.v_sport2_porsche_911turbo_player');
+    const PORSCHE_APPEARANCE = mp.hashes.cname('porsche_911turbo__basic_johnny');
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="server.lua"
+    local PORSCHE_MODEL = tonumber(mp.hashes.toTweakdbid('Vehicle.v_sport2_porsche_911turbo_player'), 10)
+    local PORSCHE_APPEARANCE = tonumber(mp.hashes.toCname('porsche_911turbo__basic_johnny'), 10)
+    ```
+  </TabItem>
+</Tabs>
+
+## Fix 2: keep your own index instead of scanning
+
+"Find all players in dimension 1000" written as a loop over `mp.players.toArray()` reads one property per connected player, every time it runs. Called from an event that fires often, it is the classic way to make a server slow as it fills up: the cost per event grows with the player count, and so does the number of events.
+
+The alternative is to remember the answer. You are the one who moves players between dimensions, so update a list at that moment and read the list afterwards.
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="server.js"
+    // dimension -> Set of the player ids inside it
+    const playerIdsByDimension = new Map();
+
+    function removeFromIndex(playerId, dimension) {
+      const playerIds = playerIdsByDimension.get(dimension);
+      if (playerIds) {
+        playerIds.delete(playerId);
+      }
+    }
+
+    // The only function in the gamemode that changes a player's dimension.
+    function movePlayerToDimension(player, newDimension) {
+      removeFromIndex(player.id, player.dimension);
+      player.dimension = newDimension;
+
+      if (!playerIdsByDimension.has(newDimension)) {
+        playerIdsByDimension.set(newDimension, new Set());
+      }
+      playerIdsByDimension.get(newDimension).add(player.id);
+    }
+
+    mp.events.on('playerDisconnected', (playerId) => {
+      // We don't know which dimension the player was in last, so take them out of every list.
+      for (const playerIds of playerIdsByDimension.values()) {
+        playerIds.delete(playerId);
+      }
+    });
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="server.lua"
+    -- dimension -> table whose keys are the player ids inside it
+    local playerIdsByDimension = {}
+
+    local function removeFromIndex(playerId, dimension)
+      local playerIds = playerIdsByDimension[dimension]
+      if playerIds then
+        playerIds[playerId] = nil
+      end
+    end
+
+    -- The only function in the gamemode that changes a player's dimension.
+    local function movePlayerToDimension(player, newDimension)
+      removeFromIndex(player.id, player.dimension)
+      player.dimension = newDimension
+
+      if not playerIdsByDimension[newDimension] then
+        playerIdsByDimension[newDimension] = {}
+      end
+      playerIdsByDimension[newDimension][player.id] = true
+    end
+
+    mp.events.add('playerDisconnected', function(playerId)
+      -- We don't know which dimension the player was in last, so take them out of every list.
+      for _, playerIds in pairs(playerIdsByDimension) do
+        playerIds[playerId] = nil
+      end
+    end)
+    ```
+  </TabItem>
+</Tabs>
+
+The price of an index is discipline: it is only right if **every** change goes through the one function that updates it. A single `player.dimension = 5` somewhere else and the list is wrong without any error. Use an index where a scan really is too slow, not everywhere.
+
+Per-player data (a balance, a team, a cooldown) is the same idea in its simplest form: a `Map` keyed by player ID, filled on `playerConnected` and emptied on `playerDisconnected`, is far cheaper to read than metadata, and metadata is in turn the right place for what other resources or clients must see.
+
+## Fix 3: do less per event, and spread the rest
+
+Two habits keep handlers short.
+
+**Collect now, send later.** If something changes many times per second, note that it changed and let a timer send one combined update. [Choosing How to Sync State](/guides/advanced/state-sync/#batching-collect-then-send) has complete examples.
+
+**Split long jobs into steps.** A job that must touch every entity (a cleanup pass, a save) does not have to finish in one go. Do a slice, give the server a moment, and continue:
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="server.js"
+    const VEHICLES_PER_STEP = 25;
+    const STEP_INTERVAL_MS = 100;
+
+    // Calls `visitVehicle` for every vehicle, a few at a time, so the server keeps running in between.
+    function visitAllVehiclesInSteps(visitVehicle) {
+      // Take the list of IDs once. Vehicles created after this point are not visited.
+      const vehicleIds = mp.vehicles.toArray().map((vehicle) => vehicle.id);
+      let nextIndex = 0;
+
+      const timerId = setInterval(() => {
+        const stepEnd = Math.min(nextIndex + VEHICLES_PER_STEP, vehicleIds.length);
+
+        while (nextIndex < stepEnd) {
+          // A vehicle can be destroyed between two steps: at() then returns undefined.
+          const vehicle = mp.vehicles.at(vehicleIds[nextIndex]);
+          if (vehicle) {
+            visitVehicle(vehicle);
+          }
+          nextIndex += 1;
+        }
+
+        if (nextIndex >= vehicleIds.length) {
+          clearInterval(timerId);
+        }
+      }, STEP_INTERVAL_MS);
+    }
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="server.lua"
+    local VEHICLES_PER_STEP = 25
+    local STEP_INTERVAL_MS = 100
+
+    -- Calls `visitVehicle` for every vehicle, a few at a time, so the server keeps running in between.
+    local function visitAllVehiclesInSteps(visitVehicle)
+      -- Take the list of IDs once. Vehicles created after this point are not visited.
+      local vehicleIds = {}
+      for _, vehicle in ipairs(mp.vehicles.toArray()) do
+        table.insert(vehicleIds, vehicle.id)
+      end
+
+      mp.spawnTask(function()
+        for index, vehicleId in ipairs(vehicleIds) do
+          -- A vehicle can be destroyed between two steps, and at() raises an error for a missing one.
+          if mp.vehicles.exists(vehicleId) then
+            visitVehicle(mp.vehicles.at(vehicleId))
+          end
+
+          local isEndOfStep = index % VEHICLES_PER_STEP == 0
+          if isEndOfStep then
+            mp.wait(STEP_INTERVAL_MS)
+          end
+        end
+      end)
+    end
+    ```
+  </TabItem>
+</Tabs>
+
+With these numbers, 200 vehicles are handled in eight steps over less than a second, and no single step holds the server for more than a few milliseconds. The cost is that the job no longer sees one frozen moment: things change between steps, which is why each step checks that the vehicle still exists.
+
+## Fix 4: clean up what you create
+
+Entities you create stay until you destroy them, including across restarts of your resource, and including in [dimensions](/guides/advanced/dimensions-and-ownership/) nobody is in. A gamemode that leaks ten vehicles per match is fast on Monday and slow on Friday, and every loop on this page gets slower with it.
+
+- Keep the IDs of what you create and destroy them when the match, instance or resource ends. [Clean up when your resource stops](/guides/server/vehicles/#clean-up-when-your-resource-stops) has the pattern.
+- Do the same for your own data: delete a player's entries from every `Map` or table on `playerDisconnected`.
+
+## On the client
+
+The client side could not be measured for this page, so this section sticks to what the client API reference and existing client code show.
+
+**Keep per-frame callbacks tiny.** `mp.setTick` (JavaScript) and the `onUpdate` stage (Lua) run on every frame. [Per-frame tick loops](/guides/client/local-entities/#per-frame-tick-loops) shows how to register them, and [Measuring time with `mp.getTimer`](/guides/client/local-entities/#measuring-time-with-mpgettimer) how to make part of a tick run less often.
+
+**Most "every frame" work is not.** Ask what really has to keep up with the picture. Positioning a label above a moving head does. Checking whether the player is in a vehicle, refreshing a HUD value or re-applying a restriction does not. The core resource makes exactly this split: its nametags are positioned in a tick, while its vehicle and restriction checks run in a `setInterval` every 200 ms. In Lua, a task with `mp.wait` in a loop is the equivalent of that interval.
+
+**Calls into the game are the client's "asking the server".** A native call such as `mp.game.GetPlayer()` or `player.GetWorldPosition()` crosses from your script into the game. In a tick, call each one once and reuse the result. Objects that do not change, such as a game system, can be fetched once and kept: the core resource's nametag code stores the targeting system in a field instead of fetching it per frame. Don't keep entities that way, though; they can go away, as [Observing Game Methods](/guides/client/observes/#what-the-callback-receives) explains.
+
+**Hooks on busy methods need care.** A queued observer (`observe`, `observeAfter`) puts one entry on the client's deferred queue per game call. The Lua reference gives that queue's speed as up to 256 callbacks per script tick. A method the game calls hundreds of times per frame can outrun it. For those, use a raw observer that only records a number, and do the real work elsewhere: [Advanced Game Hooks](/guides/advanced/native-hooks/#raw-observers-record-now-work-later) shows the pattern.
+
+To time client code, `mp.getTimer()` exists in both languages and returns milliseconds:
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="client.js"
+    const SLOW_TICK_MS = 2;
+
+    function updateLabels() {
+      // The per-frame work you want to keep an eye on
+    }
+
+    mp.setTick(() => {
+      const startedAt = mp.getTimer();
+      updateLabels();
+      const elapsedMs = mp.getTimer() - startedAt;
+
+      if (elapsedMs > SLOW_TICK_MS) {
+        console.log(`[slow] updateLabels took ${elapsedMs} ms`);
+      }
+    });
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="client.lua"
+    local SLOW_TICK_MS = 2
+
+    local function updateLabels()
+      -- The per-frame work you want to keep an eye on
+    end
+
+    mp.registerGameState('onUpdate', function(dt)
+      local startedAt = mp.getTimer()
+      updateLabels()
+      local elapsedMs = mp.getTimer() - startedAt
+
+      if elapsedMs > SLOW_TICK_MS then
+        print(string.format('[slow] updateLabels took %s ms', elapsedMs))
+      end
+    end)
+    ```
+  </TabItem>
+</Tabs>
+
+The sources do not state the resolution of `mp.getTimer()`. If it counts whole milliseconds, as it did on the server, this only catches ticks that are clearly too slow, which is the case you care about first. Remove the logging once you have your answer: printing on every slow frame is itself slow.
+
+## What next
+
+- [Choosing How to Sync State](/guides/advanced/state-sync/): sending less, less often.
+- [Structuring a Gamemode](/guides/advanced/architecture/): which resource should hold the data you index.
+- [Advanced Game Hooks](/guides/advanced/native-hooks/): keeping hooks on busy game methods cheap.
+- [Timers and scheduled work](/guides/server/timers/) and [Ticks and timers](/guides/client/tick-and-timers/): the timing tools used on this page.

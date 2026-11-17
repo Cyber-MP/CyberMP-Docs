@@ -1,0 +1,394 @@
+---
+title: Request and Response over Events
+description: Build a small request and response layer on plain events, with request IDs, a pending list, timeouts and cleanup, for calls in both directions.
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import { SCRIPT_LANG_TAB_SYNC_KEY } from '../../../../lib/const';
+
+An event goes one way. You send it and that is the end of it: no return value, no confirmation. As soon as you need an answer ("how many players are near you?", "what time is it on the server?"), you need a second event coming back, and a way to tell which answer belongs to which question.
+
+This page builds that by hand, in both directions, so you understand every part. If you write JavaScript and just want it to work, the official [RPC packages](/guides/recipes/rpc/) are the ready-made version of the same idea. Lua resources cannot use those packages, so there the code on this page is what you use.
+
+You should already be comfortable with [server events](/guides/server/events/) and [client events](/guides/client/events/).
+
+## The four parts
+
+Every request and response layer, whatever it is called, has these parts:
+
+1. **A request ID.** A number the asker makes up and sends along. The other side copies it into the answer. Without it, two questions asked at the same time could not be told apart.
+2. **A pending list.** The asker remembers every request it is still waiting for, keyed by request ID, together with what to do when the answer arrives.
+3. **A timeout.** The answer may never come: the player alt-tabbed, the client script crashed, the resource on the other side was restarted. After a few seconds the asker gives up and removes the entry, or the list grows forever.
+4. **Cleanup.** When a player disconnects, nothing they were asked will be answered. Fail those requests right away.
+
+## The server asks a client
+
+The server sends `ask:request` with a request ID, the name of the question and an optional payload. The client answers with `ask:response` and the same ID.
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    In JavaScript the natural shape is a function that returns a Promise, so the caller can `await` the answer.
+
+    ```js title="server.js"
+    const REQUEST_TIMEOUT_MS = 5000;
+
+    let nextRequestId = 1;
+
+    // requestId -> { playerId, resolve, reject, timeoutId }
+    const pendingRequests = new Map();
+
+    function askClient(player, questionName, payload) {
+      return new Promise((resolve, reject) => {
+        const requestId = nextRequestId;
+        nextRequestId += 1;
+
+        // If the client never answers, stop waiting instead of keeping the entry forever.
+        const timeoutId = setTimeout(() => {
+          pendingRequests.delete(requestId);
+          reject(new Error(`No answer to '${questionName}' in time`));
+        }, REQUEST_TIMEOUT_MS);
+
+        pendingRequests.set(requestId, { playerId: player.id, resolve, reject, timeoutId });
+        player.emit('ask:request', requestId, questionName, payload);
+      });
+    }
+
+    function handleClientAnswer(player, requestId, answer) {
+      const pending = pendingRequests.get(requestId);
+
+      // Unknown id: the request already timed out, or the client made the id up.
+      if (!pending) return;
+
+      // Only the player we asked may answer.
+      if (pending.playerId !== player.id) return;
+
+      clearTimeout(pending.timeoutId);
+      pendingRequests.delete(requestId);
+      pending.resolve(answer);
+    }
+
+    mp.events.onClient('ask:response', handleClientAnswer);
+
+    mp.events.on('playerDisconnected', (playerId) => {
+      // A player who left will never answer: fail their requests now.
+      for (const [requestId, pending] of pendingRequests) {
+        if (pending.playerId !== playerId) continue;
+
+        clearTimeout(pending.timeoutId);
+        pendingRequests.delete(requestId);
+        pending.reject(new Error('The player left before answering'));
+      }
+    });
+    ```
+
+    Using it:
+
+    ```js title="server.js"
+    async function logNearbyPlayers(player) {
+      try {
+        const nearbyPlayerCount = await askClient(player, 'countNearbyPlayers');
+        console.log(`${player.nickname} sees ${nearbyPlayerCount} other players`);
+      } catch (error) {
+        console.log(`Could not ask ${player.nickname}: ${error.message}`);
+      }
+    }
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    Lua has no Promise, so the caller passes a function that receives the answer.
+
+    ```lua title="server.lua"
+    local REQUEST_TIMEOUT_MS = 5000
+
+    local nextRequestId = 1
+
+    -- requestId -> { playerId, onAnswer }
+    local pendingRequests = {}
+
+    -- onAnswer(answer, errorMessage) is called exactly once: with the answer, or with nil and a reason.
+    local function askClient(player, questionName, payload, onAnswer)
+      local requestId = nextRequestId
+      nextRequestId = nextRequestId + 1
+
+      pendingRequests[requestId] = { playerId = player.id, onAnswer = onAnswer }
+      player:trigger('ask:request', requestId, questionName, payload)
+
+      -- mp.setTimeout cannot be cancelled, so the timer checks whether the request is still waiting.
+      mp.setTimeout(function()
+        local pending = pendingRequests[requestId]
+        if not pending then return end
+
+        pendingRequests[requestId] = nil
+        pending.onAnswer(nil, string.format("No answer to '%s' in time", questionName))
+      end, REQUEST_TIMEOUT_MS)
+    end
+
+    local function handleClientAnswer(player, requestId, answer)
+      local pending = pendingRequests[requestId]
+
+      -- Unknown id: the request already timed out, or the client made the id up.
+      if not pending then return end
+
+      -- Only the player we asked may answer.
+      if pending.playerId ~= player.id then return end
+
+      pendingRequests[requestId] = nil
+      pending.onAnswer(answer, nil)
+    end
+
+    mp.events.addClient('ask:response', handleClientAnswer)
+
+    mp.events.add('playerDisconnected', function(playerId)
+      -- A player who left will never answer: fail their requests now.
+      for requestId, pending in pairs(pendingRequests) do
+        if pending.playerId == playerId then
+          pendingRequests[requestId] = nil
+          pending.onAnswer(nil, 'The player left before answering')
+        end
+      end
+    end)
+    ```
+
+    Using it:
+
+    ```lua title="server.lua"
+    local function logNearbyPlayers(player)
+      askClient(player, 'countNearbyPlayers', nil, function(nearbyPlayerCount, errorMessage)
+        if errorMessage then
+          print(string.format('Could not ask %s: %s', player.nickname, errorMessage))
+          return
+        end
+
+        print(string.format('%s sees %s other players', player.nickname, nearbyPlayerCount))
+      end)
+    end
+    ```
+  </TabItem>
+</Tabs>
+
+The check `pending.playerId !== player.id` is not decoration. Request IDs are small numbers that go up by one, so they are easy to guess. Without the check, any client could answer a question that was put to somebody else.
+
+And remember what kind of answer this is: it comes from the player's machine. Use it for things the client is the only one to know (what is on screen, a setting, a choice in a dialog), and [validate it](/guides/advanced/secure-events/) like any other client input. Never ask a client something the server can work out, and never ask it for a fact you will trust ("how much money do you have?").
+
+The client half keeps a list of the questions it can answer:
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="client.js"
+    // question name -> function(payload) that returns the answer
+    const answerByQuestionName = new Map();
+
+    answerByQuestionName.set('countNearbyPlayers', (payload) => {
+      return mp.network.getStreamedPlayers().length;
+    });
+
+    mp.events.onServer('ask:request', (requestId, questionName, payload) => {
+      const answerQuestion = answerByQuestionName.get(questionName);
+
+      // No answer for an unknown question: the server's timeout handles it.
+      if (!answerQuestion) return;
+
+      const answer = answerQuestion(payload);
+      mp.events.emitServer('ask:response', requestId, answer);
+    });
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="client.lua"
+    -- question name -> function(payload) that returns the answer
+    local answerByQuestionName = {}
+
+    answerByQuestionName['countNearbyPlayers'] = function(payload)
+      return #mp.network.getStreamedPlayers()
+    end
+
+    mp.events.addServer('ask:request', function(requestId, questionName, payload)
+      local answerQuestion = answerByQuestionName[questionName]
+
+      -- No answer for an unknown question: the server's timeout handles it.
+      if not answerQuestion then return end
+
+      local answer = answerQuestion(payload)
+      mp.events.triggerServer('ask:response', requestId, answer)
+    end)
+    ```
+  </TabItem>
+</Tabs>
+
+## A client asks the server
+
+The other direction uses the same four parts with the roles swapped. This time the client keeps the pending list, and the server keeps the list of questions it answers.
+
+The response carries one more value, `succeeded`, so the client can tell "here is your answer" from "that did not work".
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="server.js"
+    // question name -> function(player, payload) that returns the answer
+    const answerByQuestionName = new Map();
+
+    answerByQuestionName.set('getServerTime', (player, payload) => {
+      return Date.now();
+    });
+
+    function handleClientQuestion(player, requestId, questionName, payload) {
+      const answerQuestion = answerByQuestionName.get(questionName);
+      if (!answerQuestion) {
+        player.emit('question:response', requestId, false, 'unknown question');
+        return;
+      }
+
+      try {
+        const answer = answerQuestion(player, payload);
+        player.emit('question:response', requestId, true, answer);
+      } catch (error) {
+        // Log the details here; the client only needs to know that it failed.
+        console.error(`Question '${questionName}' failed: ${error.message}`);
+        player.emit('question:response', requestId, false, 'server error');
+      }
+    }
+
+    mp.events.onClient('question:request', handleClientQuestion);
+    ```
+
+    ```js title="client.js"
+    const REQUEST_TIMEOUT_MS = 5000;
+
+    let nextRequestId = 1;
+
+    // requestId -> { resolve, reject, timeoutId }
+    const pendingRequests = new Map();
+
+    function askServer(questionName, payload) {
+      return new Promise((resolve, reject) => {
+        const requestId = nextRequestId;
+        nextRequestId += 1;
+
+        const timeoutId = setTimeout(() => {
+          pendingRequests.delete(requestId);
+          reject(new Error(`No answer to '${questionName}' in time`));
+        }, REQUEST_TIMEOUT_MS);
+
+        pendingRequests.set(requestId, { resolve, reject, timeoutId });
+        mp.events.emitServer('question:request', requestId, questionName, payload);
+      });
+    }
+
+    mp.events.onServer('question:response', (requestId, succeeded, answer) => {
+      const pending = pendingRequests.get(requestId);
+      if (!pending) return;
+
+      clearTimeout(pending.timeoutId);
+      pendingRequests.delete(requestId);
+
+      if (succeeded) {
+        pending.resolve(answer);
+      } else {
+        // On failure, `answer` holds the reason the server gave.
+        pending.reject(new Error(answer));
+      }
+    });
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="server.lua"
+    -- question name -> function(player, payload) that returns the answer
+    local answerByQuestionName = {}
+
+    answerByQuestionName['getServerTime'] = function(player, payload)
+      return os.time()
+    end
+
+    local function handleClientQuestion(player, requestId, questionName, payload)
+      local answerQuestion = answerByQuestionName[questionName]
+      if not answerQuestion then
+        player:trigger('question:response', requestId, false, 'unknown question')
+        return
+      end
+
+      local succeeded, answerOrError = pcall(answerQuestion, player, payload)
+      if not succeeded then
+        -- Log the details here; the client only needs to know that it failed.
+        print(string.format("Question '%s' failed: %s", questionName, tostring(answerOrError)))
+        player:trigger('question:response', requestId, false, 'server error')
+        return
+      end
+
+      player:trigger('question:response', requestId, true, answerOrError)
+    end
+
+    mp.events.addClient('question:request', handleClientQuestion)
+    ```
+
+    ```lua title="client.lua"
+    local REQUEST_TIMEOUT_MS = 5000
+
+    local nextRequestId = 1
+
+    -- requestId -> onAnswer
+    local pendingRequests = {}
+
+    -- onAnswer(answer, errorMessage) is called exactly once: with the answer, or with nil and a reason.
+    local function askServer(questionName, payload, onAnswer)
+      local requestId = nextRequestId
+      nextRequestId = nextRequestId + 1
+
+      pendingRequests[requestId] = onAnswer
+      mp.events.triggerServer('question:request', requestId, questionName, payload)
+
+      -- mp.setTimeout cannot be cancelled, so the timer checks whether the request is still waiting.
+      mp.setTimeout(function()
+        local onAnswerStillWaiting = pendingRequests[requestId]
+        if not onAnswerStillWaiting then return end
+
+        pendingRequests[requestId] = nil
+        onAnswerStillWaiting(nil, string.format("No answer to '%s' in time", questionName))
+      end, REQUEST_TIMEOUT_MS)
+    end
+
+    mp.events.addServer('question:response', function(requestId, succeeded, answer)
+      local onAnswerWaiting = pendingRequests[requestId]
+      if not onAnswerWaiting then return end
+
+      pendingRequests[requestId] = nil
+
+      if succeeded then
+        onAnswerWaiting(answer, nil)
+      else
+        -- On failure, `answer` holds the reason the server gave.
+        onAnswerWaiting(nil, answer)
+      end
+    end)
+    ```
+  </TabItem>
+</Tabs>
+
+On the server, every function in `answerByQuestionName` is a client event handler in disguise. `payload` is untrusted, and everything in [Never Trust the Client](/guides/advanced/secure-events/) applies to it. The `player` argument is the reliable one, which is why the server passes it to the answering function instead of letting the payload say who is asking.
+
+The error sent back is deliberately dull (`'server error'`). The real message can contain file paths, queries or other details that are useful for you and for nobody else, so it goes to the server log.
+
+## When a resource restarts
+
+A stopped resource loses its script variables, pending list included. You do not have to clean anything up for that; timers of a stopped resource no longer fire. But think about the other side:
+
+- **The asker restarted.** An answer may arrive for a request ID the new instance never sent. That is the "unknown id" case, and it is ignored.
+- **The answerer restarted, or is not running.** The question goes nowhere. This is exactly what the timeout is for, and the reason no request may be left without one.
+
+After a restart the request IDs start from 1 again, so in rare cases a late answer to an old request could match a new request with the same number. If that worries you, start `nextRequestId` at a random number instead of 1.
+
+## What this version leaves out
+
+It is small on purpose. Before you grow it, look at what the [RPC packages](/guides/recipes/rpc/) already do:
+
+- calls between the server and the **CEF page**, relayed through the client;
+- error codes (`TIMEOUT`, `METHOD_NOT_FOUND`) and errors you define yourself;
+- a timeout per call, and a signal that tells the handler the caller gave up;
+- handlers that are `async`.
+
+The server halves on this page were run on server v4.0.4-beta.1 against a stand-in for the player (an object with the same `id` and `emit` / `trigger`): the answered, timed-out, wrong-player, made-up-ID, disconnected and failing-handler cases all behave as described. The client halves could not be run without a game client. They use only documented calls (`mp.events.onServer`, `emitServer`, `mp.network.getStreamedPlayers`, and in Lua `mp.setTimeout`).
+
+## What next
+
+- [Remote Procedure Calls (RPC)](/guides/recipes/rpc/): the ready-made version for JavaScript.
+- [Choosing How to Sync State](/guides/advanced/state-sync/): when asking on demand is the right tool, and when it is not.
+- [Never Trust the Client](/guides/advanced/secure-events/): validating what comes back.

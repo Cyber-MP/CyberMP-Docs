@@ -1,0 +1,457 @@
+---
+title: Choosing How to Sync State
+description: Pick between synced metadata, events and asking on demand for each piece of state, with a scoreboard and a fuel gauge as worked examples.
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import { SCRIPT_LANG_TAB_SYNC_KEY } from '../../../../lib/const';
+
+The server knows things that clients have to show: scores, fuel, who is in which faction, the weather. There are several ways to get a value from the server to a client, and they are not interchangeable. Picking the wrong one gives you a UI that is out of date, a server that sends far more than it needs to, or both.
+
+This page compares the options and then works through two examples. It builds on [Entity Metadata](/guides/server/meta/) and [Working with Events](/guides/server/events/).
+
+## The options
+
+| | Good for | Weak at |
+| :--- | :--- | :--- |
+| **Synced metadata** | A current value attached to a player, an entity or the server: faction, lock state, fuel, weather. Clients read it whenever they want. | Lists and history. Telling the client the moment something changed. |
+| **Events** | Things that happen: a kill, a chat line, "the race starts". Also lists and batches of changes. | State. A client that was not listening at that moment has missed it. |
+| **Asking on demand** | Data that is rarely needed, large, or only one player's business: an inventory, a leaderboard page. | Anything that should update while the player looks at it. |
+
+A short way to choose:
+
+- "What is the value **right now**?" → metadata.
+- "Something **just happened**." → an event.
+- "Show me this **when I open the menu**." → ask on demand, see [Request and Response over Events](/guides/advanced/request-response/).
+
+Most features use two of them together: one way to get the starting state, another to keep it up to date.
+
+## What is sent, to whom, and when
+
+Before designing around these, know which parts are documented and which are not.
+
+**Synced metadata**
+
+- A value set with `sync = true` is replicated to clients, and a client reads it with its own `mp.meta` getters. A value set without `sync` never leaves the server. ([Entity Metadata](/guides/server/meta/#the-sync-flag))
+- The sources do not say **which** clients receive a synced value (everyone, or only the clients that have the entity streamed in), nor at what moment a client that joins later receives the values that already exist. The core resource reads a synced `nickname` for every streamed player to draw nametags, and it sets that key again on every `playerSpawn` and `playerRespawn`. If a value must be there for a late joiner, test it on your server, or send it yourself as described [below](#starting-state-plus-updates).
+- The client typings list **no event for a metadata change**. A client script finds out by reading the value: when an entity streams in, when a menu opens, or on a timer.
+- On the server, every `set` call fires the matching `…MetaChange` event, synced or not, even when the new value equals the old one (measured on server v4.0.4-beta.1). Whether an unchanged value is also sent to clients again is not documented, so don't write the same value in a loop: compare first.
+
+**Events**
+
+- `player.emit` / `mp.events.emitClient` (`player:trigger` / `mp.events.triggerClient` in Lua) send to **one** player. The client-to-server direction is described in the Lua reference as a reliable packet.
+- To reach everybody, loop over `mp.players.toArray()`. In Lua, `mp.events.triggerClient(-1, name, ...)` is documented as a broadcast to all players.
+- An event only does something if a client script has registered a handler for that name at that moment. Nothing is stored for later.
+
+**Unreliable events**
+
+Some engines offer a cheaper "unreliable" send for data where a lost packet does not matter, because the next one replaces it. Here is what exists in server v4.0.4-beta.1:
+
+- The server-side **Lua** runtime has [`mp.events.triggerUnreliable(playerOrId, name, arg, ...)`](/reference/lua/server/#mp-events-triggerunreliable-serverref) and [`mp.events.triggerUnreliableRaw(playerId, name, arg, ...)`](/reference/lua/server/#mp-events-triggerunreliableraw-serverref). Compared with `triggerClient` they declare one extra named parameter, `arg`, after the event name. The Lua reference lists what the server accepts, but nothing official says what `arg` is for, how the event travels, or which client function receives it.
+- The server-side **JavaScript** `mp.events` object has no equivalent.
+
+Until that is documented, treat every event as reliable and control the cost the other way: send less often.
+
+## Starting state plus updates
+
+A client needs two things: the state as it is when the client arrives, and every change after that. Handle them separately.
+
+**Starting state.** The dependable way is to let the client ask for it. The client script sends a "ready" event as soon as it has registered its handlers, and the server answers with a snapshot. You then never have to guess whether the client's script was already listening when the player connected.
+
+For per-entity state, the moment is the stream-in event on the client (`vehicleStreamIn`, `remotePlayerStreamIn` and so on): read the entity's metadata there, as shown in [Reading synced values on the client](/guides/server/meta/#reading-synced-values-on-the-client).
+
+**Updates.** Send what changed, not everything again. And send it at a rate a human can notice, which leads to the next section.
+
+## Batching: collect, then send
+
+State often changes faster than anyone can see. Ten score changes in the same second do not need ten events per player; one event with ten entries looks identical on screen and costs a tenth.
+
+The pattern is always the same:
+
+1. When something changes, update your own data and **remember that it changed**. Send nothing yet.
+2. On a timer, if anything changed, send all of it in one event and clear the list.
+
+The timer interval is your trade-off. A scoreboard is fine at once per second. A countdown wants to be immediate, so it does not go through a batch at all.
+
+## Example: a scoreboard
+
+The server counts kills. Every client keeps a copy of the whole board to display.
+
+Metadata is a poor fit here. You could store each score as synced player metadata, but a client has no list of all connected players to read it for; it only knows about the players streamed in around it. So the board travels as events: a snapshot when a client asks, then one batched update per second.
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="server.js"
+    const SCOREBOARD_SEND_INTERVAL_MS = 1000;
+
+    const scoreByPlayerId = new Map();
+
+    // Players whose score changed since the last send.
+    const changedPlayerIds = new Set();
+
+    function addScore(playerId, points) {
+      const currentScore = scoreByPlayerId.get(playerId) || 0;
+      scoreByPlayerId.set(playerId, currentScore + points);
+      changedPlayerIds.add(playerId);
+    }
+
+    mp.events.on('playerDeath', (playerId, data) => {
+      if (data.killerId) {
+        addScore(data.killerId, 1);
+      }
+    });
+
+    mp.events.on('playerDisconnected', (playerId) => {
+      scoreByPlayerId.delete(playerId);
+      changedPlayerIds.add(playerId);
+    });
+
+    // Starting state: a client asks for the whole board once its script is running.
+    mp.events.onClient('scoreboard:ready', (player) => {
+      const allScores = [];
+      for (const [playerId, score] of scoreByPlayerId) {
+        allScores.push({ playerId, score });
+      }
+
+      player.emit('scoreboard:snapshot', allScores);
+    });
+
+    // Updates: once per second, send only what changed, in one event.
+    function sendScoreChanges() {
+      if (changedPlayerIds.size === 0) return;
+
+      const changes = [];
+      for (const playerId of changedPlayerIds) {
+        // A player who left has no score any more: `hasLeft` tells clients to remove the row.
+        const hasLeft = !scoreByPlayerId.has(playerId);
+        const score = hasLeft ? 0 : scoreByPlayerId.get(playerId);
+        changes.push({ playerId, score, hasLeft });
+      }
+      changedPlayerIds.clear();
+
+      for (const player of mp.players.toArray()) {
+        player.emit('scoreboard:update', changes);
+      }
+    }
+
+    setInterval(sendScoreChanges, SCOREBOARD_SEND_INTERVAL_MS);
+    ```
+
+    ```js title="client.js"
+    const scoreByPlayerId = new Map();
+
+    mp.events.onServer('scoreboard:snapshot', (allScores) => {
+      scoreByPlayerId.clear();
+      for (const entry of allScores) {
+        scoreByPlayerId.set(entry.playerId, entry.score);
+      }
+    });
+
+    mp.events.onServer('scoreboard:update', (changes) => {
+      for (const change of changes) {
+        if (change.hasLeft) {
+          scoreByPlayerId.delete(change.playerId);
+        } else {
+          scoreByPlayerId.set(change.playerId, change.score);
+        }
+      }
+    });
+
+    // The handlers above exist now, so the answer cannot arrive too early.
+    mp.events.emitServer('scoreboard:ready');
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="server.lua"
+    local SCOREBOARD_SEND_INTERVAL_MS = 1000
+
+    local scoreByPlayerId = {}
+
+    -- Players whose score changed since the last send.
+    local changedPlayerIds = {}
+
+    local function addScore(playerId, points)
+      local currentScore = scoreByPlayerId[playerId] or 0
+      scoreByPlayerId[playerId] = currentScore + points
+      changedPlayerIds[playerId] = true
+    end
+
+    mp.events.add('playerDeath', function(playerId, data)
+      if data.killerId then
+        addScore(data.killerId, 1)
+      end
+    end)
+
+    mp.events.add('playerDisconnected', function(playerId)
+      scoreByPlayerId[playerId] = nil
+      changedPlayerIds[playerId] = true
+    end)
+
+    -- Starting state: a client asks for the whole board once its script is running.
+    mp.events.addClient('scoreboard:ready', function(player)
+      local allScores = {}
+      for playerId, score in pairs(scoreByPlayerId) do
+        table.insert(allScores, { playerId = playerId, score = score })
+      end
+
+      player:trigger('scoreboard:snapshot', allScores)
+    end)
+
+    -- Updates: once per second, send only what changed, in one event.
+    local function sendScoreChanges()
+      if next(changedPlayerIds) == nil then return end
+
+      local changes = {}
+      for playerId in pairs(changedPlayerIds) do
+        -- A player who left has no score any more: `hasLeft` tells clients to remove the row.
+        local hasLeft = scoreByPlayerId[playerId] == nil
+        local score = scoreByPlayerId[playerId] or 0
+        table.insert(changes, { playerId = playerId, score = score, hasLeft = hasLeft })
+      end
+      changedPlayerIds = {}
+
+      for _, player in ipairs(mp.players.toArray()) do
+        player:trigger('scoreboard:update', changes)
+      end
+    end
+
+    -- Lua has no setInterval: a task that waits in a loop does the same job.
+    mp.spawnTask(function()
+      while true do
+        mp.wait(SCOREBOARD_SEND_INTERVAL_MS)
+        sendScoreChanges()
+      end
+    end)
+    ```
+
+    ```lua title="client.lua"
+    local scoreByPlayerId = {}
+
+    mp.events.addServer('scoreboard:snapshot', function(allScores)
+      scoreByPlayerId = {}
+      for _, entry in ipairs(allScores) do
+        scoreByPlayerId[entry.playerId] = entry.score
+      end
+    end)
+
+    mp.events.addServer('scoreboard:update', function(changes)
+      for _, change in ipairs(changes) do
+        if change.hasLeft then
+          scoreByPlayerId[change.playerId] = nil
+        else
+          scoreByPlayerId[change.playerId] = change.score
+        end
+      end
+    end)
+
+    -- The handlers above exist now, so the answer cannot arrive too early.
+    mp.events.triggerServer('scoreboard:ready')
+    ```
+  </TabItem>
+</Tabs>
+
+The cost is easy to reason about: at most one event per player per second, however many kills happen, and nothing at all while nothing changes. The price is that a score can appear up to a second late.
+
+One gap to know about: a client that asks for the snapshot receives it immediately, and may then receive an update for a change that was already in that snapshot. Applying the same score twice does no harm here, because each entry carries the full score and not "+1". Design your updates that way ("the score is 12", not "add 1") and this whole class of problem disappears.
+
+## Example: vehicle fuel
+
+Fuel changes all the time while someone drives, but the gauge on screen shows whole percent. This is a current value attached to an entity, so synced metadata fits. The trick is to not write it on every change.
+
+The server keeps the exact value in its own variable, lowers it once per second, and writes the synced metadata only when the whole number changes.
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="server.js"
+    const FUEL_TICK_MS = 1000;
+    const FUEL_USED_PER_TICK = 0.05;
+
+    // The exact fuel level of every vehicle. Only the server knows it.
+    const fuelByVehicleId = new Map();
+
+    mp.events.on('vehicleSpawn', (vehicleId) => {
+      fuelByVehicleId.set(vehicleId, 100);
+      mp.meta.setEntityMeta(vehicleId, 'fuel', 100, true);
+    });
+
+    mp.events.on('vehicleDespawn', (vehicleId) => {
+      fuelByVehicleId.delete(vehicleId);
+    });
+
+    function burnFuel() {
+      for (const [vehicleId, fuel] of fuelByVehicleId) {
+        const vehicle = mp.vehicles.at(vehicleId);
+        if (!vehicle) continue;
+
+        // Only a vehicle with a driver burns fuel.
+        if (!vehicle.seats.driver) continue;
+
+        const newFuel = Math.max(0, fuel - FUEL_USED_PER_TICK);
+        fuelByVehicleId.set(vehicleId, newFuel);
+
+        // Clients show whole percent, so only tell them when that number changes.
+        const shownFuel = Math.ceil(newFuel);
+        if (shownFuel !== Math.ceil(fuel)) {
+          vehicle.setMeta('fuel', shownFuel, true);
+        }
+      }
+    }
+
+    setInterval(burnFuel, FUEL_TICK_MS);
+    ```
+
+    ```js title="client.js"
+    const FUEL_READ_INTERVAL_MS = 500;
+
+    function showFuelOfCurrentVehicle() {
+      const player = mp.game.GetPlayer();
+      if (!player) return;
+
+      const vehicle = player.GetMountedVehicle();
+      if (!vehicle) return;
+
+      // Metadata is addressed by network ID, the game only knows its own ID.
+      const vehicleGameId = vehicle.GetEntityID().hash;
+      const vehicleNetId = mp.network.getVehicleId(vehicleGameId);
+
+      const fuel = mp.meta.getEntityMeta(vehicleNetId, 'fuel');
+      mp.events.emitCef('hud:fuel', fuel);
+    }
+
+    // Game natives only work once the world is loaded.
+    mp.game.onceGameLoaded(() => {
+      // Twice per second is plenty for a gauge. This does not belong in a per-frame tick.
+      setInterval(showFuelOfCurrentVehicle, FUEL_READ_INTERVAL_MS);
+    });
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="server.lua"
+    local FUEL_TICK_MS = 1000
+    local FUEL_USED_PER_TICK = 0.05
+
+    -- The exact fuel level of every vehicle. Only the server knows it.
+    local fuelByVehicleId = {}
+
+    mp.events.add('vehicleSpawn', function(vehicleId)
+      fuelByVehicleId[vehicleId] = 100
+      mp.meta.setEntity(vehicleId, 'fuel', 100, true)
+    end)
+
+    mp.events.add('vehicleDespawn', function(vehicleId)
+      fuelByVehicleId[vehicleId] = nil
+    end)
+
+    local function burnFuel()
+      for vehicleId, fuel in pairs(fuelByVehicleId) do
+        -- An empty driver seat reads as a player object whose id is 0.
+        local hasDriver = mp.vehicles.exists(vehicleId) and mp.vehicles.at(vehicleId).seats.driver.id ~= 0
+
+        -- Only a vehicle with a driver burns fuel.
+        if hasDriver then
+          local newFuel = math.max(0, fuel - FUEL_USED_PER_TICK)
+          fuelByVehicleId[vehicleId] = newFuel
+
+          -- Clients show whole percent, so only tell them when that number changes.
+          local shownFuel = math.ceil(newFuel)
+          if shownFuel ~= math.ceil(fuel) then
+            mp.meta.setEntity(vehicleId, 'fuel', shownFuel, true)
+          end
+        end
+      end
+    end
+
+    mp.spawnTask(function()
+      while true do
+        mp.wait(FUEL_TICK_MS)
+        burnFuel()
+      end
+    end)
+    ```
+
+    ```lua title="client.lua"
+    local FUEL_READ_INTERVAL_MS = 500
+
+    local function showFuelOfCurrentVehicle()
+      local player = Game.GetPlayer()
+      if not player then return end
+
+      local vehicle = player:GetMountedVehicle()
+      if not vehicle then return end
+
+      -- Metadata is addressed by network ID, the game only knows its own ID.
+      local vehicleGameId = vehicle:GetEntityID().hash
+      local vehicleNetId = mp.network.getVehicleId(vehicleGameId)
+
+      local fuel = mp.meta.getEntity(vehicleNetId, 'fuel')
+      mp.events.triggerCef('hud:fuel', fuel)
+    end
+
+    -- Game natives only work once the world is loaded.
+    mp.registerGameState('onceGameLoaded', function()
+      -- Twice per second is plenty for a gauge. This does not belong in a per-frame tick.
+      mp.spawnTask(function()
+        while true do
+          mp.wait(FUEL_READ_INTERVAL_MS)
+          showFuelOfCurrentVehicle()
+        end
+      end)
+    end)
+    ```
+  </TabItem>
+</Tabs>
+
+Run on the server with a driver simulated, 100 ticks of `burnFuel` lowered the exact value from 100 to 95 and wrote the metadata 4 times instead of 100. With the numbers above, a driven vehicle causes one metadata write every 20 seconds.
+
+Things to notice:
+
+- The exact value (`95.35`) never leaves the server. Clients get `96`. If the gauge had ten segments you would round to tens and write ten times per tank.
+- The client reads the value on a timer because there is no change event to wait for. The getter hands the value back directly, not through a callback or a Promise, so a read uses what the client already holds.
+- The client needs `use_game_natives = true` for `GetPlayer()` and `GetMountedVehicle()`. [Network IDs](/guides/client/network-ids/) explains the conversion in the middle.
+- A parked vehicle costs one loop step per second and no network traffic. If you have hundreds of vehicles, keep a separate list of the ones that are being driven, filled from the vehicle enter and exit events, so the loop does not touch the others at all. [Performance](/guides/advanced/performance/) explains why that loop step is not free.
+
+## State that belongs to a dimension
+
+An instance (a race, an interior, a lobby) has state that only the players inside care about: the countdown, the lap times, the current round. The [dimension](/guides/advanced/dimensions-and-ownership/) hides entities from players outside, but an event goes to whoever you send it to. Choosing the recipients is your job.
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="server.js"
+    function emitToDimension(dimension, eventName, ...args) {
+      for (const player of mp.players.toArray()) {
+        if (player.dimension === dimension) {
+          player.emit(eventName, ...args);
+        }
+      }
+    }
+
+    // Only the players inside instance 1000 see the countdown.
+    emitToDimension(1000, 'race:countdown', 3);
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="server.lua"
+    local function triggerInDimension(dimension, eventName, ...)
+      for _, player in ipairs(mp.players.toArray()) do
+        if player.dimension == dimension then
+          player:trigger(eventName, ...)
+        end
+      end
+    end
+
+    -- Only the players inside instance 1000 see the countdown.
+    triggerInDimension(1000, 'race:countdown', 3)
+    ```
+  </TabItem>
+</Tabs>
+
+That loop reads `dimension` for every connected player. For something you send often, keep your own list of the players in each instance, updated where you move them in and out, and loop over that instead.
+
+Global metadata is server-wide by definition: there is no per-dimension variant. For per-instance values, either send events as above or put the dimension in the key (`'race:1000:round'`) and have clients read the key for their own instance. The second option makes the value readable by every client, so use it only for things that are not secret.
+
+## What next
+
+- [Request and Response over Events](/guides/advanced/request-response/): the "ask on demand" option in full.
+- [Dimensions, Streaming Radius and Entity Ownership](/guides/advanced/dimensions-and-ownership/): what limits who sees an entity.
+- [Performance](/guides/advanced/performance/): what loops and timers like the ones above cost.
+- [Reading synced data on the client](/guides/client/meta/) and [Streaming](/guides/client/streaming/): the client side of the patterns on this page.

@@ -1,0 +1,340 @@
+---
+title: Structuring a Gamemode
+description: Decide between one resource and several, control load order, let resources talk to each other, and keep a clean start and stop lifecycle.
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import { SCRIPT_LANG_TAB_SYNC_KEY } from '../../../../lib/const';
+
+A first gamemode is one script file. That stops working somewhere around the second feature: the file grows, one mistake breaks everything, and you can't restart the shop without restarting the whole server logic. This page is about the decisions you make at that point: how to split the project, how the pieces find each other, and who owns which data.
+
+It builds on [Introduction to resources](/guides/resources/introduction/), [Resource Exports](/guides/resources/exports/) and [Working with Events](/guides/server/events/). Read those first if resources, exports or custom events are new to you.
+
+## One resource or several
+
+A [resource](/guides/resources/introduction/) is the unit the server loads, starts, stops and restarts. Every resource runs in its own script environment, so they share nothing by accident: a global variable set in one resource does not exist in another (this is true for JavaScript and for Lua).
+
+That gives you two honest options.
+
+| | One resource, many files | Several resources |
+| :--- | :--- | :--- |
+| Sharing code and data | Free: it is one program. Use your language's modules and a bundler. | Only through events and exports. Nothing else crosses the boundary. |
+| Restarting one feature | Restarts everything in the resource. | `restart shop` leaves the rest running. |
+| A crash or bad deploy | Can take the whole gamemode down. | Stays inside one resource. |
+| Reuse on another server | Copy the folder you need out of a larger codebase. | Drop the resource in and add it to `server.toml`. |
+| Cost | A build step once the project grows. | An interface to design and keep stable, and load order to think about. |
+
+Neither is "the advanced one". The official [Freeroam gamemode](https://github.com/Cyber-MP/CyberMP-Freeroam) is a single large resource, split internally into modules (chat, matchmaking, vehicle spawner and so on) and bundled into one server file and one client file. Next to it runs one small, separate resource, `hotreload`, because that one has to keep running while the gamemode restarts.
+
+A rule of thumb that holds up: start with one resource and split something off when it has a different **lifetime** (it must survive a restart of the rest, or be restarted on its own) or a different **audience** (you want to reuse or publish it).
+
+## Load order
+
+The server starts the resources in the order of the `resources` array in `server.toml`. The built-in core resource always comes first.
+
+```toml title="server.toml"
+# Providers first, then the resources that use them
+resources = ["economy", "shop"]
+```
+
+Each script file runs from top to bottom when its resource starts. Two consequences are easy to miss:
+
+- **An event emitted while a script is loading only reaches resources that are already loaded.** If `economy` emits an event at the top of its script, `shop` is not there yet and never hears it.
+- **A resource that is started later is in the same position.** After `restart shop`, the new `shop` did not see anything that happened before.
+
+So don't announce things at the top of a script and hope someone listens. Do your setup in `resourceStart`, and when you depend on another resource, check that it is running at the moment you need it, with `mp.resources.getState(name)` (`2` means running). To react when another resource starts or stops, listen to `anyResourceStart` and `anyResourceStop`: both receive the resource name.
+
+## Talking to another resource
+
+There are two ways across the boundary.
+
+**Custom events** work everywhere. `mp.events.emit` (`mp.events.trigger` in Lua) runs the handlers registered for that name in every server resource, whichever language they are written in: a JavaScript resource can emit an event that a Lua resource handles, and the other way round.
+
+**Exports** let another resource call your function and get the return value. They are covered in [Resource Exports](/guides/resources/exports/).
+
+| | Custom events | Exports |
+| :--- | :--- | :--- |
+| Server-side JavaScript | Yes | No, `mp.exports` does not exist there in server v4.0.4-beta.1 |
+| Server-side Lua | Yes | Yes |
+| Client scripts | Local events exist, but the sources don't say whether they reach other client resources | Yes |
+| Gives a return value | No | Yes |
+| If nobody is there | Nothing happens | The call raises an error |
+
+A few things about custom events that you can rely on, measured on server v4.0.4-beta.1:
+
+- Handlers run **before `emit` returns**. If a handler emits a reply event, your own handler for that reply has already run on the next line.
+- Arguments are **copies**. A handler that changes an object it received does not change the sender's object. Send plain data: numbers, strings, booleans, arrays and objects made of those.
+- An error thrown by one handler is logged and does not stop the other handlers.
+- An event has no return value. To get an answer, the other side emits a second event, as the example below does.
+
+:::caution[Keep your event names to yourself]
+Every resource hears every event, so prefix custom event names with your resource name (`economy:charge`). Don't emit the names of platform events such as `playerConnected` yourself: every resource listening for the real event would run its handler, including the core resource.
+:::
+
+## Who owns the data
+
+Once there are several resources, decide for each piece of data which single resource **owns** it. The owner keeps the only copy and is the only one that changes it. Everyone else asks.
+
+The reason is practical. If `shop` and `garage` both subtract money from a balance they each keep a copy of, the copies drift apart within minutes. If only `economy` holds balances and the others ask it to charge a player, there is one place where the rule "you cannot spend what you don't have" lives.
+
+The same idea applies between server and client: the server owns everything that matters (money, inventory, permissions), and clients only display it. [Never Trust the Client](/guides/advanced/secure-events/) covers that side.
+
+Where the owner keeps the data matters for restarts:
+
+- **Variables in the script** are gone when the resource stops. The new instance starts empty.
+- **[Metadata](/guides/server/meta/)** lives in the server, not in your resource. A value is still there after the resource that set it restarts (checked with global metadata on server v4.0.4-beta.1). Every server resource can read and write it, though, so it does not protect ownership by itself.
+- **Entities** created with `mp.*.create` also outlive the resource. See the next section.
+
+## A clean start and stop
+
+Treat `resourceStart` and `resourceStop` as a pair: whatever the first creates, the second removes.
+
+- In `resourceStart`, create entities and rebuild state. The players who are already connected did not fire `playerConnected` for your new instance, so loop over `mp.players.toArray()` if you keep per-player data.
+- In `resourceStop`, destroy the entities you created. The server does not do it for you, and every restart would add another copy.
+
+`resourceStop` fires when the resource is stopped or restarted, not when the whole server shuts down with `quit`. That is fine for entities, which disappear with the server anyway, but it makes `resourceStop` the wrong place to save data: save when the data changes, on a timer, or when a player disconnects, as described in [Saving data](/guides/server/saving-data/#when-to-save).
+
+You do not need to clean up event handlers, commands or timers. They belong to the script environment and disappear with it: a `setInterval` in a stopped JavaScript resource no longer fires, and Lua tasks end the same way.
+
+## Example: an economy and a shop
+
+Two resources. `economy` owns the balances. `shop` places a vendor in the world and sells a katana, and has to ask `economy` for the money.
+
+The request is the event `economy:charge`. The answer comes back as `economy:charged` or `economy:chargeFailed`. Because every resource hears those answers, the caller passes a `reason` and gets it back unchanged, which is how `shop` recognises the payments it asked for.
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="resources/economy/server.js"
+    const STARTING_BALANCE = 1000;
+
+    // The only copy of every balance. No other resource can reach this map.
+    const balanceByPlayerId = new Map();
+
+    mp.events.on('resourceStart', () => {
+      // After a restart the map is empty again, but the players are still connected.
+      for (const player of mp.players.toArray()) {
+        balanceByPlayerId.set(player.id, STARTING_BALANCE);
+      }
+    });
+
+    mp.events.on('playerConnected', (playerId) => {
+      balanceByPlayerId.set(playerId, STARTING_BALANCE);
+    });
+
+    mp.events.on('playerDisconnected', (playerId) => {
+      balanceByPlayerId.delete(playerId);
+    });
+
+    // Other resources ask for a payment by emitting this event.
+    // `reason` is sent back unchanged, so the caller can recognise its own request.
+    mp.events.on('economy:charge', (playerId, amount, reason) => {
+      const balance = balanceByPlayerId.get(playerId);
+      const isValidAmount = Number.isInteger(amount) && amount > 0;
+
+      if (balance === undefined || !isValidAmount || balance < amount) {
+        mp.events.emit('economy:chargeFailed', playerId, amount, reason);
+        return;
+      }
+
+      const newBalance = balance - amount;
+      balanceByPlayerId.set(playerId, newBalance);
+      mp.events.emit('economy:charged', playerId, amount, reason, newBalance);
+    });
+    ```
+
+    ```js title="resources/shop/server.js"
+    const KATANA_PRICE = 300;
+    const VENDOR_POSITION = [-1456.8, 1038.2, 16.8];
+
+    let vendor = null;
+
+    mp.events.on('resourceStart', () => {
+      vendor = mp.peds.create({
+        model: mp.hashes.tweakdbid('Character.Judy'),
+        appearance: mp.hashes.cname('default'),
+        position: VENDOR_POSITION,
+        yaw: 180,
+      });
+    });
+
+    mp.events.on('resourceStop', () => {
+      // Entities outlive the resource that created them, so remove the vendor ourselves.
+      if (vendor && mp.peds.exists(vendor.id)) {
+        vendor.destroy();
+      }
+    });
+
+    mp.commands.add('buykatana', (player) => {
+      const isFromConsole = !player || player.id === 0;
+      if (isFromConsole) {
+        console.log('Only players can buy things.');
+        return;
+      }
+
+      // 2 means "running". Without the economy resource nobody would answer.
+      if (mp.resources.getState('economy') !== 2) {
+        player.emit('shop:message', 'The shop is closed right now.');
+        return;
+      }
+
+      mp.events.emit('economy:charge', player.id, KATANA_PRICE, 'shop:katana');
+    });
+
+    mp.events.on('economy:charged', (playerId, amount, reason, newBalance) => {
+      // Every resource hears this event. Ignore payments that other resources asked for.
+      if (reason !== 'shop:katana') return;
+      if (!mp.players.exists(playerId)) return;
+
+      const player = mp.players.at(playerId);
+      player.emit('shop:itemBought', 'Items.Preset_Katana_Military', newBalance);
+    });
+
+    mp.events.on('economy:chargeFailed', (playerId, amount, reason) => {
+      if (reason !== 'shop:katana') return;
+      if (!mp.players.exists(playerId)) return;
+
+      const player = mp.players.at(playerId);
+      player.emit('shop:message', 'You cannot afford this.');
+    });
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="resources/economy/server.lua"
+    local STARTING_BALANCE = 1000
+
+    -- The only copy of every balance. No other resource can reach this table.
+    local balanceByPlayerId = {}
+
+    mp.events.add('resourceStart', function()
+      -- After a restart the table is empty again, but the players are still connected.
+      for _, player in ipairs(mp.players.toArray()) do
+        balanceByPlayerId[player.id] = STARTING_BALANCE
+      end
+    end)
+
+    mp.events.add('playerConnected', function(playerId)
+      balanceByPlayerId[playerId] = STARTING_BALANCE
+    end)
+
+    mp.events.add('playerDisconnected', function(playerId)
+      balanceByPlayerId[playerId] = nil
+    end)
+
+    -- Other resources ask for a payment by triggering this event.
+    -- `reason` is sent back unchanged, so the caller can recognise its own request.
+    mp.events.add('economy:charge', function(playerId, amount, reason)
+      local balance = balanceByPlayerId[playerId]
+      local isWholeNumber = type(amount) == 'number' and amount == math.floor(amount)
+      local isValidAmount = isWholeNumber and amount > 0
+
+      if balance == nil or not isValidAmount or balance < amount then
+        mp.events.trigger('economy:chargeFailed', playerId, amount, reason)
+        return
+      end
+
+      local newBalance = balance - amount
+      balanceByPlayerId[playerId] = newBalance
+      mp.events.trigger('economy:charged', playerId, amount, reason, newBalance)
+    end)
+    ```
+
+    ```lua title="resources/shop/server.lua"
+    local KATANA_PRICE = 300
+    local VENDOR_POSITION = vector3(-1456.8, 1038.2, 16.8)
+
+    local vendor = nil
+
+    mp.events.add('resourceStart', function()
+      vendor = mp.peds.create({
+        model = tonumber(mp.hashes.toTweakdbid('Character.Judy'), 10),
+        appearance = tonumber(mp.hashes.toCname('default'), 10),
+        position = VENDOR_POSITION,
+        yaw = 180.0, -- Lua needs a decimal number here: 180 would be misread
+      })
+    end)
+
+    mp.events.add('resourceStop', function()
+      -- Entities outlive the resource that created them, so remove the vendor ourselves.
+      if vendor and mp.peds.exists(vendor.id) then
+        vendor:destroy()
+      end
+    end)
+
+    mp.commands.add('buykatana', function(player)
+      -- From the server console `player` is the number 0, not a player object.
+      local isFromConsole = type(player) ~= 'table'
+      if isFromConsole then
+        print('Only players can buy things.')
+        return
+      end
+
+      -- 2 means "running". Without the economy resource nobody would answer.
+      if mp.resources.getState('economy') ~= 2 then
+        player:trigger('shop:message', 'The shop is closed right now.')
+        return
+      end
+
+      mp.events.trigger('economy:charge', player.id, KATANA_PRICE, 'shop:katana')
+    end)
+
+    mp.events.add('economy:charged', function(playerId, amount, reason, newBalance)
+      -- Every resource hears this event. Ignore payments that other resources asked for.
+      if reason ~= 'shop:katana' then return end
+      if not mp.players.exists(playerId) then return end
+
+      local player = mp.players.at(playerId)
+      player:trigger('shop:itemBought', 'Items.Preset_Katana_Military', newBalance)
+    end)
+
+    mp.events.add('economy:chargeFailed', function(playerId, amount, reason)
+      if reason ~= 'shop:katana' then return end
+      if not mp.players.exists(playerId) then return end
+
+      local player = mp.players.at(playerId)
+      player:trigger('shop:message', 'You cannot afford this.')
+    end)
+    ```
+  </TabItem>
+</Tabs>
+
+What to notice:
+
+- `shop` never sees a balance, and cannot change one. It can only ask.
+- `economy` checks the amount even though the request comes from another server resource. A whole number above zero is cheap to check, and it stops a bug in one resource from handing out money through a negative price.
+- `restart shop` removes the old vendor and creates a new one, and `economy` keeps its balances. `restart economy` resets everyone to the starting balance, because the balances are script variables. A real economy loads them from a database in `resourceStart`.
+- `shop:itemBought` and `shop:message` are events for the player's client script, which shows the message and hands over the item. See [client events](/guides/client/events/#communicating-with-the-server).
+
+### The same request as an export (server-side Lua)
+
+In server-side Lua, an export does this with less code, because it returns the answer directly. The event version above stays the right choice when one of the two resources is written in JavaScript.
+
+```lua title="resources/economy/server.lua"
+-- Returns true when the player was charged, false when they could not pay.
+local function charge(playerId, amount)
+  local balance = balanceByPlayerId[playerId]
+  local isWholeNumber = type(amount) == 'number' and amount == math.floor(amount)
+  local isValidAmount = isWholeNumber and amount > 0
+
+  if balance == nil or not isValidAmount or balance < amount then
+    return false
+  end
+
+  balanceByPlayerId[playerId] = balance - amount
+  return true
+end
+
+mp.exports('charge', charge)
+```
+
+```lua title="resources/shop/server.lua"
+local wasCharged = mp.exports.economy:charge(player.id, KATANA_PRICE)
+```
+
+If `economy` is not running, that call raises an error (`Cant find charge in economy`), so keep the `getState` check or wrap the call in `pcall`.
+
+## What next
+
+- [Never Trust the Client](/guides/advanced/secure-events/): the same ownership rule, applied to what clients send you.
+- [Request and Response over Events](/guides/advanced/request-response/): getting an answer back from a client.
+- [Resource Hotreload](/guides/recipes/hotreload/): restart a resource automatically when its files change.
+- [Setting Up TypeScript](/guides/recipes/typescript/): the build step for a resource made of many files.

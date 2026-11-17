@@ -1,0 +1,338 @@
+---
+title: Advanced Game Hooks
+description: Go further with observers and overrides - overloads, out parameters, changing arguments and results, raw observers, hooks switched by the server, and how the core resource builds its override flags.
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import { SCRIPT_LANG_TAB_SYNC_KEY } from '../../../../lib/const';
+
+The basic guides show how to watch a game method with an [observer](/guides/client/observes/) and how to replace one with an [override](/guides/client/overrides/). This page is about what comes after the first working hook: picking the right version of a method, wrapping the original instead of replacing it, hooking methods that fire constantly, and turning hooks on and off from the server.
+
+Read those two guides and [Working with Game Natives](/reference/client/working-with-game-natives/) first. Everything here runs on the client, in a resource with `use_game_natives = true`.
+
+:::note[How this page was checked]
+Client code cannot be run without the game, so nothing on this page was executed. Every class and method name used in a hook below is taken from hooks that ship and work: the core resource's `main.lua` and `client.js`, and the official [Freeroam gamemode](https://github.com/Cyber-MP/CyberMP-Freeroam). Where a rule comes from the typings or the Lua reference instead, the text says so.
+:::
+
+## Picking an overload
+
+Some game classes have several methods with the same name and different parameters. A hook on the bare name would be ambiguous, so you add a suffix after a `;` that names the parameter types.
+
+The suffix is the parameter type names written one after another, with nothing in between. These are the overloaded methods the core resource hooks:
+
+| Class | Method name you pass | Parameters of that overload |
+| :--- | :--- | :--- |
+| `VehicleSystem` | `IsSummoningVehiclesRestricted;GameInstance` | `GameInstance` |
+| `GameTimeUtils` | `CanPlayerTimeSkip;PlayerPuppet` | `PlayerPuppet` |
+| `GameTimeUtils` | `SetGameTimeText;inkTextRefinkTextParamsGameTime` | `inkTextRef`, `inkTextParams`, `GameTime` |
+| `SecurityTurretControllerPS` | `RipOff;ScriptableDeviceAction` | `ScriptableDeviceAction` |
+| `VehicleComponent` | `QueueExitEventToAllNonFriendlyActivePassengers;GameInstanceEntityIDGameObjectBoolBool` | `GameInstance`, `EntityID`, `GameObject`, `Bool`, `Bool` |
+
+Look the method up on [NativeDB](https://nativedb.red4ext.com/) to see which versions exist and what their parameters are. A method that has only one version is hooked by its plain name, as in `mp.override('PlayerPuppet', 'OnDeath', ...)`.
+
+## Out parameters when you call a method
+
+Some game methods give back more than one value: a return value, plus values written into `out` parameters. [Overriding Game Methods](/guides/client/overrides/#handling-methods-with-out-parameters) covers how an override returns them. The other direction is calling such a method yourself.
+
+In JavaScript the call returns an array: the return value first, then each `out` value in the order they are declared. The core resource does this to find where a player's head is. This is its code, lightly renamed:
+
+```js title="client.js"
+// `playerEntity` is the game object of a streamed-in player.
+function getHeadPosition(playerEntity) {
+  const slotComponent = playerEntity.slotComponent;
+  if (!slotComponent) {
+    return playerEntity.GetWorldPosition();
+  }
+
+  const slots = slotComponent.FindComponentByName('Item_Attachment_Slot');
+  if (!slots) {
+    return playerEntity.GetWorldPosition();
+  }
+
+  // GetSlotTransform returns its result and fills one out parameter with the transform.
+  const [result, headTransform] = slots.GetSlotTransform('Head');
+  return mp.game.WorldPosition.ToVector4(headTransform.Position);
+}
+```
+
+If you forget the array and write `const headTransform = slots.GetSlotTransform('Head')`, you get the whole array and `headTransform.Position` is `undefined`.
+
+For Lua, none of our sources contains a call to a method with `out` parameters, so we cannot show the shape with confidence. The override rule in Lua is "the result first, then the out values, as multiple return values"; check what a call returns with a quick `print` before you rely on it.
+
+## Wrapping the original method
+
+Blocking a method outright is the blunt use of an override. More often you want the game's behaviour with one thing changed. The last argument of every override, `wrappedMethod`, is what makes that possible: it runs the original (or the next override in line) and gives you its result. The rules for it are in [The continuation function](/guides/client/overrides/#the-continuation-function-wrappedmethod).
+
+### Changing the result
+
+Call the original, then decide what to return. Here the game's own answer to "may the player summon a vehicle?" still counts, and your gamemode can add its own "no" on top:
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="client.js"
+    // Your gamemode sets this, for example while the player is inside a race.
+    let isSummoningBlockedByGamemode = false;
+
+    mp.game.onInit(() => {
+      // Static method: no `self`, the arguments start right away.
+      mp.game.override(
+        'VehicleSystem',
+        'IsSummoningVehiclesRestricted;GameInstance',
+        (gameInstance, wrappedMethod) => {
+          const isRestrictedByGame = wrappedMethod(gameInstance);
+          return isRestrictedByGame || isSummoningBlockedByGamemode;
+        }
+      );
+    });
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="client.lua"
+    -- Your gamemode sets this, for example while the player is inside a race.
+    local isSummoningBlockedByGamemode = false
+
+    mp.registerGameState('onInit', function()
+      -- Static method: no `self`, the arguments start right away.
+      mp.override(
+        'VehicleSystem',
+        'IsSummoningVehiclesRestricted;GameInstance',
+        function(gameInstance, wrappedMethod)
+          local isRestrictedByGame = wrappedMethod(gameInstance)
+          return isRestrictedByGame or isSummoningBlockedByGamemode
+        end
+      )
+    end)
+    ```
+  </TabItem>
+</Tabs>
+
+Because the flag is read on every call, this override can be switched on and off at any time without registering anything again. That matters, since a hook cannot be removed once it is registered.
+
+### Changing the arguments
+
+Pass different values to `wrappedMethod` than the ones you received. The game then runs its original code, but with your input.
+
+This example uses the five-parameter overload from the table above. The parameter names are the ones the core resource uses for it. The original is called with the fourth argument, which the core names `broadcastHijack`, forced to `false`, and everything else is passed through untouched:
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="client.js"
+    mp.game.onInit(() => {
+      mp.game.override(
+        'VehicleComponent',
+        'QueueExitEventToAllNonFriendlyActivePassengers;GameInstanceEntityIDGameObjectBoolBool',
+        (gameInstance, vehicleId, executionOwner, broadcastHijack, delay, wrappedMethod) => {
+          const quietBroadcastHijack = false;
+          return wrappedMethod(gameInstance, vehicleId, executionOwner, quietBroadcastHijack, delay);
+        }
+      );
+    });
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="client.lua"
+    mp.registerGameState('onInit', function()
+      mp.override(
+        'VehicleComponent',
+        'QueueExitEventToAllNonFriendlyActivePassengers;GameInstanceEntityIDGameObjectBoolBool',
+        function(gameInstance, vehicleId, executionOwner, broadcastHijack, delay, wrappedMethod)
+          local quietBroadcastHijack = false
+          return wrappedMethod(gameInstance, vehicleId, executionOwner, quietBroadcastHijack, delay)
+        end
+      )
+    end)
+    ```
+  </TabItem>
+</Tabs>
+
+Three things go wrong most often with wrapped overrides:
+
+- **Passing `self`.** For an instance method the callback receives `self` first, but `wrappedMethod` must be called without it.
+- **Passing the arguments in the wrong order.** `wrappedMethod` takes the method's own parameters, all of them, in the order the method declares them.
+- **Forgetting `return`.** Without it the original's result is thrown away. What the game gets instead differs per language and is described in [The continuation function](/guides/client/overrides/#the-continuation-function-wrappedmethod).
+
+Only one resource should override a given method. Several overrides on the same method form a chain through `wrappedMethod`, and the sources do not say in which order they run. If the core resource already overrides a method through a `[core.overrides]` flag and you want your own version, turn the flag off instead of stacking a second override on top.
+
+## Switching a hook from the server
+
+Hooks live on the client, but the decision usually belongs to the server: this player entered a safe zone, a race started, an admin toggled a rule. Register the hook once, and let a server event set the flag it reads.
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="server.js"
+    function setVehicleSummoningBlocked(player, isBlocked) {
+      player.emit('rules:setSummoningBlocked', isBlocked);
+    }
+    ```
+
+    ```js title="client.js"
+    let isSummoningBlockedByGamemode = false;
+
+    mp.events.onServer('rules:setSummoningBlocked', (isBlocked) => {
+      // Only accept a real boolean: this value ends up inside a game call.
+      isSummoningBlockedByGamemode = isBlocked === true;
+    });
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="server.lua"
+    local function setVehicleSummoningBlocked(player, isBlocked)
+      player:trigger('rules:setSummoningBlocked', isBlocked)
+    end
+    ```
+
+    ```lua title="client.lua"
+    local isSummoningBlockedByGamemode = false
+
+    mp.events.addServer('rules:setSummoningBlocked', function(isBlocked)
+      -- Only accept a real boolean: this value ends up inside a game call.
+      isSummoningBlockedByGamemode = isBlocked == true
+    end)
+    ```
+  </TabItem>
+</Tabs>
+
+Together with the override from [Changing the result](#changing-the-result), which reads the same variable, that is the whole feature.
+
+Keep in mind what such a hook is: a convenience for honest players. It runs on the player's machine, so a modified client can ignore it. If the rule matters, the server must enforce it too, for example by refusing the request that follows. See [Never Trust the Client](/guides/advanced/secure-events/).
+
+## How the core resource builds `[core.overrides]`
+
+The flags under [`[core.overrides]`](/reference/server/configuration/) in `server.toml` are implemented with exactly the tools on this page, in the core resource that ships with the server (`data/cybermp_core/dist/main.lua`, about 200 lines and readable). It is worth opening; here is the map.
+
+**1. The server sends the configuration.** The core's server script sends the `[core]` section of `server.toml` to each player when they connect, as an event named `__coreConfig`.
+
+**2. The client waits for two things.** Hooks can only be registered from the `onInit` stage on, and the flags arrive over the network. Either can come first, so the script records both and sets the hooks up when the second one arrives. Reduced to its skeleton:
+
+```lua title="main.lua (core resource, shortened)"
+local inited = false
+local overrides_config = nil
+local isOnInitCalled = false
+
+mp.events.addServer("__coreConfig", function(tomlData)
+    local config = tomlData
+    if config["overrides"] then
+        overrides_config = config["overrides"]
+    end
+    if isOnInitCalled and not inited then
+        SetupHooks()
+    end
+end)
+
+mp.registerGameState("onInit", function()
+    isOnInitCalled = true
+    SetupHooks()
+end)
+```
+
+`SetupHooks` starts with `if overrides_config and not inited then inited = true ...`, so the flagged hooks are registered once, whichever of the two arrived last.
+
+**3. Each flag is a group of plain hooks.** Inside `SetupHooks`, every flag is an `if` around a few `mp.override` and `mp.observe` calls. Some of them, as they appear in the file:
+
+| Flag | What the core registers |
+| :--- | :--- |
+| `change_player_on_death_logic` | Overrides `PlayerPuppet.OnDeath` and returns `true` without calling the original. |
+| `disable_player_inventory_encumbrance` | Overrides `PlayerPuppet.EvaluateEncumbrance` with an empty function. |
+| `disable_time_skip` | Overrides `GameTimeUtils.CanPlayerTimeSkip;PlayerPuppet` to return `false`, and `SetGameTimeText;…` with an empty function. |
+| `disable_vending_machines` | Overrides `VendingMachine.TurnOnDevice` and `WeaponVendingMachine.TurnOnDevice` to call `this:TurnOffDevice()` instead. |
+| `change_vehicles_logic` | Overrides `VehicleSystem.IsSummoningVehiclesRestricted;GameInstance`, rewrites `VehicleObject.OnMountingEvent`, and observes `VehicleObject.OnVehicleFinishedMounting` to turn the engine on when the front left seat is taken. |
+
+Two lessons carry over to your own resources:
+
+- **The hooks are decided once.** A hook cannot be unregistered, so the core reads the flags a single time and registers only what is switched on. For anything that must change during play, use the flag-inside-the-callback approach from the previous section instead.
+- **Hooks that depend on data from the server need the "both arrived" guard.** Without it, the script would either register hooks before the game allows it, or miss the configuration when it arrives late.
+
+## Raw observers: record now, work later
+
+A normal observer is queued: the game call is captured, and your callback runs on a later script tick. A raw observer (`observeRaw`, `observeBeforeRaw`, `observeAfterRaw`) runs immediately, inside the game's own call. [Choosing when the callback runs](/guides/client/observes/#choosing-when-the-callback-runs) introduces them. There are two good reasons to use one.
+
+**You need the value at that exact moment.** Freeroam uses `observeRaw` on `gameuiInGameMenuGameController.RegisterGlobalBlackboards` only to store `self`, the menu controller, so that it can open the pause menu later.
+
+**The method fires too often to queue.** `PlayerPuppet.OnAction` runs for every input action, including each mouse movement. Queuing a callback for each of those is wasteful, and the Lua reference puts the deferred queue at up to 256 callbacks per tick.
+
+The price of running inside the game call is a strict limit on what the callback may do. The typings say a raw observer "can only invoke methods native to `MpGame`", and the observers guide warns that it may run on one of the game's worker threads. So a raw callback should do the minimum: read its arguments, store a number or a reference in a variable, and return. Everything else happens later, in code that runs on the script thread.
+
+This example counts input actions in a raw observer and reports the total once per second from a timer:
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="client.js"
+    let inputActionCount = 0;
+
+    mp.game.onInit(() => {
+      // Runs inside the game's input handling: only touch the counter here.
+      mp.game.observeBeforeRaw('PlayerPuppet', 'OnAction', (self, action) => {
+        inputActionCount += 1;
+      });
+    });
+
+    // The real work happens here, on the script thread, once per second.
+    setInterval(() => {
+      console.log(`Input actions in the last second: ${inputActionCount}`);
+      inputActionCount = 0;
+    }, 1000);
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="client.lua"
+    local inputActionCount = 0
+
+    mp.registerGameState('onInit', function()
+      -- Runs inside the game's input handling: only touch the counter here.
+      mp.observeBeforeRaw('PlayerPuppet', 'OnAction', function(self, action)
+        inputActionCount = inputActionCount + 1
+      end)
+    end)
+
+    -- The real work happens here, on the script thread, once per second.
+    mp.spawnTask(function()
+      while true do
+        mp.wait(1000)
+        print(string.format('Input actions in the last second: %s', inputActionCount))
+        inputActionCount = 0
+      end
+    end)
+    ```
+  </TabItem>
+</Tabs>
+
+Freeroam's noclip camera (`client/src/modules/noclip/noclip.service.ts`) is the same pattern doing real work: its raw observer on `OnAction` reads the mouse movement from the action and adds it to a variable, and a per-frame tick uses the accumulated value and resets it. Reading the action there goes through the game's own `gameinputScriptListenerAction` class, which is the kind of call a raw observer is allowed to make.
+
+## Editing TweakDB at runtime
+
+[Working with Game Natives](/reference/client/working-with-game-natives/#tweakdb-records) shows the standard edit: write a flat, update its record, in the `onTweak` stage. A few more calls exist. Neither the core resource nor Freeroam uses TweakDB from script, so this list comes from the client typings (JavaScript) and the Lua reference only, and none of it was exercised for this page.
+
+| Purpose | JavaScript (`mp.game.TweakDB`) | Lua (`TweakDB`) |
+| :--- | :--- | :--- |
+| Read one flat or record | `getFlat(path)`, `getRecord(path)` | `TweakDB:GetFlat(id)`, `TweakDB:GetRecord(id)` |
+| Read all records of a type, search paths | `getRecords(type)`, `query(pattern)` | not listed |
+| Write a flat and update at once | `setFlat(path, value)`, `setFlats(path, array)` | `TweakDB:SetFlat(id, value)` |
+| Write a flat without updating | `setFlatNoUpdate(path, value)` | `TweakDB:SetFlatNoUpdate(id, value)` |
+| Apply pending writes to a record | `updateRecord(path)` | `TweakDB:Update(id)` |
+| Create a record | `createRecord(key, value)` | `TweakDB:CreateRecord(id, typeName)` |
+| Copy a record under a new name | not in the typings | `TweakDB:CloneRecord(newId, sourceId)` |
+| Delete a record | not in the typings | `TweakDB:DeleteRecord(id)` |
+
+What can be said safely:
+
+- **Batch your writes.** When you change several flats of one record, use the "no update" write for each and update the record once at the end. The typings describe `setFlatNoUpdate` as meant for exactly that.
+- **Cloning is how you get a variant without touching the original**, for example a stronger copy of a weapon for one game mode. Only Lua lists a clone call. In JavaScript the typings offer `createRecord(key, value)`, whose second argument they describe as "the record blueprint or type definition key"; whether that accepts an existing record as the blueprint is not something the typings settle.
+- **Every client has its own TweakDB.** A record you create or change exists on that player's machine only. If the server refers to it (for example a pickup of a cloned item), every client must have made the same edit, in `onTweak`, before it is used. And like any client-side change, a modified client can skip it.
+
+The clone call in Lua, following the signature in the [Lua reference](/reference/lua/client/#tweakdb-database):
+
+```lua title="client.lua"
+mp.registerGameState('onTweak', function()
+  -- New record first, source record second.
+  TweakDB:CloneRecord('Items.Preset_Nue_Arena', 'Items.Preset_Nue_Default')
+end)
+```
+
+`Items.Preset_Nue_Arena` is a name made up for this example. Check the result with `TweakDB:GetRecord('Items.Preset_Nue_Arena')` in your own resource before building on it.
+
+## What next
+
+- [Performance](/guides/advanced/performance/#on-the-client): what hooks and ticks cost on the client.
+- [Server Configuration](/reference/server/configuration/): the list of `[core]` and `[core.overrides]` flags.
+- [Client Lifecycle & Stages](/guides/client/lifecycle/): when `onTweak` and `onInit` run, including after a resource restart.
+- [`OverrideFunction`](/reference/client/api/global/overridefunction/) and [`ObserveFunction`](/reference/client/api/global/observefunction/): the full signatures.
