@@ -1,46 +1,47 @@
 ---
 title: Resource Hotreload
-description: Learn how to set up automatic file watching to instantly reload CyberMP resources on code changes.
+description: Restart a resource automatically whenever its files change, with a small watcher resource you add to your development server.
 ---
 
 import { Steps, Tabs, TabItem } from '@astrojs/starlight/components';
 import { SCRIPT_LANG_TAB_SYNC_KEY } from '../../../../lib/const';
 
-During development, manually restarting resources via the server console after every code edit slows down iteration. Setting up hotreload allows the server to automatically detect file changes on disk and reload the affected resource instantly.
+While you develop, every code change needs a `restart my_resource` in the server console before you can see it (see [Live updates](/guides/resources/live-updates/)). **Hotreload** removes that step: a tiny resource watches your files and restarts the resource they belong to as soon as one changes.
 
-In this recipe, you will learn how to configure resources for hot reloading, clean up active entities on stop, and implement a file-watcher resource.
+The server has no built-in file watcher. Hotreload is something you add yourself, as a normal server resource written in JavaScript, and this recipe builds it in four steps. It is a development tool: leave it out of your production server.
 
----
+## What a restart does
 
-## How Hotreload Works
+Hotreload only automates `mp.resources.restart(name)`, so it helps to know what that does:
 
-When a resource restarts via `mp.resources.restart`:
-1. The server runtime triggers the `resourceStop` event for that resource.
-2. The existing script environment (including event listeners, timers, and commands) is destroyed.
-3. Connected clients re-download the updated client scripts.
-4. The new script instance initializes and triggers `resourceStart`.
+1. The resource receives the `resourceStop` event.
+2. Its script environment is thrown away, including its event listeners, timers and commands.
+3. Connected clients download the client scripts again and restart them.
+4. The script is loaded again and receives `resourceStart`.
 
-:::important[State Cleanup]
-Entities created with `mp.*.create` (such as spawned vehicles or NPCs) live in the server world state. If your script spawns entities without destroying them in `resourceStop`, restarting the resource will spawn duplicate entities every time!
+:::caution[Entities are not cleaned up for you]
+Step 2 removes your script's state, but not what it created in the world. Vehicles, peds and objects made with `mp.*.create` belong to the server, not to the resource, and they survive the restart. If you don't destroy them in `resourceStop`, every reload spawns another copy on top of the old one. Step 2 of this recipe shows the pattern.
 :::
 
----
+## Setting it up
 
 <Steps>
-1. ## Enable Hotreload on the Target Resource
+1. ## Mark the resource for hotreload
 
-   Add the `hot_reload = true` flag to your resource's `resource.toml`. While the core engine doesn't watch files on its own, custom file watchers check this flag to decide which folders to watch:
+   Add `hotreload = true` to the `resource.toml` of each resource you want reloaded automatically:
 
    ```toml title="resources/my_resource/resource.toml"
    server_script = 'server.js' # or 'server.lua'
    client_script = 'client.js' # or 'client.lua'
 
-   hot_reload = true
+   hotreload = true
    ```
 
-2. ## Cleaning Up State in `resourceStop`
+   The server itself does nothing with this key. It is an opt-in flag that the watcher from step 3 reads, so that only the resources you chose are watched.
 
-   Always track created world entities and destroy them when the resource stops:
+2. ## Clean up in `resourceStop`
+
+   Keep a list of the entities your resource creates, and destroy them when it stops:
 
    <Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
      <TabItem label="JS">
@@ -48,20 +49,21 @@ Entities created with `mp.*.create` (such as spawned vehicles or NPCs) live in t
        const spawnedVehicles = [];
 
        mp.events.on('resourceStart', () => {
-         const car = mp.vehicles.create({
+         const vehicle = mp.vehicles.create({
            model: mp.hashes.tweakdbid('Vehicle.v_sport1_quadra_turbo_r_player'),
            appearance: mp.hashes.cname('quadra_turbo_r__basic_player_01'),
            position: [-1392.6, 1271.5, 123.0],
            yaw: 90
          });
-         spawnedVehicles.push(car);
+         spawnedVehicles.push(vehicle);
        });
 
-       // Clean up entities when hotreload reloads this resource
+       // Runs on every restart, hotreload included
        mp.events.on('resourceStop', () => {
-         for (const veh of spawnedVehicles) {
-           if (veh && veh.exist) {
-             veh.destroy();
+         for (const vehicle of spawnedVehicles) {
+           // Something else may have destroyed it already
+           if (vehicle.exist) {
+             vehicle.destroy();
            }
          }
        });
@@ -72,20 +74,21 @@ Entities created with `mp.*.create` (such as spawned vehicles or NPCs) live in t
        local spawnedVehicles = {}
 
        mp.events.add('resourceStart', function()
-         local car = mp.vehicles.create({
+         local vehicle = mp.vehicles.create({
            model = tonumber(mp.hashes.toTweakdbid('Vehicle.v_sport1_quadra_turbo_r_player'), 10),
            appearance = tonumber(mp.hashes.toCname('quadra_turbo_r__basic_player_01'), 10),
            position = vector3(-1392.6, 1271.5, 123.0),
-           yaw = 90
+           yaw = 90.0 -- Lua needs a decimal number here: 90 would be misread
          })
-         table.insert(spawnedVehicles, car)
+         table.insert(spawnedVehicles, vehicle)
        end)
 
-       -- Clean up entities when hotreload reloads this resource
+       -- Runs on every restart, hotreload included
        mp.events.add('resourceStop', function()
-         for _, veh in ipairs(spawnedVehicles) do
-           if veh and veh.exist then
-             veh:destroy()
+         for _, vehicle in ipairs(spawnedVehicles) do
+           -- Something else may have destroyed it already
+           if vehicle.exist then
+             vehicle:destroy()
            end
          end
        end)
@@ -93,55 +96,71 @@ Entities created with `mp.*.create` (such as spawned vehicles or NPCs) live in t
      </TabItem>
    </Tabs>
 
-3. ## Creating a Watcher Resource
+3. ## Create the watcher resource
 
-   Create a dedicated watcher resource (e.g. `resources/hotreload/`):
+   The watcher is a resource of its own, here `resources/hotreload/`, with only a server script:
 
    ```toml title="resources/hotreload/resource.toml"
    server_script = 'server.js'
    ```
 
+   Each time a resource starts, the watcher reads that resource's manifest. If it finds `hotreload = true`, it watches the resource's folder and restarts the resource when a file changes. Saving a file often triggers several change events in a row, so the restart waits until things have been quiet for a moment.
+
    ```js title="resources/hotreload/server.js"
    const fs = require('fs');
    const path = require('path');
 
-   const debounce = (fn, delay = 500) => {
-     let timer;
-     return (...args) => {
-       clearTimeout(timer);
-       timer = setTimeout(() => fn(...args), delay);
-     };
+   // How long the files must stay quiet before the resource is restarted
+   const QUIET_TIME_MS = 400;
+
+   // One file watcher per watched resource, by resource name
+   const watchers = new Map();
+
+   const watchResource = (resourceName) => {
+     // A restarted resource starts again: don't watch it twice
+     if (watchers.has(resourceName)) return;
+
+     // getTOML returns the resource.toml as a JSON string
+     const manifest = JSON.parse(mp.resources.getTOML(resourceName));
+     if (manifest.hotreload !== true) return;
+
+     // Assumes the server runs from the folder that contains `resources/`
+     const resourceFolder = path.resolve('./resources', resourceName);
+     let restartTimer = null;
+
+     const watcher = fs.watch(resourceFolder, { recursive: true }, (eventType, changedFile) => {
+       // Skip hidden files, such as the temporary files editors write
+       if (!changedFile || changedFile.startsWith('.')) return;
+
+       // Every new change pushes the restart back, so a burst ends in one restart
+       clearTimeout(restartTimer);
+       restartTimer = setTimeout(() => {
+         console.log(`[Hotreload] ${changedFile} changed. Restarting '${resourceName}'...`);
+         mp.resources.restart(resourceName);
+       }, QUIET_TIME_MS);
+     });
+
+     watchers.set(resourceName, watcher);
+     console.log(`[Hotreload] Watching resource: ${resourceName}`);
    };
 
-   const resourcesDir = path.resolve('./resources');
+   // Fires for every server resource that starts after this one
+   mp.events.on('anyServerResourceStart', watchResource);
 
-   // Iterate through all active resources
-   for (const folder of fs.readdirSync(resourcesDir)) {
-     const manifestPath = path.join(resourcesDir, folder, 'resource.toml');
-     if (!fs.existsSync(manifestPath)) continue;
-
-     const manifest = fs.readFileSync(manifestPath, 'utf-8');
-     if (!manifest.includes('hot_reload = true')) continue;
-
-     console.log(`[Hotreload] Watching resource: ${folder}`);
-
-     const targetDir = path.join(resourcesDir, folder);
-     const restartResource = debounce(() => {
-       console.log(`[Hotreload] Changes detected in '${folder}'. Restarting...`);
-       mp.resources.restart(folder);
-     }, 400);
-
-     fs.watch(targetDir, { recursive: true }, (event, filename) => {
-       if (filename && !filename.startsWith('.')) {
-         restartResource();
-       }
-     });
-   }
+   // Stop watching when the watcher resource itself stops
+   mp.events.on('resourceStop', () => {
+     for (const watcher of watchers.values()) {
+       watcher.close();
+     }
+     watchers.clear();
+   });
    ```
 
-4. ## Add Watcher to `server.toml`
+   If your resource is compiled (see [Setting Up TypeScript](/guides/recipes/typescript/)), run the bundler in watch mode. Hotreload then fires when the bundler writes the new output file. If the watched folder also contains files that change all the time, such as logs or data your script writes, watch only the output folder instead (`path.resolve('./resources', name, 'dist')`), or every write will restart the resource.
 
-   Place `hotreload` at the top of your `resources` array so it initializes before your gamemode resources:
+4. ## Load the watcher first
+
+   Put `hotreload` first in the `resources` list of your `server.toml`. Resources start in that order, and the watcher only sees the resources that start after it:
 
    ```toml title="server.toml"
    resources = [
@@ -149,12 +168,35 @@ Entities created with `mp.*.create` (such as spawned vehicles or NPCs) live in t
      'my_resource'
    ]
    ```
+
+   Start the server. You should see `[Hotreload] Watching resource: my_resource` in the console, and a restart each time you save a file in that resource.
 </Steps>
 
----
+## What to expect while developing
+
+- **Connected players are reloaded too.** A restart makes every connected client download the client script again and run it from the top. Your client code has to cope with starting while the game is already loaded: see [Client Lifecycle & Stages](/guides/client/lifecycle/#stage-reference).
+- **State in variables is gone.** Anything the script kept in memory (who is logged in, open menus, timers) starts empty after each save. Keep what must survive in [metadata](/guides/server/meta/) or in your database, or accept logging in again while you develop.
+- **A syntax error stops the script, not the watcher.** If the file you saved does not load, the server logs `syntax error in server.js` and the resource runs without its script. The watcher lives in its own resource and keeps running, so the next save that fixes the error brings the script back.
+- **File events don't cross every boundary.** The watcher relies on the operating system reporting changes. In Docker, events from a bind mount often never arrive, which is why the official resource below can poll instead.
+
+## The official hotreload resource
+
+You don't have to write the watcher yourself. CyberMP publishes one as a ready-made resource: [CyberMP-Hotreload-Resource](https://github.com/Cyber-MP/CyberMP-Hotreload-Resource). The official [Freeroam gamemode](https://github.com/Cyber-MP/CyberMP-Freeroam) ships it in `resources/hotreload` and starts its development server with `NODE_ENV=development`, so it is a working setup you can copy. It reads the same `hotreload = true` flag, so step 1 and step 2 of this recipe stay the same. A few things differ from the minimal watcher above:
+
+- It only runs when the server is started with the environment variable `NODE_ENV=development`. Without it the resource loads and does nothing, which makes it safe to leave in the `resources` list.
+- It watches the files named in `server_script` and `client_script`, not the whole resource folder. That fits a setup where a bundler writes one output file per side.
+- With `IS_DOCKER=true` it polls the files instead of relying on file system events, which don't cross a Docker bind mount reliably.
 
 ## Limitations
 
-- **New Folders:** Adding brand new resource folders still requires running `refresh` in the server console before starting them.
-- **Manifest Changes:** If you edit `resource.toml` itself (e.g. adding new assets to `file` or modifying `use_game_natives`), run `refresh` in the console so the server rescans metadata.
-- **Compiled Archives & Redscripts:** Game assets (`.archive` or `.redscripts`) loaded into REDengine at game startup cannot be reloaded while the game client is running; players must restart the game client to pick up modified game archives.
+- **New resources:** a resource folder you just added is unknown to the server. Run `refresh` in the server console, then `start` it; from then on it is watched like the others.
+- **Manifest changes:** after editing `resource.toml` itself (new entries in `file`, a different `use_game_natives`), run `refresh` so the server reads the manifest again.
+- **Game archives and redscripts:** `.archive` and `.redscripts` files are loaded by the game when it starts. A resource restart can't swap them; players have to restart their game to get the new version.
+- **Production:** the watcher restarts a resource under your players' feet whenever a file changes. Remove `hotreload` from the `resources` list on a live server and use a manual `restart` instead.
+
+## Next steps
+
+- [Live updates](/guides/resources/live-updates/): the manual `refresh`, `start` and `restart` commands this recipe automates.
+- [Setting Up TypeScript](/guides/recipes/typescript/): compile and bundle the files the watcher picks up.
+- [Server Configuration](/reference/server/configuration/): the `resources` list and the other `server.toml` keys.
+- [Managing resources from scripts](/guides/server/managing-resources/#lifecycle-events): the resource events the watcher is built on.
