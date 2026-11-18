@@ -87,4 +87,4 @@ Every time you add, remove, or update resource files (new archives, updated UI b
 
 ## Core Files
 
-The built-in `cybermp_core` resource includes optional files that can be toggled via the `core.files` setting. See the [`[core]` section](/reference/server/configuration) of the server configuration reference for available options.
+The built-in `cybermp_core` resource includes core files located in `cybermp_core/files/` that are configured via the `core.files` setting. These files must be streamed to clients for proper connection. When packaging files for CDN via `--justpack`, ensure these files are packed and uploaded to your CDN. See the [`[core]` section](/reference/server/configuration) of the server configuration reference for the complete list of required files.
