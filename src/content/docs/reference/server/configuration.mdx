@@ -38,7 +38,17 @@ default_gameplay_restrictions = true
 disable_drop_points = true
 disable_location_dependent_quests = true
 disable_garage = true
-files = []
+files = [
+  "final.redscript",
+  "new_gamedef.archive",
+  "basegame_no_intro_videos.archive",
+  "CyberMP_PlayerModel.archive",
+  "flatline2dlods.archive",
+  "ReducedLoot.archive",
+  "ReducedLoot.archive.xl",
+  "GenderAbuseWorld.archive",
+  "ArchiveXL",
+]
 
 [core.overrides]
 change_player_on_death_logic = true
@@ -80,7 +90,7 @@ disable_no_combat = true
 The `[core]` table configures default features shipped with the mandatory `cybermp_core` runtime package sent to every connecting client:
 
 :::important[Required Section]
-Always keep the `[core]` table in your `server.toml`. Without it, `cybermp_core` fails to initialize properly on clients, disabling nametags, death logic, and gameplay restrictions.
+Always keep the `[core]` table in your `server.toml`. Without it, `cybermp_core` fails to initialize properly on clients, disabling nametags, death logic, and gameplay restrictions. Additionally, ensure `files` lists all required core archives and redscripts for clients to connect properly.
 :::
 
 | Property | Type | Default | Description |
@@ -93,7 +103,25 @@ Always keep the `[core]` table in your `server.toml`. Without it, `cybermp_core`
 | `disable_location_dependent_quests` | `boolean` | `true` | Automatically completes tracked vanilla journal quests to prevent narrative conflicts. |
 | `disable_garage` | `boolean` | `true` | Prevents vanilla vehicle summoning from opening the singleplayer garage interface. |
 | `delete_map_objects` | `boolean` | `true` | Removes vanilla map objects from the world. |
-| `files` | `string[]` | `[]` | Optional list of archives or redscripts from `cybermp_core/files/` streamed to clients. |
+| `files` | `string[]` | Required | List of archives and redscripts from `cybermp_core/files/` streamed to clients. Must contain the required core files list for clients to connect properly (see list below). |
+
+### Required Core Files
+
+All of these files are located inside the `cybermp_core/files/` directory shipped with the server. For clients to successfully connect and initialize the multiplayer environment, the server must stream them to connecting players. Ensure your `files` array contains all of them:
+
+```toml
+files = [
+  "final.redscript",
+  "new_gamedef.archive",
+  "basegame_no_intro_videos.archive",
+  "CyberMP_PlayerModel.archive",
+  "flatline2dlods.archive",
+  "ReducedLoot.archive",
+  "ReducedLoot.archive.xl",
+  "GenderAbuseWorld.archive",
+  "ArchiveXL",
+]
+```
 
 ---
 
