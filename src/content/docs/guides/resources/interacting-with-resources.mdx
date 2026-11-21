@@ -1,37 +1,170 @@
 ---
 title: Interacting with resources
-description: CyberMP Server Configuration
+description: Refresh, start, stop and restart resources on a running server, from the console or from a script.
 ---
-This guide covers the manual lifecycle management of server resources using the [Server Console](/reference/server/console).
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import { SCRIPT_LANG_TAB_SYNC_KEY } from '../../../../lib/const';
 
-## Refreshing the Resource Index
+You don't have to shut the server down to change what it runs. Resources can be started, stopped and restarted one by one while the server keeps running. This page shows how to do it by hand in the [server console](/reference/server/console), and how to do the same from a script.
 
-If you add a completely new folder to your `/resources` directory while the server is running, the server will not recognize it immediately.
+The resource name is always the name of its folder inside `resources`.
 
-To force the server to rescan the directory, use:
+| Command | What it does |
+| :--- | :--- |
+| `refresh` | Rescans the `resources` folder. Doesn't start or stop anything. |
+| `start <name>` | Starts a resource that isn't running. |
+| `stop <name>` | Stops a running resource. |
+| `restart <name>` | Stops a resource and starts it again with the files currently on disk. |
+
+## Refreshing the resource index
+
+If you add a completely new folder to your `resources` directory while the server is running, the server will not recognize it immediately.
+
+To make the server rescan the directory, use:
 ```shell
 refresh
 ```
 
-- When to use: Only when you add or delete resource folders or change resource.toml.
-- Effect: The server re-indexes the disk and triggers the `resourcesRefresh` event.
+- When to use: only when you add or delete resource folders or change a `resource.toml`.
+- Effect: the server re-indexes the disk (it prints `Resources initializing...`) and triggers the `resourcesRefresh` event. Nothing is started or stopped for you.
 
-## Starting and Stopping Resources
+## Starting and stopping resources
 
-You can toggle resources on and off without shutting down the server. This is useful for debugging specific scripts or disabling heavy resources during maintenance.
+`start` runs a resource that is on disk but not running, whether or not it is listed in `server.toml`. `stop` shuts a running one down. This is useful to debug one script in isolation or to switch a feature off for a while.
 
-- To Enable:
 ```shell
-start {resource_name}
+start hello_world
 ```
 
-- To Disable:
 ```shell
-stop {resource_name}
+stop hello_world
 ```
 
 Example:
 ```ansi
 > stop hello_world
-[38;2;179;133;0m[00:00:00] [Resources][0m Stopped resource hello_world
+[38;2;179;133;0m[00:00:00] [resources][0m Stopped resource hello_world
+> start hello_world
+[38;2;179;133;0m[00:00:00] [hello_world][0m Hello World from CyberMP Server!
+[38;2;179;133;0m[00:00:00] [resources][0m Loaded resource hello_world
 ```
+
+If the name doesn't match a resource the server knows, `start` prints `unknown resource name <name>`. Check the spelling, or run `refresh` if the folder is new.
+
+A resource started this way runs until the server shuts down. At the next boot, only the resources listed in the `resources` array of `server.toml` start on their own.
+
+:::caution
+Stopping a resource does not remove the vehicles, peds or other entities its scripts created. If your resource spawns things, destroy them in a `resourceStop` handler, otherwise they stay in the world and pile up with every restart.
+:::
+
+## Restarting a resource
+
+`restart` is `stop` followed by `start`. It is the command you use most while developing, because it loads the scripts again from disk:
+
+```shell
+restart hello_world
+```
+
+[Live updates](/guides/resources/live-updates) walks through a full edit-and-restart cycle.
+
+## Doing the same from a script
+
+Server scripts have the same operations on `mp.resources`, so one resource can manage others: an admin command that restarts the gamemode, or a file watcher that [reloads a resource when you save](/guides/recipes/hotreload).
+
+| What | JS | Lua |
+| :--- | :--- | :--- |
+| Rescan the `resources` folder | `mp.resources.refresh()` | `mp.resources.refreshAll()` |
+| Start | `mp.resources.start(name)` | `mp.resources.start(name)` |
+| Stop | `mp.resources.stop(name)` | `mp.resources.stop(name)` |
+| Restart | `mp.resources.restart(name)` | `mp.resources.restart(name)` |
+| Current state | `mp.resources.getState(name)` | `mp.resources.getState(name)` |
+| Name of the resource the script belongs to | `mp.resources.getCurrentName()` | `mp.resources.getCurrentName()` |
+
+Note the one naming difference: the rescan is `refresh()` in JavaScript and `refreshAll()` in Lua.
+
+`getState` returns a number: `0` for a name the server doesn't know, `1` starting, `2` running, `3` stopped (also for a resource that is on disk but was never started). [Managing resources from scripts](/guides/server/managing-resources/) covers `mp.resources` in depth.
+
+### Example: a `reload` command
+
+This adds a console command that restarts a resource by name, and refuses names that are not running so that a typo doesn't go unnoticed. Put it in a small admin resource of its own (called `admin_tools` below) rather than in the gamemode it is meant to restart.
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+    <TabItem label="JS">
+        ```js title="server.js"
+        const RESOURCE_RUNNING = 2;
+
+        mp.commands.add('reload', (player, args) => {
+          // Only the server console may restart resources.
+          const fromConsole = !player || player.id === 0;
+          if (!fromConsole) {
+            return;
+          }
+
+          const resourceName = args[0];
+          if (!resourceName) {
+            console.log('Usage: reload <resourceName>');
+            return;
+          }
+
+          if (mp.resources.getState(resourceName) !== RESOURCE_RUNNING) {
+            console.log(`${resourceName} is not running.`);
+            return;
+          }
+
+          mp.resources.restart(resourceName);
+        });
+
+        // Fires for every resource that starts, including this one.
+        mp.events.on('anyResourceStart', (resourceName) => {
+          console.log(`Started: ${resourceName}`);
+        });
+        ```
+    </TabItem>
+    <TabItem label="Lua">
+        ```lua title="server.lua"
+        local RESOURCE_RUNNING = 2
+
+        mp.commands.add('reload', function(player, args)
+          -- Only the server console may restart resources.
+          local fromConsole = player == 0
+          if not fromConsole then
+            return
+          end
+
+          local resourceName = args[1]
+          if not resourceName then
+            print('Usage: reload <resourceName>')
+            return
+          end
+
+          if mp.resources.getState(resourceName) ~= RESOURCE_RUNNING then
+            print(string.format("%s is not running.", resourceName))
+            return
+          end
+
+          mp.resources.restart(resourceName)
+        end)
+
+        -- Fires for every resource that starts, including this one.
+        mp.events.add('anyResourceStart', function(resourceName)
+          print(string.format("Started: %s", resourceName))
+        end)
+        ```
+    </TabItem>
+</Tabs>
+
+Typed in the server console:
+
+```ansi
+> reload hello_world
+[38;2;179;133;0m[00:00:00] [resources][0m Stopped resource hello_world
+[38;2;179;133;0m[00:00:00] [hello_world][0m Hello World from CyberMP Server!
+[38;2;179;133;0m[00:00:00] [admin_tools][0m Started: hello_world
+[38;2;179;133;0m[00:00:00] [resources][0m Loaded resource hello_world
+> reload helo_world
+[38;2;179;133;0m[00:00:00] [admin_tools][0m helo_world is not running.
+```
+
+[Creating Commands](/guides/server/commands/) explains the `fromConsole` check. The official [hotreload resource](https://github.com/Cyber-MP/CyberMP-Freeroam/tree/main/resources/hotreload) is a complete example of one resource restarting others.
+
+A resource can also react when it, or another resource, starts or stops, with the `resourceStart`, `resourceStop`, `anyResourceStart` and `anyResourceStop` events. See the [server events guide](/guides/server/events).

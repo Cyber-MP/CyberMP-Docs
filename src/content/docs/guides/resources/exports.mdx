@@ -1,113 +1,105 @@
 ---
 title: Resource Exports
-description: Learn how to expose functions to other resources and invoke external routines using mp.exports in JavaScript and Lua.
+description: Share functions between resources with mp.exports, in JavaScript and Lua, and know where exports are available.
 ---
 
 import { Tabs, TabItem } from '@astrojs/starlight/components';
 import { SCRIPT_LANG_TAB_SYNC_KEY } from '../../../../lib/const';
 
-The resource exports system (`mp.exports`) manages cross-resource execution pipelines. It allows one resource to expose reusable functions (such as notifications, UI helpers, moderation utilities, or math libraries) so that other resources can invoke them directly without duplicating code.
+An export is a function that one resource makes available to the others. If your `notifications` resource knows how to show a notification, it can export that function, and your gamemode can call it directly instead of copying the code.
 
 For complete type declarations, see the [`MpExports`](/reference/client/api/global/mpexports/), [`MpCreateExport`](/reference/client/api/global/mpcreateexport/), and [`MpExternalExports`](/reference/client/api/global/mpexternalexports/) reference pages.
 
----
+:::caution[Where exports work]
+`mp.exports` is available in **client scripts** (JavaScript and Lua) and in **server-side Lua**. In the current server build (v4.0.4-beta.1) it is **not** available in server-side JavaScript: `mp.exports` is `undefined` there. To share code between server JS resources, emit a custom event instead: `mp.events.emit` reaches the `mp.events.on` handlers of every server resource (see [server events](/guides/server/events)).
+:::
 
-## The Dual-Purpose Pattern
+## One name, two uses
 
-The `mp.exports` interface functions in two distinct ways depending on how it is accessed:
+`mp.exports` does two different things depending on how you use it:
 
-1. **Invoked as a function**: Registers a public export in the current resource:
+1. **Called as a function**, it registers an export in the current resource:
    ```js
    mp.exports('exportName', callback);
    ```
-2. **Accessed as a nested dictionary**: Calls an exported function from another started resource:
+2. **Read as an object**, it gives you the exports of another resource, by resource name:
    ```js
    mp.exports.resourceName.exportName(...args);
    ```
 
----
+## Registering an export
 
-## Registering an Export
-
-In the resource that provides the functionality (for example, a resource named `notifications`), register public functions using `mp.exports(name, callback)`:
+In the resource that provides the function (here a resource named `notifications`), register it with `mp.exports(name, callback)`. Whatever the callback returns is handed back to the caller.
 
 <Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
   <TabItem label="JS">
     ```js title="resources/notifications/client.js"
-    // Synchronous export
+    let shownCount = 0;
+
     mp.exports('showNotification', (title, message) => {
+      shownCount = shownCount + 1;
       console.log(`[Notification] ${title}: ${message}`);
-      // Custom HUD / CEF dispatch logic here
+      // Forward to your HUD / CEF page here
     });
 
-    // Asynchronous export (returns a Promise)
-    mp.exports('fetchPlayerStats', async (playerId) => {
-      const stats = await loadStatsFromCache(playerId);
-      return stats;
-    });
+    // An export can return a value
+    mp.exports('getShownCount', () => shownCount);
     ```
   </TabItem>
   <TabItem label="Lua">
     ```lua title="resources/notifications/client.lua"
-    -- Synchronous export
+    local shownCount = 0
+
     mp.exports('showNotification', function(title, message)
-      print(string.format("[Notification] %s: %s", title, message))
-      -- Custom HUD / CEF dispatch logic here
+      shownCount = shownCount + 1
+      print(string.format('[Notification] %s: %s', title, message))
+      -- Forward to your HUD / CEF page here
     end)
 
-    -- Return value export
-    mp.exports('calculateDistance', function(posA, posB)
-      local dx = posA[1] - posB[1]
-      local dy = posA[2] - posB[2]
-      local dz = posA[3] - posB[3]
-      return math.sqrt(dx * dx + dy * dy + dz * dz)
+    -- An export can return a value
+    mp.exports('getShownCount', function()
+      return shownCount
     end)
     ```
   </TabItem>
 </Tabs>
 
----
+## Calling an export from another resource
 
-## Invoking an Export from Another Resource
-
-In any other started resource (for example, `gamemode`), access the provider's folder name on `mp.exports` and invoke the exported function:
+In any other running resource (here `gamemode`), read the provider's folder name on `mp.exports` and call the function. In Lua, call it with `:` and not `.`.
 
 <Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
   <TabItem label="JS">
     ```js title="resources/gamemode/client.js"
-    // Call the exported routine: mp.exports.<resourceName>.<functionName>(...args)
+    // mp.exports.<resourceName>.<exportName>(...args)
     mp.exports.notifications.showNotification(
       'Contract Completed',
       'You earned 5,000 eddies.'
     );
 
-    // Invoking an asynchronous export
-    async function checkStats() {
-      const stats = await mp.exports.notifications.fetchPlayerStats(1);
-      console.log('Player stats:', stats);
-    }
+    const count = mp.exports.notifications.getShownCount();
+    console.log('Notifications shown:', count);
     ```
   </TabItem>
   <TabItem label="Lua">
     ```lua title="resources/gamemode/client.lua"
-    -- Call the exported routine: mp.exports.<resourceName>:<functionName>(...args)
+    -- mp.exports.<resourceName>:<exportName>(...args)
     mp.exports.notifications:showNotification(
-      "Contract Completed",
-      "You earned 5,000 eddies."
+      'Contract Completed',
+      'You earned 5,000 eddies.'
     )
 
-    -- Invoking an export that computes a value
-    local dist = mp.exports.notifications:calculateDistance({0, 0, 0}, {100, 100, 0})
-    print("Computed distance:", dist)
+    local count = mp.exports.notifications:getShownCount()
+    print('Notifications shown:', count)
     ```
   </TabItem>
 </Tabs>
 
----
+In JavaScript an export callback may be `async`. The call then returns a Promise, so `await` it on the calling side.
 
-## Error Handling & Optional Dependencies
+## Error handling and optional dependencies
 
-If a resource attempts to call an export on a resource that is not started or that did not register that export name, the runtime throws an error. Wrap optional dependencies in guard checks:
+Calling an export of a resource that isn't running, or an export name that was never registered, throws an error (in server-side Lua it reads `Cant find <exportName> in <resourceName>`). If the other resource is optional, guard the call:
 
 <Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
   <TabItem label="JS">
@@ -116,7 +108,7 @@ If a resource attempts to call an export on a resource that is not started or th
       try {
         mp.exports.notifications.showNotification(title, message);
       } catch (err) {
-        // notifications resource is missing or stopped; fallback to console
+        // notifications resource is missing or stopped; fall back to the console
         console.warn(`[Fallback] ${title}: ${message}`);
       }
     }
@@ -130,40 +122,80 @@ If a resource attempts to call an export on a resource that is not started or th
       end)
 
       if not success then
-        -- notifications resource is missing or stopped; fallback to console
-        print(string.format("[Fallback] %s: %s", title, message))
+        -- notifications resource is missing or stopped; fall back to the console
+        print(string.format('[Fallback] %s: %s', title, message))
       end
     end
     ```
   </TabItem>
 </Tabs>
 
----
+## Load order and lifecycle
 
-## Load Order & Lifecycle
-
-Resources listed in `server.toml` initialize in sequential order. If resource `B` invokes an export from resource `A` immediately at top-level script evaluation, resource `A` must be listed **before** `B`:
+An export exists only after the providing resource has run its `mp.exports(...)` call. Resources listed in `server.toml` start in order, so if resource `B` calls an export of resource `A` right away at the top of its script, `A` must be listed **before** `B`:
 
 ```toml title="server.toml"
-# Ensure dependency providers are listed before consumer resources
+# Providers first, then the resources that use them
 resources = [
   "notifications",
   "gamemode"
 ]
 ```
 
-To programmatically verify whether a dependency resource is running before calling its exports, inspect its state via `mp.resources.getState`:
+To check whether the provider is running before you call it, use `mp.resources.getState`:
 
-```js
-// 2 = EResourceState.Started
-if (mp.resources.getState('notifications') === 2) {
-  mp.exports.notifications.showNotification('System', 'Online');
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js
+    // 2 = EResourceState.Running
+    if (mp.resources.getState('notifications') === 2) {
+      mp.exports.notifications.showNotification('System', 'Online');
+    }
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua
+    -- 2 = running
+    if mp.resources.getState('notifications') == 2 then
+      mp.exports.notifications:showNotification('System', 'Online')
+    end
+    ```
+  </TabItem>
+</Tabs>
+
+The states are `0` not running (what you get for a name the server doesn't know), `1` starting, `2` running and `3` stopped. A resource sees *itself* as `1` while its script is being loaded, so `2` really means "has finished loading".
+
+## Server-side JavaScript: use events instead
+
+Since `mp.exports` does not exist in server-side JavaScript, server JS resources share behaviour through custom events. The resource that owns the feature listens; the others emit.
+
+```js title="resources/economy/server.js"
+function addMoney(playerId, amount) {
+  if (!mp.players.exists(playerId)) return;
+
+  const player = mp.players.at(playerId);
+  const currentMoney = player.getMeta('money') || 0;
+  player.setMeta('money', currentMoney + amount, true);
+}
+
+// Other resources ask for a payment by emitting this event.
+mp.events.on('economy:addMoney', addMoney);
+```
+
+```js title="resources/gamemode/server.js"
+function rewardContract(player) {
+  mp.events.emit('economy:addMoney', player.id, 2500);
 }
 ```
 
----
+Two differences from a real export:
 
-## Scope & Network Boundaries
+- Pass IDs and plain data, not player or vehicle objects. The event may be handled by a resource written in the other language.
+- An event has no return value: `mp.events.emit` returns nothing. To *read* something from another resource, have the owner publish it with [metadata](/guides/server/meta/) (as `money` is here) and read it from there.
 
-- **Local Execution Scope**: Exports are scoped strictly within the same execution context. Client exports can only be called by other client scripts; server exports can only be called by other server scripts. Exports do not cross the network boundary.
-- **Client-Server Communication**: To transfer data or invoke actions between the client and server, use [network events](/guides/client/events#communicating-with-the-server) or [request-response RPC](/guides/recipes/rpc).
+If nothing listens for the event, for example because `economy` is stopped, `emit` does nothing and raises no error.
+
+## Scope and network boundaries
+
+- **Exports stay on their side.** Client exports can only be called by other client scripts on the same machine, and server exports only by other server scripts. An export call never travels over the network.
+- **To talk between client and server**, use [network events](/guides/client/events#communicating-with-the-server) or [request-response RPC](/guides/recipes/rpc).

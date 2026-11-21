@@ -1,13 +1,15 @@
 ---
 title: Getting started
-description: .
+description: Download the CyberMP server, write its server.toml, start it with Docker or the binary and check that it is reachable.
 ---
 import { FileTree, Tabs, TabItem, Steps } from '@astrojs/starlight/components';
 
-There are two ways to run CyberMP Server:
+This page takes you from nothing to a running, empty CyberMP server. There are two ways to run it:
 
-- In Docker
-- Binary
+- **Docker**: nothing to install besides Docker itself, and the same setup works on any host.
+- **Binary**: a plain executable for Windows or Linux. Handy for local development.
+
+Pick one and stay on the same tab through the page.
 
 <Steps>
 1. ## Getting files
@@ -27,11 +29,17 @@ There are two ways to run CyberMP Server:
     </Tabs>
 
 2. ## Setup
+
+    The server needs two things next to it:
+
+    - a `resources` folder. This is where your scripts will live, one subfolder per [resource](/guides/resources/introduction). It can stay empty for now.
+    - a `server.toml` file. This is the server configuration: which address to listen on, how many players to accept and which resources to load.
+
     <Tabs syncKey="execute-method">
         <TabItem label="Docker">
             - Create a project directory on your host machine.
             - Inside that directory, create a `resources` folder.
-            - Create a `server.toml` file
+            - Create a `server.toml` file.
 
             The result should look something like this:
             <FileTree>
@@ -41,13 +49,13 @@ There are two ways to run CyberMP Server:
             </FileTree>
         </TabItem>
         <TabItem label="Binary">
-            The server requires a specific directory layout to load resources and configuration. Create a `resources` folder and a `server.toml` file in the root directory.
+            Create the `resources` folder and the `server.toml` file in the directory you extracted the archive to.
 
             The result should look something like this:
             <FileTree>
                 - bin
                     - ...
-                - cybermp
+                - data
                     - ...
                 - resources
                     - ...
@@ -59,16 +67,81 @@ There are two ways to run CyberMP Server:
 
     #### Configure server
 
-    Copy the [Example Configuration](#configuration-example) into your `server.toml`.
+    Put this into your `server.toml`:
 
-    For advanced options, see the [Full Configuration Reference](/reference/server/configuration).
+    ```toml title="server.toml"
+    #:schema https://schemas.cyber.mp/server/schema.json
+
+    # Address and port the server listens on. 0.0.0.0 means "every network interface".
+    tcp_host = "0.0.0.0:2077"
+    udp_host = "0.0.0.0:2077"
+
+    # Address players use to reach the server. Replace it with your public IP
+    # or domain before you let other people in.
+    connection_host_addr = "127.0.0.1:2077"
+
+    max_players = 32
+    private_token = ""
+
+    # Names of the resource folders to load, in order. Empty for now.
+    resources = []
+
+    disable_voice = false
+    cef_debug = false
+    ep2_dlc_enabled = false
+    duplicatePlayers = 50
+
+    # Rules of the built-in gameplay: nametags, death handling, what is
+    # switched off compared to the singleplayer game.
+    [core]
+    nametags = true
+    death_autostand = true
+    disable_switch_seats = true
+    default_gameplay_restrictions = true
+    disable_drop_points = true
+    disable_location_dependent_quests = true
+    disable_garage = true
+    files = [
+      "final.redscript",
+      "new_gamedef.archive",
+      "basegame_no_intro_videos.archive",
+      "CyberMP_PlayerModel.archive",
+      "flatline2dlods.archive",
+      "ReducedLoot.archive",
+      "ReducedLoot.archive.xl",
+      "GenderAbuseWorld.archive",
+      "ArchiveXL"
+    ]
+
+    # Game behaviours the server takes over from the singleplayer game.
+    [core.overrides]
+    change_player_on_death_logic = true
+    disable_side_quests_notifications = true
+    change_vehicles_logic = true
+    disable_player_inventory_encumbrance = true
+    player_extended_customization = true
+    disable_time_skip = true
+    disable_turrets = true
+    disable_surveillance_cameras = true
+    disable_vending_machines = true
+    disable_generic_devices = true
+    disable_no_combat = true
+    ```
+
+    This is a complete configuration you can keep. The `[core]` and `[core.overrides]` sections matter most: they turn the singleplayer game into something that works with several players (nametags, death and respawn handling, no quests or vending machines getting in the way). Leave them as they are until you know which rule you want to change; every key is explained in the [configuration reference](/reference/server/configuration).
+
+    :::note
+    The server uses port `2077` on both **TCP and UDP**. If players connect from another machine, open both in your firewall (and forward both on your router if you host from home).
+    :::
 
 3. ## Run
     <Tabs syncKey="execute-method">
         <TabItem label="Docker">
+            Both variants mount your `server.toml` and `resources` folder into the container and publish port `2077` for TCP and UDP.
+
             <Tabs>
               <TabItem label="Docker run">
-                  Open terminal and run:
+                  Open a terminal in your project directory and run:
                   ```shell
                   docker run -it \
                   --mount type=bind,source="$(pwd)"/server.toml,target=/cybermp/server.toml \
@@ -80,7 +153,7 @@ There are two ways to run CyberMP Server:
               </TabItem>
               <TabItem label="Docker compose">
 
-                  Create a `docker-compose.yml` file with following content:
+                  Create a `docker-compose.yml` file with the following content:
                   ```yaml title="docker-compose.yml"
                   services:
                     server:
@@ -96,7 +169,7 @@ There are two ways to run CyberMP Server:
                         - 2077:2077/udp
                   ```
 
-                  Open terminal and run:
+                  Open a terminal in your project directory and run:
                   ```shell
                   docker compose up
                   ```
@@ -121,7 +194,7 @@ There are two ways to run CyberMP Server:
 
             <br/>*/}
 
-            Open your terminal in the server root directory and run the command for your OS:
+            Open a terminal in the server root directory and run the command for your OS. The server looks for `server.toml` and `resources` in the directory you start it from.
 
             <Tabs>
                 <TabItem label="Windows">
@@ -139,43 +212,27 @@ There are two ways to run CyberMP Server:
     </Tabs>
 
 4. ## Verify
-    Check your terminal output. A successful start will display the initialization logs:
+    Check your terminal output. A successful start looks like this:
     ```ansi
-    [38;2;179;133;0m[00:00:00] [Server][0m CyberMP server starting...
-    [38;2;179;133;0m[00:00:00] [Server][0m Resources initializing...
-    >
+    [38;2;179;133;0m[00:00:00] [server][0m CyberMP server starting...
+    [38;2;179;133;0m[00:00:00] [server][0m Resources initializing...
+    [38;2;179;133;0m[00:00:00] [resources][0m Loaded resource cybermp_core
+    [38;2;179;133;0m[00:00:00] [server][0m Succesfully binded host 0.0.0.0:2077
+    [38;2;179;133;0m[00:00:00] [server][0m Server started
     ```
 
-    To confirm the server is reachable, visit http://127.0.0.1:2077 in your browser. It should return the server version string.
+    `cybermp_core` is a built-in resource that ships with the server and is always loaded first. Your own resources will show up after it.
 
-    Congrats! You are now running CyberMP Server!
+    The terminal is now the [server console](/reference/server/console): you can type commands into it, for example `version` or `quit`.
+
+    To confirm the server is reachable, open http://127.0.0.1:2077 in your browser. It answers with a small JSON document that contains the server version:
+
+    ```json
+    {"version":"server v4.0.4-beta.1"}
+    ```
 
 </Steps>
 
-:::note
-## Configuration example
+## What's next
 
-```toml title="server.toml"
-tcp_host = "0.0.0.0:2077"
-udp_host = "0.0.0.0:2077"
-
-max_players = 20
-
-resources = []
-
-disable_voice = false
-
-[core]
-files = [
-  "final.redscript",
-  "new_gamedef.archive",
-  "basegame_no_intro_videos.archive",
-  "CyberMP_PlayerModel.archive",
-  "flatline2dlods.archive",
-  "ReducedLoot.archive",
-  "ReducedLoot.archive.xl",
-  "GenderAbuseWorld.archive",
-  "ArchiveXL",
-]
-```
-:::
+The server is running, but it doesn't do anything yet. Continue with [Creating resources](/guides/resources/creating-resource) to load your first script.

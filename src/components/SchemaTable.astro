@@ -1,0 +1,57 @@
+---
+// A reference table generated from one of the CyberMP JSON schemas.
+//
+//   <SchemaTable schema="server" />                      root keys of server.toml
+//   <SchemaTable schema="server" section="core" />       the [core] table
+//   <SchemaTable schema="resource" notes={{ file: 'Text shown instead of the schema description.' }} />
+//
+// Keys, types and "required" always come from the schema.
+// `notes` replaces the description of the keys you name, for the cases where
+// the page can explain a setting better than the one-line schema text.
+// `defaults` fills in a default the schema does not declare; when the schema
+// does declare one, the schema wins.
+import { findSection, listSettings, schemas } from '../lib/schema';
+
+interface Props {
+  schema: 'server' | 'resource';
+  section?: string;
+  notes?: Record<string, string>;
+  defaults?: Record<string, string>;
+}
+
+const { schema, section = '', notes = {}, defaults = {} } = Astro.props;
+
+const settings = listSettings(findSection(schemas[schema], section));
+
+// Descriptions are plain text with two bits of Markdown: `code` and [links](/somewhere).
+function toHtml(text: string): string {
+  const escaped = text.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
+  const withCode = escaped.replace(/`([^`]+)`/g, '<code>$1</code>');
+  return withCode.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
+}
+---
+
+<table>
+  <thead>
+    <tr>
+      <th>Key</th>
+      <th>Type</th>
+      <th>Required</th>
+      <th>Default</th>
+      <th>Description</th>
+    </tr>
+  </thead>
+  <tbody>
+    {
+      settings.map((setting) => (
+        <tr>
+          <td><code>{setting.key}</code></td>
+          <td><code>{setting.type}</code></td>
+          <td>{setting.required ? <strong>Yes</strong> : 'No'}</td>
+          <td><code>{setting.defaultValue || defaults[setting.key] || '—'}</code></td>
+          <td set:html={toHtml(notes[setting.key] ?? setting.description)} />
+        </tr>
+      ))
+    }
+  </tbody>
+</table>
