@@ -1,79 +1,94 @@
 ---
 title: Working with Hashes
-description: Learn how to generate and handle REDengine CName, TweakDBID, and ResRef hashes for vehicles, items, and world entities.
+description: Turn game names into the TweakDBID, CName and ResRef hashes the server API expects, and compare hashes without tripping over number and bigint.
 ---
 
 import { Tabs, TabItem } from '@astrojs/starlight/components';
 import { SCRIPT_LANG_TAB_SYNC_KEY } from '../../../../lib/const';
 
-In Cyberpunk 2077's REDengine, internal resources, items, vehicles, bones, and symbolic names are identified by 64-bit numerical hashes rather than plain text strings. CyberMP exposes the `mp.hashes` helper utility to generate these hashes at runtime.
+Cyberpunk 2077's engine (REDengine) does not refer to a vehicle as `'Vehicle.v_sport1_quadra_turbo_r_player'`. It uses a number computed from that text: a hash. The server API works the same way, so whenever you spawn a vehicle, a ped, an object or a pickup, you pass hashes, and events hand hashes back to you. `mp.hashes` converts names into hashes.
 
-In this guide, you will learn the different hash types, how to generate them, and where they are used across the server API in JavaScript and Lua.
+## The three kinds of hash
 
----
+The engine has three kinds of hash. They are computed differently, so you have to use the right helper for what you are naming:
 
-## Hash Types in REDengine
+| Kind | What it names | Example input | Used for |
+| :--- | :--- | :--- | :--- |
+| **TweakDBID** | A record in TweakDB, the game's database of vehicles, characters, items and their stats. | `Vehicle.v_sport1_quadra_turbo_r_player` | `model` of vehicles, peds and pickups; weapon hashes in events. |
+| **CName** | An engine name. | `quadra_turbo_r__basic_player_01` | `appearance` of vehicles and peds. |
+| **ResRef** | The path of a file inside the game archives. | `base\gameplay\…\w300_h250_mall_metal.ent` | `model` of objects. |
 
-| Hash Type | Helper Function | Common Use Cases |
-| :--- | :--- | :--- |
-| **TweakDBID** | `mp.hashes.tweakdbid(path)` | Vehicles, weapons, armor items, characters, perks, stat modifiers. |
-| **CName** | `mp.hashes.cname(name)` | Entity appearances, body components, bone names, animation flags. |
-| **ResRef** | `mp.hashes.resref(path)` | File resource paths (`.ent`, `.mesh`, `.app`, `.csv`). |
+:::caution
+Hashing a name with the wrong helper gives you a valid-looking number that means nothing to the game. A vehicle record hashed as a CName will not spawn that vehicle.
+:::
 
----
-
-## Generating Hashes
-
-Generate hashes directly in your server scripts:
+## Generating hashes
 
 <Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
   <TabItem label="JS">
     ```js title="server.js"
-    // 1. TweakDBID: Item and vehicle definitions
+    // TweakDBID: records (vehicles, characters, items)
     const quadraHash = mp.hashes.tweakdbid('Vehicle.v_sport1_quadra_turbo_r_player');
     const katanaHash = mp.hashes.tweakdbid('Items.Preset_Katana_Military');
 
-    // 2. CName: Appearance and component names
+    // CName: appearance names
     const appearanceHash = mp.hashes.cname('quadra_turbo_r__basic_player_01');
 
-    // 3. ResRef: Game engine file resources
+    // ResRef: file paths (escape the backslashes)
     const barrierResRef = mp.hashes.resref('base\\gameplay\\devices\\doors\\gates\\appearances\\w300_h250_mall_metal.ent');
     ```
   </TabItem>
   <TabItem label="Lua">
     ```lua title="server.lua"
-    -- 1. TweakDBID: Item and vehicle definitions
+    -- TweakDBID: records (vehicles, characters, items)
     local quadraHash = tonumber(mp.hashes.toTweakdbid('Vehicle.v_sport1_quadra_turbo_r_player'), 10)
     local katanaHash = tonumber(mp.hashes.toTweakdbid('Items.Preset_Katana_Military'), 10)
 
-    -- 2. CName: Appearance and component names
+    -- CName: appearance names
     local appearanceHash = tonumber(mp.hashes.toCname('quadra_turbo_r__basic_player_01'), 10)
 
-    -- 3. ResRef: Game engine file resources
+    -- ResRef: file paths (escape the backslashes)
     local barrierResRef = tonumber(mp.hashes.toResref('base\\gameplay\\devices\\doors\\gates\\appearances\\w300_h250_mall_metal.ent'), 10)
     ```
   </TabItem>
 </Tabs>
 
----
+The helpers have different names and return types in the two languages:
 
-## Practical Applications
+| Kind | JS | JS returns | Lua | Lua returns |
+| :--- | :--- | :--- | :--- | :--- |
+| TweakDBID | `mp.hashes.tweakdbid(name)` | `number` | `mp.hashes.toTweakdbid(name)` | decimal string |
+| CName | `mp.hashes.cname(name)` | `bigint` | `mp.hashes.toCname(name)` | decimal string |
+| ResRef | `mp.hashes.resref(path)` | `bigint` | `mp.hashes.toResref(path)` | decimal string |
 
-### 1. Spawning Vehicles & Peds
+- **JS:** CName and ResRef hashes are 64-bit values, too large to fit in a JS `number` without losing digits, which is why they come back as `bigint`. You can pass any of the three straight to `create`; the difference matters when you [compare hashes](#comparing-hashes).
+- **Lua:** the helpers return the hash as text. Convert it with `tonumber(str, 10)` before passing it to `create` or any other API that expects a hash. The string itself is not accepted.
 
-Spawning vehicles and peds requires passing model and appearance hashes:
+The server only converts names to hashes. There is no server-side function to turn a hash back into its name, so if you need to print or log names, keep your own table of the names you use.
+
+:::caution[A typo still gives you a hash]
+Hashing is plain arithmetic on the text. The server does not look the name up in the game, so it cannot tell you that a name is wrong:
+
+- A misspelled or made-up name returns a perfectly normal hash. You only notice when nothing appears in the game.
+- Upper and lower case matter. `Vehicle.v_sport1_quadra_turbo_r_player` and `vehicle.V_sport1_quadra_turbo_r_player` give different hashes.
+- A ResRef path is hashed exactly as written. Use backslashes, as the game does; the same path with forward slashes gives a different hash.
+
+Copy names from a trusted source instead of typing them.
+:::
+
+## Using hashes
+
+### Spawning vehicles and peds
 
 <Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
   <TabItem label="JS">
     ```js title="server.js"
-    // Spawn a vehicle with specific model and skin
     const car = mp.vehicles.create({
       model: mp.hashes.tweakdbid('Vehicle.v_sport2_mizutani_shion_player'),
       appearance: mp.hashes.cname('mizutani_shion__basic_player_01'),
       position: [-1392.6, 1271.5, 123.0]
     });
 
-    // Spawn an NPC ped
     const npc = mp.peds.create({
       model: mp.hashes.tweakdbid('Character.Judy'),
       appearance: mp.hashes.cname('default'),
@@ -83,14 +98,12 @@ Spawning vehicles and peds requires passing model and appearance hashes:
   </TabItem>
   <TabItem label="Lua">
     ```lua title="server.lua"
-    -- Spawn a vehicle with specific model and skin
     local car = mp.vehicles.create({
       model = tonumber(mp.hashes.toTweakdbid('Vehicle.v_sport2_mizutani_shion_player'), 10),
       appearance = tonumber(mp.hashes.toCname('mizutani_shion__basic_player_01'), 10),
       position = vector3(-1392.6, 1271.5, 123.0)
     })
 
-    -- Spawn an NPC ped
     local npc = mp.peds.create({
       model = tonumber(mp.hashes.toTweakdbid('Character.Judy'), 10),
       appearance = tonumber(mp.hashes.toCname('default'), 10),
@@ -100,39 +113,188 @@ Spawning vehicles and peds requires passing model and appearance hashes:
   </TabItem>
 </Tabs>
 
-### 2. Identifying Weapons in Damage Events
+See [Working with Vehicles](/guides/server/vehicles/) and [World Entities](/guides/server/entities/) for the other options.
 
-When a player deals damage or fires a weapon, `data.weaponHash` contains the TweakDBID of the weapon used. You can compare this against known hashes to identify weapons or apply custom damage multipliers:
+### Example: a table of named vehicles
+
+Hash strings scattered through your code are hard to read and easy to mistype. Put the vehicles you use in one table, with a short name for each, and hash them once when the resource starts. The same table then answers two questions: "which hashes do I need to spawn a `shion`?" and "what is this vehicle called?".
 
 <Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
   <TabItem label="JS">
     ```js title="server.js"
+    const VEHICLES = [
+      {
+        name: 'quadra',
+        label: 'Quadra Turbo-R',
+        model: mp.hashes.tweakdbid('Vehicle.v_sport1_quadra_turbo_r_player'),
+        appearance: mp.hashes.cname('quadra_turbo_r__basic_player_01'),
+      },
+      {
+        name: 'shion',
+        label: 'Mizutani Shion',
+        model: mp.hashes.tweakdbid('Vehicle.v_sport2_mizutani_shion_player'),
+        appearance: mp.hashes.cname('mizutani_shion__basic_player_01'),
+      },
+      {
+        name: 'caliburn',
+        label: 'Rayfield Caliburn',
+        model: mp.hashes.tweakdbid('Vehicle.v_sport1_rayfield_caliburn_player'),
+        appearance: mp.hashes.cname('rayfield_caliburn__basic_player_01'),
+      },
+    ];
+
+    // Returns the table entry for a short name, or null when the name is unknown.
+    function findVehicleByName(name) {
+      for (const entry of VEHICLES) {
+        if (entry.name === name) {
+          return entry;
+        }
+      }
+      return null;
+    }
+
+    function spawnNamedVehicle(name, position) {
+      const entry = findVehicleByName(name);
+      if (!entry) {
+        return null;
+      }
+
+      return mp.vehicles.create({
+        model: entry.model,
+        appearance: entry.appearance,
+        position: position,
+      });
+    }
+
+    // The other direction: from an existing vehicle back to a readable name.
+    function getVehicleLabel(vehicle) {
+      for (const entry of VEHICLES) {
+        if (entry.model === vehicle.model) {
+          return entry.label;
+        }
+      }
+      return 'Unknown vehicle';
+    }
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="server.lua"
+    local VEHICLES = {
+      {
+        name = 'quadra',
+        label = 'Quadra Turbo-R',
+        model = tonumber(mp.hashes.toTweakdbid('Vehicle.v_sport1_quadra_turbo_r_player'), 10),
+        appearance = tonumber(mp.hashes.toCname('quadra_turbo_r__basic_player_01'), 10),
+      },
+      {
+        name = 'shion',
+        label = 'Mizutani Shion',
+        model = tonumber(mp.hashes.toTweakdbid('Vehicle.v_sport2_mizutani_shion_player'), 10),
+        appearance = tonumber(mp.hashes.toCname('mizutani_shion__basic_player_01'), 10),
+      },
+      {
+        name = 'caliburn',
+        label = 'Rayfield Caliburn',
+        model = tonumber(mp.hashes.toTweakdbid('Vehicle.v_sport1_rayfield_caliburn_player'), 10),
+        appearance = tonumber(mp.hashes.toCname('rayfield_caliburn__basic_player_01'), 10),
+      },
+    }
+
+    -- Returns the table entry for a short name, or nil when the name is unknown.
+    local function findVehicleByName(name)
+      for _, entry in ipairs(VEHICLES) do
+        if entry.name == name then
+          return entry
+        end
+      end
+      return nil
+    end
+
+    function spawnNamedVehicle(name, position)
+      local entry = findVehicleByName(name)
+      if not entry then
+        return nil
+      end
+
+      return mp.vehicles.create({
+        model = entry.model,
+        appearance = entry.appearance,
+        position = position,
+      })
+    end
+
+    -- The other direction: from an existing vehicle back to a readable name.
+    function getVehicleLabel(vehicle)
+      for _, entry in ipairs(VEHICLES) do
+        if entry.model == vehicle.model then
+          return entry.label
+        end
+      end
+      return 'Unknown vehicle'
+    end
+    ```
+  </TabItem>
+</Tabs>
+
+`spawnNamedVehicle('shion', [-1392.6, 1271.5, 123.0])` (`vector3(...)` in Lua) creates the car, and `spawnNamedVehicle('typo', ...)` returns `null` / `nil` instead of creating an invisible vehicle. That makes the table a ready-made allow-list for a spawn command: players can only ask for names you listed. The official [Freeroam gamemode](https://github.com/Cyber-MP/CyberMP-Freeroam) keeps its vehicle list the same way.
+
+`getVehicleLabel` compares `model`, which is safe in both languages. Don't do the same with `appearance` in JS, for the reason explained next.
+
+### Comparing hashes
+
+The server hands hashes back to you as well: `data.weaponHash` in the `damage` event, `data.pickupHash` in pickup events, `vehicle.model` and so on. To find out *which* weapon or vehicle it is, compare the value with a hash you computed yourself.
+
+In JS there are two traps.
+
+**Values read back from an entity.** `vehicle.model` and `ped.model` (TweakDBIDs) come back exact and compare fine. The 64-bit ones do not: `vehicle.appearance`, `ped.appearance` (CNames) and `object.model` (a ResRef) come back as a rounded `number`, which never equals the `bigint` you got from `mp.hashes.cname` or `mp.hashes.resref`. No conversion fixes that, because the digits are already lost. If you need to know an entity's appearance or an object's model later, remember it yourself, for example in [metadata](/guides/server/meta/) or in a table keyed by entity ID. Lua does not have this problem.
+
+**`number` against `bigint`.** A hash can be a `number` or a `bigint` (the typings call this `GameHash = bigint | number`), and `===` between a `number` and a `bigint` is always `false`, even when they hold the same value:
+
+```js
+5 === 5n; // false
+```
+
+So don't compare hashes with a bare `===`. Convert both sides to `bigint` first:
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="server.js"
+    // Works whatever mix of number and bigint you give it.
+    function sameHash(hashA, hashB) {
+      return BigInt(hashA) === BigInt(hashB);
+    }
+
     const WEAPON_KATANA = mp.hashes.tweakdbid('Items.Preset_Katana_Military');
 
-    mp.events.on('damage', (victimId, data) => {
-      if (data.weaponHash === WEAPON_KATANA) {
-        console.log(`Victim #${victimId} was struck by a military katana!`);
+    // In `damage`, the first argument is the attacker; the victim is data.victimId
+    mp.events.on('damage', (attackerId, data) => {
+      if (sameHash(data.weaponHash, WEAPON_KATANA)) {
+        console.log(`Player ${data.victimId} was struck with a military katana by player ${attackerId}`);
       }
     });
     ```
+
+    Convert towards `bigint`, not towards `number`: `Number(hash)` rounds large 64-bit hashes, and two different hashes can end up equal.
   </TabItem>
   <TabItem label="Lua">
     ```lua title="server.lua"
     local WEAPON_KATANA = tonumber(mp.hashes.toTweakdbid('Items.Preset_Katana_Military'), 10)
 
-    mp.events.add('damage', function(playerId, data)
+    -- In `damage`, the first argument is the attacker; the victim is data.victimId
+    mp.events.add('damage', function(attackerId, data)
       if data.weaponHash == WEAPON_KATANA then
-        print(string.format("Victim #%s was struck by a military katana!", data.victimId))
+        print(string.format("Player %s was struck with a military katana by player %s", data.victimId, attackerId))
       end
     end)
     ```
   </TabItem>
 </Tabs>
 
----
-
-## Best Practices
-
 :::tip
-Pre-compute and store frequently used hashes in constants or configuration tables at resource startup to avoid redundant hashing calculations during gameplay loops or combat events.
+Hash the names you need once, when your resource starts, and keep the results in constants (as `WEAPON_KATANA` above). There is no reason to hash the same string again on every damage event.
 :::
+
+## What next
+
+- [`MpHashes`](/reference/server/api/global/mphashes/): API reference (JS); [Hashes](/reference/lua/server/#hashes) in the Lua reference.
+- [Working with Vehicles](/guides/server/vehicles/) and [World Entities](/guides/server/entities/): where most hashes end up.

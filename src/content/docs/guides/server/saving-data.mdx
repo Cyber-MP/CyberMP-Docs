@@ -1,0 +1,399 @@
+---
+title: Saving data
+description: Keep player data across server restarts with a small JSON file store in JavaScript or Lua, know when to save, and hash passwords before you store them.
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import { SCRIPT_LANG_TAB_SYNC_KEY } from '../../../../lib/const';
+
+Everything your script keeps in variables is gone when the resource restarts or the server shuts down. Money, playtime, bans, accounts: if it should still be there tomorrow, you have to write it somewhere that outlives the server process. CyberMP does not do this for you and has no built-in database.
+
+The simplest place is a file on disk. This page builds a small JSON file store, explains when to save, shows how to store passwords safely, and tells you when a file is no longer enough.
+
+## Meta is not a save file
+
+[Metadata](/guides/server/meta/) looks like storage, because you set a value on a player or globally and read it back later. But meta lives in the server's memory:
+
+- Global meta survives a *resource* restart, because the server process keeps running.
+- Nothing survives a *server* restart.
+
+Use meta to share live state between resources and with clients. Use a file or a database for anything that has to last.
+
+## Where the file goes
+
+Relative paths start at the server's working directory, the folder you start the server from, which is the one that holds `server.toml` and `resources/`. So `saves/players.json` means a `saves` folder next to `server.toml`. This is the same in JS and Lua.
+
+Keep save files **outside** the `resources` folder:
+
+- A [hot-reload watcher](/guides/recipes/hotreload/) restarts a resource when a file in its folder changes. A save file in there would restart the resource on every save.
+- Files of a resource that match its `file` list are sent to every player. A save file must never end up there.
+
+## Files in JavaScript
+
+JS server scripts run on Node.js, and Node's built-in modules are available through `require`:
+
+```js title="reading-and-writing.js"
+const fs = require('node:fs');
+const path = require('node:path');
+
+const notePath = path.join('saves', 'note.txt');
+
+fs.mkdirSync('saves', { recursive: true }); // create the folder if it is missing
+fs.writeFileSync(notePath, 'Wake up, samurai.');
+
+const noteText = fs.readFileSync(notePath, 'utf8');
+console.log(noteText); // Wake up, samurai.
+```
+
+Things that differ from a normal Node program:
+
+- **`import` does not work in a `.js` server script.** The script is loaded as CommonJS, and `import fs from 'node:fs'` stops it with `SyntaxError: Cannot use import statement outside a module`. Use `require`. If you prefer `import`, name the file `.mjs` and point `server_script` at it; `import`, relative imports and top-level `await` work there. A project that compiles [TypeScript](/guides/recipes/typescript/) writes `import` in the source and lets the bundler produce a CommonJS file.
+- **`require('./something')` is relative to the resource folder**, so `require('./lib/helper.js')` loads `resources/<your resource>/lib/helper.js`. It also finds packages in a `node_modules` folder inside the resource folder.
+- **`__dirname` and `__filename` are not defined.** File paths are relative to the server folder, as described above.
+
+## Files in Lua
+
+Lua server scripts have the standard `io` and `os` libraries of Lua 5.3, so they can read and write files too:
+
+```lua title="reading-and-writing.lua"
+local notePath = 'saves/note.txt'
+
+-- io.open returns nil and an error text when it fails, for example when the folder is missing.
+local file, errorMessage = io.open(notePath, 'w')
+if file == nil then
+  print('Could not open the file: ' .. errorMessage)
+  return
+end
+
+file:write('Wake up, samurai.')
+file:close()
+
+file = io.open(notePath, 'r')
+local noteText = file:read('a') -- 'a' reads the whole file
+file:close()
+
+print(noteText) -- Wake up, samurai.
+```
+
+Two limits to know about:
+
+- **Lua can't create a folder.** `io.open` only creates the file. Create the `saves` folder by hand once, or the write fails with `No such file or directory`.
+- **`os.rename` does not replace an existing file on Windows.** It returns `nil` and `File exists`. Remove the target with `os.remove` first if you rename files around.
+
+For data, Lua scripts have a global `json` table: `json.encode(value)` turns a table into a string and `json.decode(text)` does the reverse. `json.decode` returns `nil` when the text is not valid JSON.
+
+:::note
+`mp.resources.loadFile` also reads files, but only reads, and it is meant for files that ship inside a resource, such as a config. See [Managing resources from scripts](/guides/server/managing-resources/#a-config-file-per-resource).
+:::
+
+## A small player store
+
+This store keeps one record per nickname with the number of visits and the date of the last one. It loads the file when the resource starts, saves whenever a record changes, and saves once more when the resource stops.
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="server.js"
+    const fs = require('node:fs');
+    const path = require('node:path');
+
+    const SAVE_FOLDER = 'saves';
+    const SAVE_FILE = path.join(SAVE_FOLDER, 'players.json');
+
+    // nickname -> { visits, lastSeen }
+    // A Map and not a plain object, because players choose their nickname
+    // and a name like "__proto__" breaks a plain object.
+    let playerRecords = new Map();
+
+    // Stays false when the file exists but can't be read. See savePlayerRecords.
+    let recordsLoaded = false;
+
+    function loadPlayerRecords() {
+      if (!fs.existsSync(SAVE_FILE)) {
+        console.log('No save file yet. Starting with an empty list.');
+        recordsLoaded = true;
+        return;
+      }
+
+      try {
+        const fileText = fs.readFileSync(SAVE_FILE, 'utf8');
+        const savedRecords = JSON.parse(fileText);
+
+        playerRecords = new Map(Object.entries(savedRecords));
+        recordsLoaded = true;
+        console.log(`Loaded ${playerRecords.size} player records.`);
+      } catch (error) {
+        console.log(`ERROR: ${SAVE_FILE} could not be read (${error.message}).`);
+        console.log('Nothing will be saved until you repair or remove that file.');
+      }
+    }
+
+    function savePlayerRecords() {
+      // If loading failed, the list in memory is empty.
+      // Saving it would wipe the file that somebody may still be able to repair.
+      if (!recordsLoaded) {
+        return;
+      }
+
+      const fileText = JSON.stringify(Object.fromEntries(playerRecords), null, 2);
+
+      fs.mkdirSync(SAVE_FOLDER, { recursive: true });
+      fs.writeFileSync(SAVE_FILE, fileText);
+    }
+
+    function recordVisit(nickname) {
+      let record = playerRecords.get(nickname);
+
+      if (record === undefined) {
+        record = { visits: 0, lastSeen: null };
+        playerRecords.set(nickname, record);
+      }
+
+      record.visits = record.visits + 1;
+      record.lastSeen = new Date().toISOString();
+
+      savePlayerRecords();
+    }
+
+    mp.events.on('resourceStart', loadPlayerRecords);
+    mp.events.on('resourceStop', savePlayerRecords);
+
+    mp.events.on('playerConnected', (playerId, tempId) => {
+      const player = mp.players.at(playerId);
+      recordVisit(player.nickname);
+    });
+
+    // Usage: visits <nickname>
+    mp.commands.add('visits', (player, args) => {
+      const nickname = args[0];
+      const record = playerRecords.get(nickname);
+
+      if (record === undefined) {
+        console.log(`${nickname} has never been here.`);
+        return;
+      }
+
+      console.log(`${nickname}: ${record.visits} visits, last seen ${record.lastSeen}`);
+    });
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="server.lua"
+    -- Lua can't create folders: make the "saves" folder next to server.toml yourself.
+    local SAVE_FILE = 'saves/players.json'
+
+    -- nickname -> { visits, lastSeen }
+    local playerRecords = {}
+
+    -- Stays false when the file exists but can't be read. See savePlayerRecords.
+    local recordsLoaded = false
+
+    local function loadPlayerRecords()
+      local file = io.open(SAVE_FILE, 'r')
+
+      if file == nil then
+        print('No save file yet. Starting with an empty list.')
+        recordsLoaded = true
+        return
+      end
+
+      local fileText = file:read('a')
+      file:close()
+
+      local savedRecords = json.decode(fileText)
+
+      if savedRecords == nil then
+        print(string.format('ERROR: %s could not be read.', SAVE_FILE))
+        print('Nothing will be saved until you repair or remove that file.')
+        return
+      end
+
+      playerRecords = savedRecords
+      recordsLoaded = true
+      print('Loaded the player records.')
+    end
+
+    local function savePlayerRecords()
+      -- If loading failed, the list in memory is empty.
+      -- Saving it would wipe the file that somebody may still be able to repair.
+      if not recordsLoaded then
+        return
+      end
+
+      local fileText = json.encode(playerRecords, { indent = true })
+
+      local file, errorMessage = io.open(SAVE_FILE, 'w')
+      if file == nil then
+        print('ERROR: the player records were not saved: ' .. errorMessage)
+        return
+      end
+
+      file:write(fileText)
+      file:close()
+    end
+
+    local function recordVisit(nickname)
+      local record = playerRecords[nickname]
+
+      if record == nil then
+        record = { visits = 0 }
+        playerRecords[nickname] = record
+      end
+
+      record.visits = record.visits + 1
+      record.lastSeen = os.date('!%Y-%m-%dT%H:%M:%SZ') -- the current date and time, in UTC
+
+      savePlayerRecords()
+    end
+
+    mp.events.add('resourceStart', loadPlayerRecords)
+    mp.events.add('resourceStop', savePlayerRecords)
+
+    mp.events.add('playerConnected', function(playerId, tempId)
+      local player = mp.players.at(playerId)
+      recordVisit(player.nickname)
+    end)
+
+    -- Usage: visits <nickname>
+    mp.commands.add('visits', function(player, args)
+      local nickname = args[1]
+      local record = playerRecords[nickname]
+
+      if record == nil then
+        print(string.format('%s has never been here.', nickname))
+        return
+      end
+
+      print(string.format('%s: %s visits, last seen %s', nickname, record.visits, record.lastSeen))
+    end)
+    ```
+  </TabItem>
+</Tabs>
+
+After a player called `V` has connected twice, `saves/players.json` looks like this:
+
+```json title="saves/players.json"
+{
+  "V": {
+    "visits": 2,
+    "lastSeen": "2077-08-20T19:42:07.000Z"
+  }
+}
+```
+
+Two decisions in this code are worth a closer look.
+
+**A damaged file stops saving, it does not reset the data.** The obvious way to write `loadPlayerRecords` is "if anything goes wrong, start with an empty list". Then one bad byte in the file means every player starts from zero, and the first save overwrites the only copy you had. With the `recordsLoaded` flag, a file that can't be read is left alone until a person has looked at it.
+
+**The nickname is the key, and a nickname proves nothing.** Nothing here checks that the person using a nickname is the same person as last time. That is fine for a visit counter. For money, items or admin rights you need accounts that players log in to, which brings us to [passwords](#storing-passwords) below.
+
+## When to save
+
+**Save when the data changes.** That is what `recordVisit` does, and it is the only approach that never loses anything.
+
+**Treat `resourceStop` as a bonus.** It fires when the resource is stopped or restarted, which makes it a good place for one last save. It does **not** fire when the server shuts down: not on the `quit` console command, and certainly not when the window is closed, the process is killed or the machine loses power. A store that only saves in `resourceStop` loses everything since the last restart.
+
+**If saving on every change gets too expensive, save on a timer.** Writing the file is synchronous: the server does nothing else until the write is done. A few kilobytes take no measurable time. But a value that changes several times a second, such as a position or playtime, should not rewrite the file each time. Set a flag when something changed, and let an [interval](/guides/server/timers/#repeating-work) write the file every 30 seconds if the flag is set. You then lose at most 30 seconds in a crash, which is the trade you are making.
+
+:::caution
+A crash or power cut *during* a write can leave a file with half of its content. If the data matters, write to a second file first (`players.json.tmp`) and rename it over the real one, because a rename either happens completely or not at all. In JS that is `fs.writeFileSync(temporaryPath, fileText)` followed by `fs.renameSync(temporaryPath, SAVE_FILE)`. Also keep backups of the `saves` folder: no code protects you from a dead disk.
+:::
+
+## Storing passwords
+
+If players log in with a password, never write the password itself to disk. Store a **hash**: a value computed from the password that can't be turned back into it. When the player logs in, you hash what they typed and compare. If your save file leaks, nobody's password leaks with it.
+
+A plain checksum such as SHA-256 is not good enough, because it is so fast that an attacker can try billions of guesses. Password hashes are slow on purpose and mix in a random *salt*, so that two players with the same password get different hashes.
+
+The two languages have different tools here:
+
+- **Lua** has bcrypt built in: `mp.generateBcryptHash` and `mp.verifyBcryptHash`.
+- **JS** has no bcrypt helper on `mp`. Node's own `node:crypto` module has `scrypt`, which does the same job.
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="server.js"
+    const crypto = require('node:crypto');
+
+    // Returns the text to store instead of the password.
+    function createPasswordHash(password) {
+      const salt = crypto.randomBytes(16);
+      const hash = crypto.scryptSync(password, salt, 64);
+
+      // The salt is not secret, and it is needed again to check a password later.
+      // Store it next to the hash, in one piece of text.
+      return salt.toString('hex') + ':' + hash.toString('hex');
+    }
+
+    // Returns true when the password matches the text made by createPasswordHash.
+    function isPasswordCorrect(password, storedHash) {
+      const parts = storedHash.split(':');
+      const salt = Buffer.from(parts[0], 'hex');
+      const expectedHash = Buffer.from(parts[1] || '', 'hex');
+
+      const actualHash = crypto.scryptSync(password, salt, 64);
+
+      if (actualHash.length !== expectedHash.length) {
+        return false; // the stored text is not one of our hashes
+      }
+
+      // Compares in a way that does not reveal how many bytes were right.
+      return crypto.timingSafeEqual(actualHash, expectedHash);
+    }
+
+    const storedHash = createPasswordHash('correct horse battery staple');
+
+    console.log(isPasswordCorrect('correct horse battery staple', storedHash)); // true
+    console.log(isPasswordCorrect('hunter2', storedHash)); // false
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="server.lua"
+    -- Returns the text to store instead of the password.
+    -- A bcrypt hash looks like "$2a$11$..." and already contains its salt.
+    local function createPasswordHash(password)
+      return mp.generateBcryptHash(password)
+    end
+
+    -- Returns true when the password matches the text made by createPasswordHash.
+    local function isPasswordCorrect(password, storedHash)
+      -- verifyBcryptHash answers 1 or false, not true or false. This turns it into a real boolean.
+      if mp.verifyBcryptHash(password, storedHash) then
+        return true
+      end
+
+      return false
+    end
+
+    local storedHash = createPasswordHash('correct horse battery staple')
+
+    print(isPasswordCorrect('correct horse battery staple', storedHash)) -- true
+    print(isPasswordCorrect('hunter2', storedHash)) -- false
+    ```
+  </TabItem>
+</Tabs>
+
+Store the returned text in the player's record, in place of a password.
+
+- **Hashing is slow, and that is the point.** One bcrypt hash or check takes roughly a tenth of a second, during which the server does nothing else. Do it when a player registers or logs in, never in a loop or on a timer.
+- **The two formats are not interchangeable.** A hash made by the Lua functions can't be checked by the JS code above, and the other way round. Pick one before you have real accounts.
+- **Never log passwords**, and don't keep them in variables longer than the login takes.
+- **In Lua, don't compare the result with `true`.** A successful `mp.verifyBcryptHash` returns `1`, so `== true` is false even for the right password. Use it directly in an `if`.
+
+## When to move to a database
+
+A JSON file is a fine start, and plenty of small servers never need more. It stops being enough when:
+
+- **The file gets big.** Every save rewrites the whole file. When that takes long enough to notice, the server tells you with `Server main thread LAG delay of … ms` in the console.
+- **You need to ask questions.** "The ten richest players" or "everyone banned this month" means loading and scanning everything, every time.
+- **More than one program uses the data.** A second server, a website or a Discord bot can't safely share a file that each of them rewrites as a whole.
+- **Losing data costs something.** Databases write changes safely and can be backed up while running.
+
+Where to go from there depends on the language. In JS, `require` finds npm packages in a `node_modules` folder inside the resource folder, which is how you would bring in a database client. In Lua there is no database library, so the usual route is a small web service of your own that the server talks to with [HTTP requests](/guides/server/http-requests/). Either way the shape of your code stays the same as on this page: load what you need, change it, write the change back.
+
+## Next steps
+
+- [Timers and scheduled work](/guides/server/timers/): autosave on an interval.
+- [HTTP requests](/guides/server/http-requests/): send data to a backend instead of a file.
+- [Entity Metadata](/guides/server/meta/): for live state that doesn't need to survive a restart.
+- [Managing resources from scripts](/guides/server/managing-resources/): read a config file that ships with your resource.
+- [Password hashing](/reference/lua/server/#password-hashing-bcrypt): the Lua reference entry.

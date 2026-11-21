@@ -1,0 +1,274 @@
+---
+title: Voice chat
+description: What the built-in voice server is, how to turn it off, and what the server-side voice API (mute, mute state, channels) really does today, in JavaScript and Lua.
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import { SCRIPT_LANG_TAB_SYNC_KEY } from '../../../../lib/const';
+
+A CyberMP server comes with its own voice (VoIP) server, so players can talk to each other in game without a third-party app. The [configuration reference](/reference/server/configuration/#root-configuration-keys) describes it as 3D positional voice. It is on by default on the server, and each player decides in their launcher whether to use it.
+
+As a server owner you have one switch, `disable_voice`, and a small script API, `mp.voiceChat`. This page is short because, on the current server build, the switch is the only server-side part that is confirmed to work. The rest of the page tells you exactly what was tested and what is still unknown, so you don't build a moderation system on calls that do nothing.
+
+:::caution[Status on server v4.0.4-beta.1]
+`mp.voiceChat.mutePlayer`, `mp.voiceChat.isPlayerMuted`, `mp.voiceChat.createChannel` and `player.mute()` exist in both the JavaScript and the Lua runtime, but the server has no implementation behind them. Every call only writes a warning to the server console and changes nothing. See [The script API](#the-script-api) for the details.
+:::
+
+## What the player controls
+
+Voice is opt-in on the player's side. The CyberMP launcher (checked on launcher 1.0.2) has an **Audio** section in its settings:
+
+| Launcher setting | Default |
+| :--- | :--- |
+| Voice chat | Off |
+| Push to talk | Off |
+| Push to talk key | `B` |
+| Device input / Device output | Not set |
+| Input volume / Output volume | 100 (range 0 to 100) |
+
+So voice chat starts switched off for a new player, until they turn **Voice chat** on in the launcher. The launcher passes these choices to the game when it starts. Two consequences for you:
+
+- If players say "voice doesn't work", the launcher switch is the first thing to check, before anything on the server.
+- A client script can read the choices (but not change them) with `mp.getLauncherSettings()`, for example to show "Hold B to talk" in your HUD. See [Launcher settings](/guides/client/launcher-settings/#example-a-voice-hint-for-the-hud).
+
+## Turning voice off
+
+Set `disable_voice` in `server.toml` if your server should have no built-in voice at all, for example because your community talks on Discord:
+
+```toml title="server.toml"
+disable_voice = true
+```
+
+Leave the key out, or set it to `false`, to keep voice on.
+
+You can also set it with the `CYBERMP_DISABLE_VOICE` environment variable, which wins over the file. That is handy in Docker, where you would rather not edit `server.toml` inside the image:
+
+```sh
+CYBERMP_DISABLE_VOICE=true
+```
+
+To see which value the server ended up with, type `config` in the server console. The `source` column tells you where the value came from:
+
+```
+> config
+disable_voice          toml       1
+```
+
+With the environment variable, the same line reads `disable_voice          CYBERMP_DISABLE_VOICE true`. All keys and variables are listed in the [server configuration reference](/reference/server/configuration/#environment-variable-overrides).
+
+:::note
+`disable_voice` is read when the server starts. Restart the server after changing it. The console also has a `disable_voice` command that prints the value (and only exists when the key is in `server.toml`), but whether changing it there switches voice on or off while the server runs is not documented, so don't rely on it.
+:::
+
+## Reading the setting from a script
+
+A gamemode sometimes needs to know whether voice is available, for example to hide a "talk" hint in the HUD or to print a line at startup. The server's `server.toml` is readable from a script: as an object in JS (`mp.config`), as a JSON string in Lua (`mp.getServerTomlFile()`).
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="server.js"
+    function isVoiceDisabledInServerToml() {
+      // The key is missing from mp.config when server.toml doesn't set it,
+      // and a missing key means "voice is on".
+      return mp.config.disable_voice === true;
+    }
+
+    if (isVoiceDisabledInServerToml()) {
+      console.log('Built-in voice chat is turned off in server.toml.');
+    } else {
+      console.log('Built-in voice chat is on.');
+    }
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="server.lua"
+    local function isVoiceDisabledInServerToml()
+      local serverConfig = json.decode(mp.getServerTomlFile())
+
+      -- The key is missing when server.toml doesn't set it,
+      -- and a missing key means "voice is on".
+      return serverConfig.disable_voice == true
+    end
+
+    if isVoiceDisabledInServerToml() then
+      print('Built-in voice chat is turned off in server.toml.')
+    else
+      print('Built-in voice chat is on.')
+    end
+    ```
+  </TabItem>
+</Tabs>
+
+:::caution
+Both functions give you the contents of the **file**, not the value the server is using. If voice is turned off with `CYBERMP_DISABLE_VOICE`, a script still sees whatever `server.toml` says (or no key at all). If you deploy with environment variables, read the variable yourself as well (`process.env.CYBERMP_DISABLE_VOICE` in JS).
+:::
+
+## The script API
+
+Both server runtimes expose the same three functions under `mp.voiceChat`, plus a shortcut on the player object. Nothing else is there: the list below is everything the runtime contains.
+
+| JavaScript | Lua | Meant to |
+| :--- | :--- | :--- |
+| `mp.voiceChat.mutePlayer(player)` | `mp.voiceChat.mutePlayer(playerId, enable)` | Mute a player's voice. |
+| `player.mute()` | `player:mute(enable)` | Same thing, called on a player object. |
+| `mp.voiceChat.isPlayerMuted(player)` | `mp.voiceChat.isPlayerMuted(playerId)` | Tell whether a player is muted. |
+| `mp.voiceChat.createChannel(voiceId)` | `mp.voiceChat.createChannel(voiceId)` | Create a voice channel with a numeric ID. |
+
+In JS, `player` can be a player object or a player ID. The JS functions take no `enable` argument, so there is no documented way to unmute from JS; the Lua functions accept `true` (mute) or `false` (unmute).
+
+### What happens when you call them today
+
+These calls were tested on server v4.0.4-beta.1 (Windows build, no player connected), with `disable_voice = false` and again with `disable_voice = true`. The result is the same in both cases, in JS and in Lua:
+
+- Every call prints a warning in the server console and does nothing else:
+
+  ```
+  [server] [Warning] Can't find function with this hash - 2722382836.
+  ```
+
+  The number depends on the function (`2722382836` for mute, `4243528263` for `isPlayerMuted`, `2991183601` for `createChannel`). The warning means the script runtime asked the server for a function the server does not have.
+- No call throws, whatever you pass: an ID that isn't connected, the same ID twice, a string, no argument at all.
+- `isPlayerMuted` does **not** return `true` or `false`. It hands back the value you passed in, so `mp.voiceChat.isPlayerMuted(12)` returns `12`. In an `if`, that is truthy for every ID except `0`. Do not use its result.
+- Muting twice, or muting and then asking `isPlayerMuted`, changes nothing, because nothing is stored.
+
+This matches the official typings: the `mp.voiceChat` declarations were taken out of [CyberMP-Types](https://github.com/Cyber-MP/CyberMP-Types) (the export is commented out), and the voice section was removed from the Lua reference. Treat the API as "reserved, not available yet".
+
+:::tip[How to check your own build]
+Run a mute call once from a test command and watch the server console. If you see `Can't find function with this hash`, voice moderation from scripts is not available on your server version.
+:::
+
+## A `mute` command
+
+Since the built-in mute can't be relied on, the command below is a template rather than a working feature: it is the code you would write for an admin `mute <playerId>` command, and it will start working on a server build that implements the call. Until then it prints the warning shown above and the player can still talk.
+
+`isConsole`, `reply` and `isAdmin` are the helpers from [Creating Commands](/guides/server/commands/#a-command-for-both-console-and-players-kick). They are repeated here so the example runs on its own. The Lua tab also repeats `isConnectedPlayer`, because Lua's `mp.players.exists` is truthy for the ID of any entity, not only players (see [Finding players](/guides/server/players/#finding-players)).
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="server.js"
+    function isConsole(player) {
+      return !player || player.id === 0;
+    }
+
+    function reply(player, message) {
+      if (isConsole(player)) {
+        console.log(message);
+      } else {
+        player.emit('chat:add', message); // handled by your own client script
+      }
+    }
+
+    function isAdmin(player) {
+      // Whoever sits at the server console already controls the server.
+      if (isConsole(player)) {
+        return true;
+      }
+      return player.getMeta('isAdmin') === true;
+    }
+
+    mp.commands.add('mute', (player, args) => {
+      if (!isAdmin(player)) {
+        reply(player, 'You are not allowed to use this command.');
+        return;
+      }
+
+      const targetId = parseInt(args[0], 10);
+      if (Number.isNaN(targetId)) {
+        reply(player, 'Usage: mute <playerId>');
+        return;
+      }
+
+      // Check first: mp.players.at() returns undefined for an ID that is not connected.
+      if (!mp.players.exists(targetId)) {
+        reply(player, `No player with ID ${targetId} is online.`);
+        return;
+      }
+
+      const target = mp.players.at(targetId);
+      target.mute();
+
+      reply(player, `Asked the server to mute ${target.nickname}.`);
+    });
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="server.lua"
+    local function isConsole(player)
+      return player == 0
+    end
+
+    local function reply(player, message)
+      if isConsole(player) then
+        print(message)
+      else
+        player:trigger('chat:add', message) -- handled by your own client script
+      end
+    end
+
+    local function isAdmin(player)
+      -- Whoever sits at the server console already controls the server.
+      if isConsole(player) then
+        return true
+      end
+      return player:getMeta('isAdmin') == true
+    end
+
+    -- In Lua, mp.players.exists(id) also says yes for the ID of a vehicle, ped or object.
+    -- Reading the entity type as well makes sure the ID belongs to a connected player.
+    local PLAYER_ENTITY_TYPE = 1
+
+    local function isConnectedPlayer(id)
+      return mp.players.exists(id) and mp.players.at(id).type == PLAYER_ENTITY_TYPE
+    end
+
+    mp.commands.add('mute', function(player, args)
+      if not isAdmin(player) then
+        reply(player, 'You are not allowed to use this command.')
+        return
+      end
+
+      local targetId = tonumber(args[1])
+      if not targetId then
+        reply(player, 'Usage: mute <playerId>')
+        return
+      end
+
+      -- Check first: mp.players.at() raises an error for an ID that does not exist.
+      if not isConnectedPlayer(targetId) then
+        reply(player, string.format('No player with ID %s is online.', targetId))
+        return
+      end
+
+      local target = mp.players.at(targetId)
+      -- true mutes; false is meant to unmute
+      target:mute(true)
+
+      reply(player, string.format('Asked the server to mute %s.', target.nickname))
+    end)
+    ```
+  </TabItem>
+</Tabs>
+
+The reply says "asked the server to mute" on purpose. The call returns nothing, and `isPlayerMuted` can't confirm it, so the script has no way to know whether the mute took effect.
+
+If you need to silence someone right now, the tools that do work are [`kick`](/guides/server/players/#kicking-and-muting) for the player and `disable_voice` for the whole server.
+
+## Not documented yet
+
+These questions have no answer in the typings, the Lua reference, the built-in `cybermp_core` resource or the official [Freeroam gamemode](https://github.com/Cyber-MP/CyberMP-Freeroam) (which doesn't use voice at all). They are listed so you know they are open, not so you guess:
+
+- **Channels.** `createChannel(voiceId)` takes a number, and that is all that is known. There is no function in either runtime to put a player into a channel, take them out, or list channels, so nothing says what a channel does or how it relates to positional voice.
+- **Whether mute toggles.** JS `player.mute()` has no argument and Lua `player:mute(enable)` has one. Whether a second JS call would unmute can't be tested while the server ignores the call.
+- **Hearing range.** No server setting or server function for the distance at which players hear each other was found.
+- **Client-side control.** A client script can read the player's launcher voice settings (see [above](#what-the-player-controls)) but has no documented way to change them. The client typings still contain an `EVoiceActivationType` enum (`UNDEFINED`, `VOICE`, `PUSH_TO_TALK`), but no client function takes it: the client `mp.voiceChat` declarations were removed from the typings together with the server ones.
+- **Voice events.** There is no "player started talking" event in the server or client event lists.
+
+When a server release wires these functions up, the warning described above disappears. That is the moment to test again and trust the result over this page.
+
+## Next steps
+
+- [Creating Commands](/guides/server/commands/): the `isConsole`, `reply` and `isAdmin` helpers used by the `mute` template, explained.
+- [Players](/guides/server/players/#kicking-and-muting): kicking a player, which works today.
+- [Launcher settings](/guides/client/launcher-settings/): read the player's voice choices (on or off, push to talk, key) from a client script.
+- [Server configuration](/reference/server/configuration/): `disable_voice` and every other `server.toml` key.
+- [Server console](/reference/server/console/): the `config` command used to check the active value.

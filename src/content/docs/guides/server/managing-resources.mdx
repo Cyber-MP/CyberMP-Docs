@@ -1,0 +1,521 @@
+---
+title: Managing resources from scripts
+description: Use mp.resources to start, stop and inspect resources from a server script, react to lifecycle events, read config files and server.toml, and work with console variables.
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import { SCRIPT_LANG_TAB_SYNC_KEY } from '../../../../lib/const';
+
+A server script can do everything the operator does in the console: start, stop and restart resources, and find out which ones are running. It can also read files that ship with a resource and the settings in `server.toml`. That is what you need for an admin `reload` command, for a resource that depends on another one, or for a gamemode with a config file.
+
+If you only want to manage resources by hand, the console commands are covered in [Interacting with resources](/guides/resources/interacting-with-resources/). This page is about doing it from code.
+
+## `mp.resources` at a glance
+
+A resource is identified by its name, which is the name of its folder inside `resources`.
+
+| What it does | JS | Lua |
+| :--- | :--- | :--- |
+| Name of the resource this script belongs to | `mp.resources.getCurrentName()` | `mp.resources.getCurrentName()` |
+| State of a resource | `mp.resources.getState(name)` | `mp.resources.getState(name)` |
+| Start / stop / restart a resource | `start(name)` / `stop(name)` / `restart(name)` | `start(name)` / `stop(name)` / `restart(name)` |
+| Rescan the `resources` folder | `mp.resources.refresh()` | `mp.resources.refreshAll()` |
+| Read a file from a resource's folder | `mp.resources.loadFile(name, path)` | `mp.resources.loadFile(name, path)` |
+| Read a resource's `resource.toml` | `mp.resources.getTOML(name)` | `mp.resources.getTomlFile(name)` |
+
+Two names differ between the languages: `refresh` / `refreshAll` and `getTOML` / `getTomlFile`.
+
+In JS, `start`, `stop` and `restart` return nothing. In Lua they return `false` when no resource has that name.
+
+### Resource states
+
+`getState` returns a number:
+
+| Value | Name | Meaning |
+| :--- | :--- | :--- |
+| `0` | NotRunning | The server knows no resource with this name. |
+| `1` | Starting | The resource's script is being loaded right now. |
+| `2` | Running | The resource is up. |
+| `3` | Stopped | The resource exists on disk but is not running: it was stopped, or never started. |
+
+So `0` is how you recognise a name that doesn't exist, and `2` is the only value that means "you can rely on it".
+
+A resource sees itself as `1` while its own script is loading, and still in its `resourceStart` handler.
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="server.js"
+    const thisResourceName = mp.resources.getCurrentName();
+
+    console.log(`This script belongs to the resource "${thisResourceName}".`);
+    console.log(`State of cybermp_core: ${mp.resources.getState('cybermp_core')}`); // 2
+    console.log(`State of a name that does not exist: ${mp.resources.getState('no_such_resource')}`); // 0
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="server.lua"
+    local thisResourceName = mp.resources.getCurrentName()
+
+    print(string.format('This script belongs to the resource "%s".', thisResourceName))
+    print(string.format('State of cybermp_core: %s', mp.resources.getState('cybermp_core'))) -- 2
+    print(string.format('State of a name that does not exist: %s', mp.resources.getState('no_such_resource'))) -- 0
+    ```
+  </TabItem>
+</Tabs>
+
+## Lifecycle events
+
+The server fires events when resources start and stop. Two of them are about *your* resource and take no arguments; the others tell every resource about *any* resource and pass its name.
+
+| Event | Argument | When it fires |
+| :--- | :--- | :--- |
+| `resourceStart` | — | Your resource's script has just finished loading. |
+| `resourceStop` | — | Your resource is being stopped or restarted. Last chance to clean up. |
+| `anyResourceStart` | `resourceName` | A resource has loaded. Fires immediately; its state is still `1` at this moment. |
+| `anyResourceStop` | `resourceName` | A resource is being stopped. |
+| `anyServerResourceStart` | `resourceName` | The same start, reported a moment later, when the resource's state is `2`. |
+| `anyServerResourceStop` | `resourceName` | The same stop, reported a moment later. |
+| `resourcesRefresh` | — | The `resources` folder was rescanned (`refresh` command or `mp.resources.refresh()`). |
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="server.js"
+    mp.events.on('resourceStart', () => {
+      console.log('This resource has started.');
+    });
+
+    mp.events.on('resourceStop', () => {
+      console.log('This resource is stopping. Clean up here.');
+    });
+
+    mp.events.on('anyResourceStart', (resourceName) => {
+      console.log(`The resource "${resourceName}" has started.`);
+    });
+
+    mp.events.on('anyResourceStop', (resourceName) => {
+      console.log(`The resource "${resourceName}" is stopping.`);
+    });
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="server.lua"
+    mp.events.add('resourceStart', function()
+      print('This resource has started.')
+    end)
+
+    mp.events.add('resourceStop', function()
+      print('This resource is stopping. Clean up here.')
+    end)
+
+    mp.events.add('anyResourceStart', function(resourceName)
+      print(string.format('The resource "%s" has started.', resourceName))
+    end)
+
+    mp.events.add('anyResourceStop', function(resourceName)
+      print(string.format('The resource "%s" is stopping.', resourceName))
+    end)
+    ```
+  </TabItem>
+</Tabs>
+
+Details that matter once you build on these events:
+
+- **The `any…` events include your own resource.** You get `anyResourceStart` with your own name right after your `resourceStart`. Compare the name if you only care about others.
+- **You only hear about what happens after you are loaded.** A resource that is listed before yours in `server.toml` has already sent its `anyResourceStart` when your script starts listening. `anyServerResourceStart` is the exception at server start: it is delivered once the whole server is up, for every resource, including `cybermp_core` and the ones loaded before you.
+- **On a restart, the delayed events arrive late.** The order is `anyResourceStop`, `anyResourceStart`, then `anyServerResourceStop`, `anyServerResourceStart`. By the time you receive `anyServerResourceStop`, the resource is already running again. To react to a resource going away, use `anyResourceStop`.
+- **`resourceStop` does not fire when the server shuts down.** It fires on `stop` and `restart`, not on the `quit` command. Don't rely on it for saving data; see [Saving data](/guides/server/saving-data/#when-to-save).
+- **Stopping a resource removes its handlers, commands and timers, but not its entities.** Vehicles, peds, objects and pickups stay in the world. Destroy them in `resourceStop`, as shown in [Working with Vehicles](/guides/server/vehicles/#clean-up-when-your-resource-stops).
+
+## An admin `reload` command
+
+While you develop, you restart the same resource over and over. This command does it from the server console or, for admins, from the in-game console. It rescans the folder first, so that it also works for a resource you have just copied in, and it starts the resource if it wasn't running.
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="server.js"
+    // Usage: reload <resource>
+    mp.commands.add('reload', (player, args) => {
+      const fromConsole = !player || player.id === 0;
+
+      // "isAdmin" is a value your own gamemode has to set. The server console is always allowed.
+      if (!fromConsole && !player.getMeta('isAdmin')) {
+        return;
+      }
+
+      const resourceName = args[0];
+      if (!resourceName) {
+        console.log('Usage: reload <resource>');
+        return;
+      }
+
+      // Rescan the resources folder, so that new folders and edited resource.toml files are known.
+      mp.resources.refresh();
+
+      const state = mp.resources.getState(resourceName);
+
+      if (state === 0) {
+        console.log(`There is no resource called "${resourceName}".`);
+        return;
+      }
+
+      if (state === 2) {
+        console.log(`Restarting ${resourceName}...`);
+        mp.resources.restart(resourceName);
+      } else {
+        console.log(`${resourceName} was not running. Starting it...`);
+        mp.resources.start(resourceName);
+      }
+    });
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="server.lua"
+    -- Usage: reload <resource>
+    mp.commands.add('reload', function(player, args)
+      local fromConsole = player == 0
+
+      -- "isAdmin" is a value your own gamemode has to set. The server console is always allowed.
+      if not fromConsole and not player:getMeta('isAdmin') then
+        return
+      end
+
+      local resourceName = args[1]
+      if not resourceName then
+        print('Usage: reload <resource>')
+        return
+      end
+
+      -- Rescan the resources folder, so that new folders and edited resource.toml files are known.
+      mp.resources.refreshAll()
+
+      local state = mp.resources.getState(resourceName)
+
+      if state == 0 then
+        print(string.format('There is no resource called "%s".', resourceName))
+        return
+      end
+
+      if state == 2 then
+        print(string.format('Restarting %s...', resourceName))
+        mp.resources.restart(resourceName)
+      else
+        print(string.format('%s was not running. Starting it...', resourceName))
+        mp.resources.start(resourceName)
+      end
+    end)
+    ```
+  </TabItem>
+</Tabs>
+
+The messages go to the server console. To answer a player in game, send them an event as described in [Creating Commands](/guides/server/commands/#replying-to-the-caller).
+
+:::caution
+A command typed in the F8 console can be used by every player unless your handler refuses it. A command that restarts resources must check who is calling. Never leave out the permission check "for now".
+:::
+
+A resource may restart itself, and `reload` works on the resource it lives in. Just know that the old copy of the script ends at that call: nothing you write after `mp.resources.restart(ownName)` runs.
+
+If restarting on every save is what you are after, you don't need a command at all: see [Resource Hotreload](/guides/recipes/hotreload/).
+
+## Waiting for another resource
+
+When your resource uses something that another resource provides, it matters whether that other resource is running yet.
+
+**Start with the load order.** Resources start in the order of the `resources` list in `server.toml`. Put the provider before the resources that use it, and at server start it is simply there. See [load order and lifecycle](/guides/resources/exports/#load-order-and-lifecycle) in the exports guide.
+
+The load order doesn't help when the provider is restarted while the server runs, or when somebody changes the list. A resource that should cope with that checks the state once at startup and then follows the lifecycle events. In this example the provider is called `inventory`.
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="server.js"
+    const DEPENDENCY_NAME = 'inventory';
+    const STATE_RUNNING = 2;
+
+    let dependencyIsReady = false;
+
+    function onDependencyReady() {
+      // Runs each time the dependency becomes available: at startup and after each of its restarts.
+      console.log(`${DEPENDENCY_NAME} is running. Setting up the features that need it.`);
+    }
+
+    function markDependencyReady() {
+      if (dependencyIsReady) {
+        return; // we already know
+      }
+
+      dependencyIsReady = true;
+      onDependencyReady();
+    }
+
+    // Case 1: the dependency was started before this resource.
+    if (mp.resources.getState(DEPENDENCY_NAME) === STATE_RUNNING) {
+      markDependencyReady();
+    } else {
+      console.log(`Waiting for ${DEPENDENCY_NAME} to start...`);
+    }
+
+    // Case 2: it starts (or starts again) later.
+    mp.events.on('anyServerResourceStart', (resourceName) => {
+      if (resourceName === DEPENDENCY_NAME) {
+        markDependencyReady();
+      }
+    });
+
+    // It went away. Stop using it until it is back.
+    mp.events.on('anyResourceStop', (resourceName) => {
+      if (resourceName === DEPENDENCY_NAME) {
+        dependencyIsReady = false;
+        console.log(`${DEPENDENCY_NAME} stopped.`);
+      }
+    });
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="server.lua"
+    local DEPENDENCY_NAME = 'inventory'
+    local STATE_RUNNING = 2
+
+    local dependencyIsReady = false
+
+    local function onDependencyReady()
+      -- Runs each time the dependency becomes available: at startup and after each of its restarts.
+      print(string.format('%s is running. Setting up the features that need it.', DEPENDENCY_NAME))
+    end
+
+    local function markDependencyReady()
+      if dependencyIsReady then
+        return -- we already know
+      end
+
+      dependencyIsReady = true
+      onDependencyReady()
+    end
+
+    -- Case 1: the dependency was started before this resource.
+    if mp.resources.getState(DEPENDENCY_NAME) == STATE_RUNNING then
+      markDependencyReady()
+    else
+      print(string.format('Waiting for %s to start...', DEPENDENCY_NAME))
+    end
+
+    -- Case 2: it starts (or starts again) later.
+    mp.events.add('anyServerResourceStart', function(resourceName)
+      if resourceName == DEPENDENCY_NAME then
+        markDependencyReady()
+      end
+    end)
+
+    -- It went away. Stop using it until it is back.
+    mp.events.add('anyResourceStop', function(resourceName)
+      if resourceName == DEPENDENCY_NAME then
+        dependencyIsReady = false
+        print(string.format('%s stopped.', DEPENDENCY_NAME))
+      end
+    end)
+    ```
+  </TabItem>
+</Tabs>
+
+The example listens to `anyServerResourceStart` rather than `anyResourceStart` because it arrives when the state is already `2`, which matches the check at startup. The `dependencyIsReady` flag is there because at server start that event is also delivered for resources that were loaded before you; without the flag, the setup would run twice.
+
+## A config file per resource
+
+Values that an operator should be able to change (a welcome text, a spawn point, prices) don't belong in the middle of your code. Put them in a file inside the resource folder and read it when the resource starts.
+
+```json title="resources/my_gamemode/config.json"
+{
+  "welcomeMessage": "Welcome to Night City.",
+  "startingMoney": 1500
+}
+```
+
+`mp.resources.loadFile(resourceName, path)` returns the content of a file as text. The path is relative to the resource folder. Passing `getCurrentName()` instead of a fixed name keeps the code working when somebody renames the folder.
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="server.js"
+    function loadConfig() {
+      const resourceName = mp.resources.getCurrentName();
+      const configText = mp.resources.loadFile(resourceName, 'config.json');
+
+      // loadFile returns null when the file does not exist.
+      if (!configText) {
+        throw new Error(`config.json is missing in the resource "${resourceName}".`);
+      }
+
+      return JSON.parse(configText);
+    }
+
+    const config = loadConfig();
+
+    console.log(`Welcome message: ${config.welcomeMessage}`);
+    console.log(`Starting money: ${config.startingMoney}`);
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="server.lua"
+    local function loadConfig()
+      local resourceName = mp.resources.getCurrentName()
+      local configText = mp.resources.loadFile(resourceName, 'config.json')
+
+      -- loadFile returns nil when the file does not exist.
+      if not configText then
+        error(string.format('config.json is missing in the resource "%s".', resourceName))
+      end
+
+      local config = json.decode(configText)
+      if config == nil then
+        error('config.json is not valid JSON.')
+      end
+
+      return config
+    end
+
+    local config = loadConfig()
+
+    print('Welcome message: ' .. config.welcomeMessage)
+    print('Starting money: ' .. config.startingMoney)
+    ```
+  </TabItem>
+</Tabs>
+
+A missing or broken config stops the script with a clear message, here on purpose: a gamemode that silently runs with half its settings is harder to debug than one that refuses to start.
+
+The config is read once, when the script loads. After editing the file, restart the resource to apply it.
+
+- **Don't list the config in `file`.** `loadFile` reads straight from the server's disk and does not need it. Everything in the [`file` list](/guides/resources/adding-resource-files/) is sent to every player, and a config often holds things players should not see.
+- **`loadFile` only reads.** To write data, see [Saving data](/guides/server/saving-data/), and keep those files outside the resource folder.
+- **You can read another resource's files** by passing its name, for instance to let one resource read a shared settings file.
+- **Never build the path from player input.** The path is not confined to the resource folder: `../` leads out of it, up to `server.toml` and beyond.
+
+### Reading `resource.toml`
+
+`mp.resources.getTOML(name)` (`getTomlFile` in Lua) returns a resource's `resource.toml`, already converted to a JSON string. Parse it and you have the manifest as an object. It returns `null` / `nil` for a name the server doesn't know.
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="server.js"
+    const manifestText = mp.resources.getTOML(mp.resources.getCurrentName());
+    const manifest = JSON.parse(manifestText);
+
+    console.log(`Server script of this resource: ${manifest.server_script}`);
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="server.lua"
+    local manifestText = mp.resources.getTomlFile(mp.resources.getCurrentName())
+    local manifest = json.decode(manifestText)
+
+    print('Server script of this resource: ' .. manifest.server_script)
+    ```
+  </TabItem>
+</Tabs>
+
+You get every key that is in the file, including ones the server itself ignores. The [hot reload recipe](/guides/recipes/hotreload/) uses this to let each resource opt in with its own `hotreload = true` line. The standard keys are listed in the [resource.toml reference](/reference/server/resource-configuration/).
+
+## Reading `server.toml`
+
+The server's own configuration is available too. In JS, `mp.config` is the parsed `server.toml` as an object. In Lua, `mp.getServerTomlFile()` returns it as a JSON string that you decode.
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="server.js"
+    const serverConfig = mp.config;
+
+    console.log(`This server has ${serverConfig.max_players} player slots.`);
+    console.log(`It loads these resources at startup: ${serverConfig.resources.join(', ')}`);
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="server.lua"
+    local serverConfig = json.decode(mp.getServerTomlFile())
+
+    print(string.format('This server has %s player slots.', serverConfig.max_players))
+    print('It loads these resources at startup: ' .. table.concat(serverConfig.resources, ', '))
+    ```
+  </TabItem>
+</Tabs>
+
+- **Only keys that are written in the file are there.** A setting that is left at its default is `undefined` / `nil`, not the default value. The defaults are in the [server.toml reference](/reference/server/configuration/#root-configuration-keys).
+- **The file is read again each time you access it.** Store the result in a variable, as above, instead of using `mp.config` inside a loop.
+- **It contains `private_token`** if you set one. Never send the whole object to a client or print it to a log that others can read.
+
+## Console variables
+
+A console variable is a named value that lives in the server console. The operator creates one with `add_var` and can read or change it at any time by typing its name:
+
+```text title="Server console"
+> add_var double_xp 1
+[12:00:00] [server]  "double_xp" = "1"
+> double_xp
+[12:00:00] [server]  "double_xp" = "1"
+> double_xp 0
+[12:00:00] [server]  "double_xp" = "0"
+```
+
+That makes variables a simple switch that somebody can flip on a running server without touching a file or restarting anything. Variables show up in `cmdlist` with their value. They exist only in memory: after a server restart they have to be created again.
+
+Lua scripts can read and create them:
+
+```lua title="server.lua"
+-- Creates the variable, or changes it if it already exists. Pass both arguments as strings.
+mp.addVar('double_xp', '1')
+
+-- Usage: xpstatus
+mp.commands.add('xpstatus', function(player, args)
+  -- getVarInt returns the value as a number, and 0 for a variable that does not exist.
+  local doubleXpEnabled = mp.getVarInt('double_xp') == 1
+
+  if doubleXpEnabled then
+    print('Double XP is on.')
+  else
+    print('Double XP is off.')
+  end
+end)
+```
+
+| Function | Returns | If the variable doesn't exist |
+| :--- | :--- | :--- |
+| `mp.getVar(name)` | the value as a string | raises an error |
+| `mp.getVarInt(name)` | the value as an integer | returns `0` |
+| `mp.addVar(name, value)` | — | creates it |
+
+Some server settings are variables as well: `mp.getVarInt('max_players')` returns the slot count from `server.toml`.
+
+:::note[JavaScript]
+The `mp` object of the JS runtime has no functions for console variables. In JS, read server settings from `mp.config`, and use a config file or a command of your own for switches.
+:::
+
+The console also lists `add_shared_var` and `add_server_var`. On the server they create a variable just like `add_var` does; what sets them apart is not documented, so this guide sticks to `add_var`.
+
+## Running console commands from a script
+
+Lua scripts can run a console line, exactly as if the operator had typed it. This works for built-in commands and for commands registered by any resource.
+
+```lua title="server.lua"
+-- Usage: restartgamemode
+mp.commands.add('restartgamemode', function(player, args)
+  if player ~= 0 then
+    return -- server console only
+  end
+
+  mp.commands.execute('restart my_gamemode')
+end)
+```
+
+The command runs with console rights: a handler that receives it sees the server console as the caller (`player == 0`). So never pass text that came from a player to `execute`. A name that doesn't exist only prints `<name> command doesn't exist!`; no error is raised.
+
+`mp.commands.getAll()` returns a table with the names of all console commands and variables. Names can appear more than once in it.
+
+:::note[JavaScript]
+`execute` and `getAll` do not exist in the JS runtime. For resources you don't need them: `mp.resources.start`, `stop`, `restart` and `refresh` do the same as the console commands.
+:::
+
+## Next steps
+
+- [Interacting with resources](/guides/resources/interacting-with-resources/): the same operations from the console.
+- [Resource Hotreload](/guides/recipes/hotreload/): restart a resource automatically when its files change.
+- [Resource Exports](/guides/resources/exports/): call functions of another resource once it is running.
+- [Saving data](/guides/server/saving-data/): writing files, which `loadFile` cannot do.
+- [Creating Commands](/guides/server/commands/): more on console and player commands.
+- [`MpResources`](/reference/server/api/global/mpresources/): API reference (JS); [Resources Management](/reference/lua/server/#resources-management) for Lua.

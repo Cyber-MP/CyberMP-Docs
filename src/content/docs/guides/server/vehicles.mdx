@@ -1,177 +1,229 @@
 ---
 title: Working with Vehicles
-description: Learn how to spawn, configure, manage seats, and handle vehicle events on the server side.
+description: Spawn vehicles from the server, read their state and occupants, react to vehicle events, and clean them up when your resource stops.
 ---
 
 import { Tabs, TabItem } from '@astrojs/starlight/components';
 import { SCRIPT_LANG_TAB_SYNC_KEY } from '../../../../lib/const';
 
-The server vehicle system allows you to manage cars, bikes, and other vehicles in Night City. You can spawn vehicles, track occupants across seats, inspect physical properties, monitor customization (such as CrystalCoat), and handle damage or weapon fire.
+A vehicle you create on the server is a synchronized entity: every nearby player sees the same car in the same place. The `mp.vehicles` pool creates and destroys vehicles and looks them up by ID; the vehicle object tells you where it is, how fast it moves and who sits in it.
 
-In this guide, you will learn how to spawn vehicles, manage passengers, handle vehicle lifecycles, and clean up inactive entities.
+## Spawning a vehicle
 
----
+`mp.vehicles.create` needs three things:
 
-## Spawning Vehicles
+- `model`: which vehicle it is. This is a **TweakDBID**, the hash of a record name such as `Vehicle.v_sport1_quadra_turbo_r_player`.
+- `appearance`: which paint job / variant to use. This is a **CName**, the hash of an appearance name such as `quadra_turbo_r__basic_player_01`.
+- `position`: where to put it.
 
-Vehicles are spawned using the vehicle creation API. In Cyberpunk 2077, vehicle models and appearances are defined using REDengine hashes (TweakDBID for the vehicle record and CName for the visual appearance).
+The game identifies records and names by numeric hashes, not by text, so you convert the names with `mp.hashes` first. [Working with Hashes](/guides/server/hashes/) explains the hash types.
 
 <Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
   <TabItem label="JS">
     ```js title="server.js"
-    // 1. Resolve vehicle model and appearance hashes
-    const vehicleModel = mp.hashes.tweakdbid('Vehicle.v_sport1_quadra_turbo_r_player');
-    const vehicleAppearance = mp.hashes.cname('quadra_turbo_r__basic_player_01');
-
-    // 2. Spawn the vehicle in the game world
     const car = mp.vehicles.create({
-      model: vehicleModel,
-      appearance: vehicleAppearance,
+      model: mp.hashes.tweakdbid('Vehicle.v_sport1_quadra_turbo_r_player'),
+      appearance: mp.hashes.cname('quadra_turbo_r__basic_player_01'),
       position: [-1392.6, 1271.5, 123.0],
       yaw: 90.0,
       health: 1000,
       dimension: 0
     });
 
-    console.log(`Spawned Quadra Turbo-R with Network ID: ${car.id}`);
+    console.log(`Spawned Quadra Turbo-R with network ID ${car.id}`);
     ```
   </TabItem>
   <TabItem label="Lua">
     ```lua title="server.lua"
-    -- 1. Resolve vehicle model and appearance hashes
-    local vehicleModel = tonumber(mp.hashes.toTweakdbid('Vehicle.v_sport1_quadra_turbo_r_player'), 10)
-    local vehicleAppearance = tonumber(mp.hashes.toCname('quadra_turbo_r__basic_player_01'), 10)
-
-    -- 2. Spawn the vehicle in the game world
     local car = mp.vehicles.create({
-      model = vehicleModel,
-      appearance = vehicleAppearance,
+      model = tonumber(mp.hashes.toTweakdbid('Vehicle.v_sport1_quadra_turbo_r_player'), 10),
+      appearance = tonumber(mp.hashes.toCname('quadra_turbo_r__basic_player_01'), 10),
       position = vector3(-1392.6, 1271.5, 123.0),
       yaw = 90.0,
-      health = 1000,
+      health = 1000.0,
       dimension = 0
     })
 
-    print(string.format("Spawned Quadra Turbo-R with Network ID: %s", car.id))
+    print(string.format("Spawned Quadra Turbo-R with network ID %s", car.id))
     ```
   </TabItem>
 </Tabs>
 
-:::tip
-Always use TweakDB IDs for vehicle model definitions and CNames for appearance skins.
+| Option | Required | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `model` | Yes | — | TweakDBID of the vehicle record. |
+| `appearance` | Yes | — | CName of the appearance. |
+| `position` | Yes | — | World coordinates. |
+| `yaw` | No | `0` | Heading in degrees. |
+| `health` | No | `300` | Starting health. |
+| `dimension` | No | — | The [dimension](/guides/server/players/#virtual-dimensions) to create the vehicle in. |
+
+:::caution
+Use a TweakDBID for `model` and a CName for `appearance`, never the other way round, and always pass a real appearance.
 :::
 
----
+:::caution[Lua: `90.0` and `90` are not the same]
+The server runs Lua 5.3, which keeps whole numbers (`90`) and decimal numbers (`90.0`) apart, and the server API does not convert one into the other. A wrong kind of number raises no error: the value is silently ignored or stored as garbage.
 
-## Querying and Iterating Vehicles
+- `yaw`, `health` and `streamingRadius` need a decimal number: write `yaw = 90.0`, not `yaw = 90`.
+- `dimension` needs a whole number: `4`, not `4.0`.
+- For `position`, use `vector3(...)`. It accepts both kinds, while a plain table such as `{ x = 1, y = 2, z = 3 }` is misread unless every component has a decimal point.
+- Pass `health` yourself. A vehicle created without it did not read back the default `300` in our test.
 
-You can check whether a vehicle exists and iterate over all active vehicles on the server:
+For a number you compute or read from a command argument, add `0.0` to get a decimal number (`tonumber(args[1]) + 0.0`) and use `math.floor(value)` to get a whole one. Values you read back from an entity (`yaw`, `dimension`) are already the right kind. JavaScript has a single number type, so none of this applies there. The Lua reference lists the affected fields under [Creating Entities](/reference/lua/server/#creating-entities).
+:::
+
+## Looking up vehicles
+
+`create` returns the vehicle object, but most of the time you keep only its `id` (in a table, in metadata, or because an event gave it to you) and look the vehicle up again later:
+
+- `mp.vehicles.exists(id)` tells you whether the vehicle still exists.
+- `mp.vehicles.at(id)` returns the vehicle object.
+- `mp.vehicles.toArray()` returns every vehicle on the server.
 
 <Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
   <TabItem label="JS">
     ```js title="server.js"
-    // Check if a vehicle ID exists
-    if (mp.vehicles.exists(vehicleId)) {
-      const veh = mp.vehicles.at(vehicleId);
-      console.log(`Vehicle #${veh.id} health: ${veh.health}`);
+    function logVehicleHealth(vehicleId) {
+      // The vehicle may have been destroyed since you stored its ID.
+      if (!mp.vehicles.exists(vehicleId)) {
+        console.log(`Vehicle #${vehicleId} no longer exists`);
+        return;
+      }
+
+      const vehicle = mp.vehicles.at(vehicleId);
+      console.log(`Vehicle #${vehicle.id} health: ${vehicle.health}`);
     }
 
-    // Iterate over all active vehicles
-    const activeVehicles = mp.vehicles.toArray();
-    console.log(`Active vehicles count: ${activeVehicles.length}`);
-    ```
-  </TabItem>
-  <TabItem label="Lua">
-    ```lua title="server.lua"
-    -- Check if a vehicle ID exists
-    if mp.vehicles.exists(vehicleId) then
-      local veh = mp.vehicles.at(vehicleId)
-      print(string.format("Vehicle #%s health: %s", veh.id, veh.health))
-    end
-
-    -- Iterate over all active vehicles
-    local activeVehicles = mp.vehicles.toArray()
-    print(string.format("Active vehicles count: %s", #activeVehicles))
-    ```
-  </TabItem>
-</Tabs>
-
----
-
-## Vehicle Properties & Physics
-
-Vehicle entities expose synchronized properties describing their state:
-
-| Property | Type | Description |
-| :--- | :--- | :--- |
-| `id` | `number` | Unique network entity ID. |
-| `model` | `number` \| `bigint` | Hash of the vehicle model. |
-| `appearance` | `number` \| `bigint` | Hash of the vehicle appearance. |
-| `health` | `number` | Current health of the vehicle body. |
-| `position` | `[x, y, z]` | World coordinates array. |
-| `rotation` | `[pitch, roll, yaw]` | Orientation Euler angles array. |
-| `yaw` | `number` | Compass heading angle in degrees. |
-| `velocity` | `[x, y, z]` | Linear velocity vector. |
-| `angularVelocity` | `[x, y, z]` | Angular velocity vector. |
-| `dimension` | `number` | Virtual world dimension. |
-| `streamingRadius` | `number` | Entity streaming boundary distance. |
-
-<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
-  <TabItem label="JS">
-    ```js title="server.js"
-    function logVehiclePhysics(vehicle) {
-      const [vx, vy, vz] = vehicle.velocity;
-      const speed = Math.sqrt(vx * vx + vy * vy + vz * vz) * 3.6; // convert m/s to km/h
-
-      console.log(`Vehicle #${vehicle.id} speed: ~${speed.toFixed(1)} km/h`);
-      console.log(`Position: [${vehicle.position.join(', ')}]`);
+    function logVehicleCount() {
+      const vehicles = mp.vehicles.toArray();
+      console.log(`Vehicles on the server: ${vehicles.length}`);
     }
     ```
   </TabItem>
   <TabItem label="Lua">
     ```lua title="server.lua"
-    function logVehiclePhysics(vehicle)
-      local v = vehicle.velocity
-      local speed = math.sqrt(v[1] * v[1] + v[2] * v[2] + v[3] * v[3]) * 3.6 -- convert m/s to km/h
+    function logVehicleHealth(vehicleId)
+      -- The vehicle may have been destroyed since you stored its ID.
+      if not mp.vehicles.exists(vehicleId) then
+        print(string.format("Vehicle #%s no longer exists", vehicleId))
+        return
+      end
 
-      print(string.format("Vehicle #%s speed: ~%.1f km/h", vehicle.id, speed))
-      print(string.format("Position: [%s, %s, %s]", vehicle.position[1], vehicle.position[2], vehicle.position[3]))
+      local vehicle = mp.vehicles.at(vehicleId)
+      print(string.format("Vehicle #%s health: %s", vehicle.id, vehicle.health))
+    end
+
+    function logVehicleCount()
+      local vehicles = mp.vehicles.toArray()
+      print(string.format("Vehicles on the server: %s", #vehicles))
     end
     ```
   </TabItem>
 </Tabs>
 
----
+:::caution
+Call `exists()` before `at()`. For a vehicle that no longer exists, `mp.vehicles.at(id)` returns `undefined` in JS and raises an error in Lua. Also, every call builds a new wrapper object, so compare vehicles by `id`, not with `===`.
+:::
 
-## Managing Seats and Occupants
+:::note[IDs are reused]
+When a vehicle is destroyed, its ID becomes free and the server hands it to the next entity it creates. An ID you stored long ago can therefore point to a *different* vehicle later. Forget an ID as soon as its vehicle is gone, the `vehicleDespawn` event tells you when. The [personal vehicle example](#example-one-personal-vehicle-per-player) below does this.
+:::
 
-CyberMP tracks passenger occupancy across seats:
+## Vehicle properties
 
-| Seat ID | Name | Description |
+| Property | Type | Writable | Description |
+| :--- | :--- | :--- | :--- |
+| `id` | `number` | No | Network ID of the vehicle. |
+| `model` | hash | No | TweakDBID of the vehicle record. |
+| `appearance` | hash | No | CName of the appearance. |
+| `health` | `number` | No | Current health. Reads `0` until a client has streamed the vehicle. |
+| `position` | `[x, y, z]` | No | World coordinates. |
+| `rotation` | `[pitch, roll, yaw]` | No | Orientation. |
+| `yaw` | `number` | No | Heading in degrees. |
+| `velocity` | `[x, y, z]` | No | Linear velocity. |
+| `angularVelocity` | `[x, y, z]` | No | Angular velocity. |
+| `seats` / `lastSeats` | object | No | Current and previous occupants. See [Seats and occupants](#seats-and-occupants). |
+| `exist` | `boolean` | No | Whether the vehicle still exists. |
+| `dimension` | `number` | Yes | The [dimension](/guides/server/players/#virtual-dimensions) the vehicle is in. |
+| `streamingRadius` | `number` | Yes | The distance at which the vehicle streams in and out for clients. New entities start at `230`. |
+| `owner` | player | Yes | The player whose client currently syncs the vehicle. |
+
+`model` compares fine with the result of `mp.hashes.tweakdbid` (`toTweakdbid` in Lua). `appearance` is different in JS: the 64-bit CName comes back as a rounded `number` that does **not** equal what `mp.hashes.cname` returns, so don't use it to recognise a paint job. In Lua the comparison works. See [Comparing hashes](/guides/server/hashes/#comparing-hashes).
+
+`owner` is never empty. While no client syncs the vehicle (for example right after `create`, with nobody nearby), it reads as a player object whose `id` is `-1` in JS, and as the number `-1` in Lua.
+
+:::note[Why `health` is 0 right after `create`]
+A vehicle only has a real state once a client has streamed it in, that is, once a player is close enough to load it. Until then `vehicle.health` reads `0` in JavaScript, even if you passed `health` to `create`; in Lua it reads back the value you passed. Don't treat `0` as "destroyed" for a vehicle nobody has been near yet.
+:::
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="server.js"
+    function logVehicleSpeed(vehicle) {
+      // velocity is in meters per second on each axis: [x, y, z]
+      const [velocityX, velocityY, velocityZ] = vehicle.velocity;
+      const metersPerSecond = Math.sqrt(
+        velocityX * velocityX + velocityY * velocityY + velocityZ * velocityZ
+      );
+      const kilometersPerHour = metersPerSecond * 3.6;
+
+      console.log(`Vehicle #${vehicle.id} speed: ~${kilometersPerHour.toFixed(1)} km/h`);
+    }
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="server.lua"
+    function logVehicleSpeed(vehicle)
+      -- velocity is in meters per second on each axis: x, y, z
+      local velocity = vehicle.velocity
+      local metersPerSecond = math.sqrt(
+        velocity[1] * velocity[1] + velocity[2] * velocity[2] + velocity[3] * velocity[3]
+      )
+      local kilometersPerHour = metersPerSecond * 3.6
+
+      print(string.format("Vehicle #%s speed: ~%.1f km/h", vehicle.id, kilometersPerHour))
+    end
+    ```
+  </TabItem>
+</Tabs>
+
+## Seats and occupants
+
+A vehicle has up to four tracked seats. You can read them by name through `vehicle.seats`, or by number through `getPlayerInSeat`:
+
+| Seat number | `seats` field | Position |
 | :--- | :--- | :--- |
-| `0` | Driver | Primary driver / steering wheel seat. |
-| `1` | Passenger | Front right passenger seat. |
-| `2` | RearLeft | Back left seat. |
-| `3` | RearRight | Back right seat. |
+| `0` | `driver` | Driver. |
+| `1` | `passenger` | Front passenger. |
+| `2` | `rearLeft` | Back left. |
+| `3` | `rearRight` | Back right. |
+
+`vehicle.lastSeats` and `getLastPlayerInSeat` have the same shape and tell you who sat there *before*: useful to find out who just left a car.
+
+An empty seat is `null` in JS. In Lua it is a player object whose `id` is `0`, so test the `id`.
 
 <Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
   <TabItem label="JS">
     ```js title="server.js"
     function checkOccupants(vehicle) {
-      // Check current driver
-      if (vehicle.seats.driver) {
-        console.log(`Driver: ${vehicle.seats.driver.nickname}`);
+      const driver = vehicle.seats.driver;
+      if (driver) {
+        console.log(`Driver: ${driver.nickname}`);
       } else {
         console.log('Vehicle has no driver.');
       }
 
-      // Query by seat index (0 = Driver, 1 = Passenger, 2 = RearLeft, 3 = RearRight)
-      const rearPassenger = vehicle.getPlayerInSeat(2);
+      // The same lookup by seat number: 2 is the rear left seat.
+      const rearLeftPassenger = vehicle.getPlayerInSeat(2);
+      if (rearLeftPassenger) {
+        console.log(`Rear left: ${rearLeftPassenger.nickname}`);
+      }
 
-      // Check who was last in a seat
+      // Who drove it last? Same as vehicle.lastSeats.driver
       const lastDriver = vehicle.getLastPlayerInSeat(0);
       if (lastDriver) {
-        console.log(`Last driver was: ${lastDriver.nickname}`);
+        console.log(`Last driver: ${lastDriver.nickname}`);
       }
     }
     ```
@@ -179,108 +231,333 @@ CyberMP tracks passenger occupancy across seats:
   <TabItem label="Lua">
     ```lua title="server.lua"
     function checkOccupants(vehicle)
-      -- Check current driver
-      if vehicle.seats.driver and vehicle.seats.driver.id ~= 0 then
-        print(string.format("Driver: %s", vehicle.seats.driver.nickname))
+      local driver = vehicle.seats.driver
+      if driver and driver.id ~= 0 then
+        print(string.format("Driver: %s", driver.nickname))
       else
         print("Vehicle has no driver.")
       end
 
-      -- Query by seat index (0 = Driver, 1 = Passenger, 2 = RearLeft, 3 = RearRight)
-      local rearPassenger = vehicle:getPlayerInSeat(2)
+      -- The same lookup by seat number: 2 is the rear left seat.
+      local rearLeftPassenger = vehicle:getPlayerInSeat(2)
+      if rearLeftPassenger and rearLeftPassenger.id ~= 0 then
+        print(string.format("Rear left: %s", rearLeftPassenger.nickname))
+      end
 
-      -- Check who was last in a seat
+      -- Who drove it last? Same as vehicle.lastSeats.driver
       local lastDriver = vehicle:getLastPlayerInSeat(0)
       if lastDriver and lastDriver.id ~= 0 then
-        print(string.format("Last driver was: %s", lastDriver.nickname))
+        print(string.format("Last driver: %s", lastDriver.nickname))
       end
     end
     ```
   </TabItem>
 </Tabs>
 
----
+From the player's side, `player.vehicle` and `player.lastVehicle` give you the same information.
 
-## Handling Vehicle Events
+## Vehicle events
 
-Subscribe to vehicle platform events:
+The server fires an event when a vehicle is created or destroyed, and when a player gets in or out.
 
 <Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
   <TabItem label="JS">
     ```js title="server.js"
-    // Player entered a vehicle seat
+    mp.events.on('vehicleSpawn', (vehicleId) => {
+      console.log(`Vehicle #${vehicleId} was created`);
+    });
+
+    mp.events.on('vehicleDespawn', (vehicleId) => {
+      console.log(`Vehicle #${vehicleId} was destroyed`);
+    });
+
     mp.events.on('playerEnterVehicle', (playerId, vehicleId, seat) => {
       const player = mp.players.at(playerId);
-      console.log(`${player.nickname} entered seat #${seat} of Vehicle #${vehicleId}`);
+      console.log(`${player.nickname} entered seat #${seat} of vehicle #${vehicleId}`);
     });
 
-    // Player exited a vehicle
     mp.events.on('playerExitVehicle', (playerId, vehicleId) => {
       const player = mp.players.at(playerId);
-      console.log(`${player.nickname} exited Vehicle #${vehicleId}`);
-    });
-
-    // Vehicle customization changed (CrystalCoat)
-    mp.events.on('vehicleCustomizationChange', (playerId, data) => {
-      console.log(`Player ${playerId} modified vehicle customization.`);
-    });
-
-    // Vehicle destruction updated
-    mp.events.on('vehicleDestructionChange', (playerId, data) => {
-      console.log(`Vehicle destruction update from Player ${playerId}.`);
+      console.log(`${player.nickname} left vehicle #${vehicleId}`);
     });
     ```
   </TabItem>
   <TabItem label="Lua">
     ```lua title="server.lua"
-    -- Player entered a vehicle seat
+    mp.events.add('vehicleSpawn', function(vehicleId)
+      print(string.format("Vehicle #%s was created", vehicleId))
+    end)
+
+    mp.events.add('vehicleDespawn', function(vehicleId)
+      print(string.format("Vehicle #%s was destroyed", vehicleId))
+    end)
+
+    -- data is an array: vehicle ID, then seat number
     mp.events.add('enterVehicle', function(playerId, data)
       local player = mp.players.at(playerId)
-      print(string.format("%s entered seat #%s of Vehicle #%s", player.nickname, data[2], data[1]))
+      print(string.format("%s entered seat #%s of vehicle #%s", player.nickname, data[2], data[1]))
     end)
 
-    -- Player exited a vehicle
+    -- data is an array holding the vehicle ID
     mp.events.add('exitVehicle', function(playerId, data)
       local player = mp.players.at(playerId)
-      print(string.format("%s exited Vehicle #%s", player.nickname, data[1]))
-    end)
-
-    -- Vehicle customization changed (CrystalCoat)
-    mp.events.add('vehicleCustomizationChange', function(playerId, data)
-      print(string.format("Player %s modified vehicle customization.", playerId))
-    end)
-
-    -- Vehicle destruction updated
-    mp.events.add('vehicleDestructionChange', function(playerId, data)
-      print(string.format("Vehicle destruction update from Player %s.", playerId))
+      print(string.format("%s left vehicle #%s", player.nickname, data[1]))
     end)
     ```
   </TabItem>
 </Tabs>
 
----
+:::note[The two tabs use different event names]
+The enter and exit events are documented under different names in the two languages: the JS typings declare `playerEnterVehicle(playerId, vehicleId, seat)` and `playerExitVehicle(playerId, vehicleId)`, while the Lua event catalog lists `enterVehicle(playerId, data)` and `exitVehicle(playerId, data)`. Each tab follows its own reference.
+:::
 
-## Destroying and Cleaning Up Vehicles
+`vehicleSpawn` and `vehicleDespawn` fire shortly after `create` and `destroy`, not during the call, so the line right after `mp.vehicles.create(...)` runs before your `vehicleSpawn` handler does.
 
-To remove vehicles that are no longer in use, call `destroy` on the vehicle or use `mp.vehicles.destroy`:
+There are more vehicle events: `vehicleCustomizationChange` (a player changed the paint with CrystalCoat), `vehicleDestructionChange` (broken glass, lights, tires), `vehicleWeaponShoot` and `vehicleHittedByPlayer`. Their payloads are listed in the [`VehiclesEvents`](/reference/server/api/events/vehicles/vehiclesevents/) reference (JS) and the [Lua event catalog](/reference/lua/server/#platform-event-catalog).
+
+## Destroying vehicles
+
+Call `destroy` on the vehicle, or `mp.vehicles.destroy` with an ID or a vehicle object:
 
 <Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
   <TabItem label="JS">
     ```js title="server.js"
-    // Option 1: Destroy via the vehicle instance
-    vehicle.destroy();
+    function removeVehicle(vehicle) {
+      vehicle.destroy();
+    }
 
-    // Option 2: Destroy via ID
-    mp.vehicles.destroy(vehicleId);
+    // Same thing when you only have the ID
+    function removeVehicleById(vehicleId) {
+      mp.vehicles.destroy(vehicleId);
+    }
     ```
   </TabItem>
   <TabItem label="Lua">
     ```lua title="server.lua"
-    -- Option 1: Destroy via the vehicle instance
-    vehicle:destroy()
+    function removeVehicle(vehicle)
+      vehicle:destroy()
+    end
 
-    -- Option 2: Destroy via ID
-    mp.vehicles.destroy(vehicleId)
+    -- Same thing when you only have the ID
+    function removeVehicleById(vehicleId)
+      mp.vehicles.destroy(vehicleId)
+    end
     ```
   </TabItem>
 </Tabs>
+
+The vehicle is removed on the next server tick, so `vehicle.exist` can still be true on the line right after `destroy()`. Destroying an ID that is already gone does nothing and raises no error.
+
+### Clean up when your resource stops
+
+Vehicles are **not** removed when the resource that created them stops or restarts. If you spawn ten cars at startup and restart the resource five times, you have sixty cars. Keep track of what you create and destroy it in `resourceStop`:
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="server.js"
+    const spawnedVehicleIds = [];
+
+    function spawnVehicle(options) {
+      const vehicle = mp.vehicles.create(options);
+      spawnedVehicleIds.push(vehicle.id);
+      return vehicle;
+    }
+
+    mp.events.on('resourceStop', () => {
+      for (const id of spawnedVehicleIds) {
+        if (mp.vehicles.exists(id)) {
+          mp.vehicles.destroy(id);
+        }
+      }
+    });
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="server.lua"
+    local spawnedVehicleIds = {}
+
+    function spawnVehicle(options)
+      local vehicle = mp.vehicles.create(options)
+      table.insert(spawnedVehicleIds, vehicle.id)
+      return vehicle
+    end
+
+    mp.events.add('resourceStop', function()
+      for _, id in ipairs(spawnedVehicleIds) do
+        if mp.vehicles.exists(id) then
+          mp.vehicles.destroy(id)
+        end
+      end
+    end)
+    ```
+  </TabItem>
+</Tabs>
+
+`resourceStop` fires when the resource is stopped or restarted. It does not fire when the server shuts down with `quit`, which does not matter here because the vehicles are gone with the server. Timers and event handlers of the old instance are dropped at that point, so cleanup has to happen inside this handler, not in something scheduled for later.
+
+## Example: one personal vehicle per player
+
+A common need: a `car` command that gives the player a car, but never more than one. Asking again replaces the old car, leaving the server removes it, and stopping the resource removes all of them.
+
+The script remembers which vehicle belongs to which player in a table keyed by player ID.
+
+<Tabs syncKey={SCRIPT_LANG_TAB_SYNC_KEY}>
+  <TabItem label="JS">
+    ```js title="server.js"
+    // Hash the names once, when the resource starts.
+    const QUADRA_MODEL = mp.hashes.tweakdbid('Vehicle.v_sport1_quadra_turbo_r_player');
+    const QUADRA_APPEARANCE = mp.hashes.cname('quadra_turbo_r__basic_player_01');
+
+    // Player ID -> ID of that player's vehicle.
+    const personalVehicleIds = new Map();
+
+    function destroyPersonalVehicle(playerId) {
+      const vehicleId = personalVehicleIds.get(playerId);
+      if (vehicleId === undefined) return;
+
+      personalVehicleIds.delete(playerId);
+      if (mp.vehicles.exists(vehicleId)) {
+        mp.vehicles.destroy(vehicleId);
+      }
+    }
+
+    function spawnPersonalVehicle(player) {
+      // One car per player: remove the previous one first.
+      destroyPersonalVehicle(player.id);
+
+      // Three meters beside the player, so the car does not land on their head.
+      const [x, y, z] = player.position;
+      const vehicle = mp.vehicles.create({
+        model: QUADRA_MODEL,
+        appearance: QUADRA_APPEARANCE,
+        position: [x + 3, y, z],
+        yaw: player.yaw,
+        dimension: player.dimension,
+      });
+
+      personalVehicleIds.set(player.id, vehicle.id);
+      return vehicle;
+    }
+
+    mp.commands.add('car', (player) => {
+      // The server console has no position to spawn a car at.
+      const fromConsole = !player || player.id === 0;
+      if (fromConsole) {
+        console.log('car can only be used by a player in-game.');
+        return;
+      }
+
+      spawnPersonalVehicle(player);
+    });
+
+    mp.events.on('playerDisconnected', (playerId) => {
+      destroyPersonalVehicle(playerId);
+    });
+
+    // If something else destroyed the car (another resource, an admin command),
+    // forget its ID: the server will reuse that ID for a different entity.
+    mp.events.on('vehicleDespawn', (vehicleId) => {
+      for (const [playerId, personalVehicleId] of personalVehicleIds) {
+        if (personalVehicleId === vehicleId) {
+          personalVehicleIds.delete(playerId);
+        }
+      }
+    });
+
+    // Vehicles survive a resource stop, so remove them by hand.
+    mp.events.on('resourceStop', () => {
+      for (const vehicleId of personalVehicleIds.values()) {
+        if (mp.vehicles.exists(vehicleId)) {
+          mp.vehicles.destroy(vehicleId);
+        }
+      }
+    });
+    ```
+  </TabItem>
+  <TabItem label="Lua">
+    ```lua title="server.lua"
+    -- Hash the names once, when the resource starts.
+    local QUADRA_MODEL = tonumber(mp.hashes.toTweakdbid('Vehicle.v_sport1_quadra_turbo_r_player'), 10)
+    local QUADRA_APPEARANCE = tonumber(mp.hashes.toCname('quadra_turbo_r__basic_player_01'), 10)
+
+    -- Player ID -> ID of that player's vehicle.
+    local personalVehicleIds = {}
+
+    local function destroyPersonalVehicle(playerId)
+      local vehicleId = personalVehicleIds[playerId]
+      if not vehicleId then return end
+
+      personalVehicleIds[playerId] = nil
+      if mp.vehicles.exists(vehicleId) then
+        mp.vehicles.destroy(vehicleId)
+      end
+    end
+
+    local function spawnPersonalVehicle(player)
+      -- One car per player: remove the previous one first.
+      destroyPersonalVehicle(player.id)
+
+      -- Three meters beside the player, so the car does not land on their head.
+      local position = player.position
+      local vehicle = mp.vehicles.create({
+        model = QUADRA_MODEL,
+        appearance = QUADRA_APPEARANCE,
+        position = vector3(position[1] + 3, position[2], position[3]),
+        yaw = player.yaw,
+        dimension = player.dimension,
+      })
+
+      personalVehicleIds[player.id] = vehicle.id
+      return vehicle
+    end
+
+    mp.commands.add('car', function(player)
+      -- The server console has no position to spawn a car at.
+      local fromConsole = player == 0
+      if fromConsole then
+        print('car can only be used by a player in-game.')
+        return
+      end
+
+      spawnPersonalVehicle(player)
+    end)
+
+    mp.events.add('playerDisconnected', function(playerId)
+      destroyPersonalVehicle(playerId)
+    end)
+
+    -- If something else destroyed the car (another resource, an admin command),
+    -- forget its ID: the server will reuse that ID for a different entity.
+    mp.events.add('vehicleDespawn', function(vehicleId)
+      for playerId, personalVehicleId in pairs(personalVehicleIds) do
+        if personalVehicleId == vehicleId then
+          personalVehicleIds[playerId] = nil
+        end
+      end
+    end)
+
+    -- Vehicles survive a resource stop, so remove them by hand.
+    mp.events.add('resourceStop', function()
+      for _, vehicleId in pairs(personalVehicleIds) do
+        if mp.vehicles.exists(vehicleId) then
+          mp.vehicles.destroy(vehicleId)
+        end
+      end
+    end)
+    ```
+  </TabItem>
+</Tabs>
+
+Things to know about this pattern:
+
+- The table lives in the script's memory, so it is empty again after a restart. That is safe here only because `resourceStop` destroys every car first.
+- The new car appears empty next to the player. Seating the player in it is done by the game, so it needs a client script.
+- To let other code know whose car it is, also store the owner on the vehicle with [entity metadata](/guides/server/meta/#entity-metadata-vehicles-peds-objects-pickups), for example `vehicle.setMeta('ownerId', player.id)`.
+
+## What next
+
+- [World Entities](/guides/server/entities/): objects, peds and pickups work the same way.
+- [Entity Metadata](/guides/server/meta/): attach your own data (owner, fuel, lock state) to a vehicle.
+- [`MpVehicle`](/reference/server/api/entities/vehicles/mpvehicle/) and [`MpVehicles`](/reference/server/api/entities/vehicles/mpvehicles/): full API reference.
+- [Timers and scheduled work](/guides/server/timers/#removing-a-vehicle-after-a-delay): remove a vehicle after a delay without hitting a reused ID.
+- [Streaming: what the client can see](/guides/client/streaming/): what `streamingRadius` means on the player's side.
